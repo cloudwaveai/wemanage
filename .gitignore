@@ -1,0 +1,10 @@
+/gateway
+*.log
+web/node_modules/
+web/dist/
+internal/webui/dist/
+deploy/.env
+deploy/cpa/auths/
+deploy/cpa/config.yaml
+spool/
+.DS_Store
