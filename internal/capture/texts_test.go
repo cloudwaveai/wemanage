@@ -33,8 +33,8 @@ func TestExtractTextsResponsesSessionNewAndTruncation(t *testing.T) {
 	}`, long))
 
 	segs, inputStart := mustSplit(t, "responses", body)
-	if inputStart != 1 { // instructions at 0, inputs at 1,2
-		t.Fatalf("inputStart = %d, want 1", inputStart)
+	if inputStart != 2 { // params at 0, instructions at 1, inputs at 2,3
+		t.Fatalf("inputStart = %d, want 2", inputStart)
 	}
 
 	out := Outcome{OutputItems: []json.RawMessage{

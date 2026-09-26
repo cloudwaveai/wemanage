@@ -20,17 +20,18 @@ type Segment struct {
 
 // SplitRequest splits a request body into ordered segments.
 //
-// endpoint is "responses" or "chat". The order is:
-//  1. instructions, if present [kind "instructions"]
-//  2. the tools array, if present [kind "tools"]
-//  3. each element of input[] (responses) or messages[] (chat) [kind "input"]
-//  4. a final params segment [kind "params"] = the body with instructions,
-//     tools and input/messages removed.
+// endpoint is "responses" or "chat". The order places the stable parts first and
+// the growing conversation last, so that appending turns preserves a common
+// prefix (which is what Encode compresses against):
+//  1. a params segment [kind "params"] = the body with instructions, tools and
+//     input/messages removed.
+//  2. instructions, if present [kind "instructions"]
+//  3. the tools array, if present [kind "tools"]
+//  4. each element of input[] (responses) or messages[] (chat) [kind "input"], LAST.
 //
 // inputStart is the index within the returned slice of the first input element
-// segment (or the index of the params segment when there are no inputs). Each
-// segment's Data is redactor.Redact(compactJSON(element)) and its Hash is the
-// sha256 of that Data.
+// segment (or len(segs) when there are no inputs). Each segment's Data is
+// redactor.Redact(compactJSON(element)) and its Hash is the sha256 of that Data.
 func SplitRequest(endpoint string, body []byte, r *Redactor) (segs []Segment, inputStart int, err error) {
 	if !gjson.ValidBytes(body) {
 		return nil, 0, fmt.Errorf("capture: invalid request JSON")
@@ -48,6 +49,17 @@ func SplitRequest(endpoint string, body []byte, r *Redactor) (segs []Segment, in
 		}
 		segs = append(segs, seg)
 		return nil
+	}
+
+	params := body
+	for _, key := range []string{"instructions", "tools", arrKey} {
+		params, err = sjson.DeleteBytes(params, key)
+		if err != nil {
+			return nil, 0, fmt.Errorf("capture: strip %q from params: %w", key, err)
+		}
+	}
+	if err := add("params", string(params)); err != nil {
+		return nil, 0, err
 	}
 
 	if res := gjson.GetBytes(body, "instructions"); res.Exists() {
@@ -68,17 +80,6 @@ func SplitRequest(endpoint string, body []byte, r *Redactor) (segs []Segment, in
 				return nil, 0, err
 			}
 		}
-	}
-
-	params := body
-	for _, key := range []string{"instructions", "tools", arrKey} {
-		params, err = sjson.DeleteBytes(params, key)
-		if err != nil {
-			return nil, 0, fmt.Errorf("capture: strip %q from params: %w", key, err)
-		}
-	}
-	if err := add("params", string(params)); err != nil {
-		return nil, 0, err
 	}
 
 	return segs, inputStart, nil

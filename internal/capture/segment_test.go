@@ -51,16 +51,16 @@ func TestSplitRequestResponses(t *testing.T) {
 		t.Fatalf("SplitRequest: %v", err)
 	}
 
-	want := []string{"instructions", "tools", "input", "input", "params"}
+	want := []string{"params", "instructions", "tools", "input", "input"}
 	if got := kinds(segs); !eqStrings(got, want) {
 		t.Fatalf("kinds = %v, want %v", got, want)
 	}
-	if inputStart != 2 {
-		t.Fatalf("inputStart = %d, want 2", inputStart)
+	if inputStart != 3 {
+		t.Fatalf("inputStart = %d, want 3", inputStart)
 	}
 
 	// params must retain model but not the split-out keys.
-	params := string(segs[4].Data)
+	params := string(segs[0].Data)
 	if !strings.Contains(params, `"model":"m"`) {
 		t.Fatalf("params missing model: %s", params)
 	}
@@ -76,15 +76,15 @@ func TestSplitRequestResponses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SplitRequest (2nd): %v", err)
 	}
-	if segs[2].Hash != segs2[2].Hash {
-		t.Fatalf("input hash not stable across calls: %x vs %x", segs[2].Hash, segs2[2].Hash)
+	if segs[3].Hash != segs2[3].Hash {
+		t.Fatalf("input hash not stable across calls: %x vs %x", segs[3].Hash, segs2[3].Hash)
 	}
 	// The two distinct input elements must hash differently.
-	if segs[2].Hash == segs[3].Hash {
+	if segs[3].Hash == segs[4].Hash {
 		t.Fatalf("distinct inputs share a hash unexpectedly")
 	}
 	// Hash must equal sha256(Data).
-	if got := sha256Of(segs[2].Data); got != segs[2].Hash {
+	if got := sha256Of(segs[3].Data); got != segs[3].Hash {
 		t.Fatalf("Hash != sha256(Data)")
 	}
 }
@@ -101,15 +101,15 @@ func TestSplitRequestChat(t *testing.T) {
 		t.Fatalf("SplitRequest: %v", err)
 	}
 
-	want := []string{"input", "input", "params"}
+	want := []string{"params", "input", "input"}
 	if got := kinds(segs); !eqStrings(got, want) {
 		t.Fatalf("kinds = %v, want %v", got, want)
 	}
-	if inputStart != 0 {
-		t.Fatalf("inputStart = %d, want 0", inputStart)
+	if inputStart != 1 {
+		t.Fatalf("inputStart = %d, want 1", inputStart)
 	}
 
-	params := string(segs[2].Data)
+	params := string(segs[0].Data)
 	if !strings.Contains(params, `"temperature":0.5`) {
 		t.Fatalf("params missing temperature: %s", params)
 	}
