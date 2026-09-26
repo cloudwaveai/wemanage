@@ -1,0 +1,354 @@
+// Package feishu is a thin client for the Feishu/Lark OpenAPI plus the
+// contact-directory sync that mirrors employees and departments into the store.
+package feishu
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sync"
+	"time"
+)
+
+// defaultBase is the public Feishu OpenAPI host.
+const defaultBase = "https://open.feishu.cn"
+
+// Client talks to the Feishu OpenAPI. The tenant access token is cached in
+// memory and refreshed shortly before it expires.
+type Client struct {
+	base      string
+	appID     string
+	appSecret string
+	hc        *http.Client
+
+	mu       sync.Mutex
+	token    string
+	tokenExp time.Time
+}
+
+// NewClient builds a Client. An empty base defaults to the public host; a nil
+// http.Client gets a sane default with a timeout.
+func NewClient(base, appID, appSecret string, hc *http.Client) *Client {
+	if base == "" {
+		base = defaultBase
+	}
+	base = trimTrailingSlash(base)
+	if hc == nil {
+		hc = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &Client{base: base, appID: appID, appSecret: appSecret, hc: hc}
+}
+
+func trimTrailingSlash(s string) string {
+	for len(s) > 0 && s[len(s)-1] == '/' {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// apiErr formats a Feishu envelope error (non-zero code).
+func apiErr(code int, msg string) error {
+	return fmt.Errorf("feishu: api error code=%d msg=%q", code, msg)
+}
+
+// envelope is the common {code,msg} prefix returned by every endpoint.
+type envelope struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+}
+
+// do issues an HTTP request, JSON-encoding body when non-nil and decoding the
+// response into out. token, when non-empty, is sent as a bearer credential.
+func (c *Client) do(ctx context.Context, method, fullURL, token string, body, out any) error {
+	var req *http.Request
+	var err error
+	if body != nil {
+		b, mErr := json.Marshal(body)
+		if mErr != nil {
+			return mErr
+		}
+		req, err = http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(b))
+	} else {
+		req, err = http.NewRequestWithContext(ctx, method, fullURL, http.NoBody)
+	}
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("feishu: http status %d", resp.StatusCode)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// tokenResp is the tenant_access_token response.
+type tokenResp struct {
+	envelope
+	Token  string `json:"tenant_access_token"`
+	Expire int    `json:"expire"`
+}
+
+// TenantAccessToken returns a cached tenant access token, fetching a fresh one
+// only when the cache is empty or within 5 minutes of expiry.
+func (c *Client) TenantAccessToken(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token != "" && time.Now().Before(c.tokenExp) {
+		return c.token, nil
+	}
+	var r tokenResp
+	err := c.do(ctx, http.MethodPost,
+		c.base+"/open-apis/auth/v3/tenant_access_token/internal", "",
+		map[string]string{"app_id": c.appID, "app_secret": c.appSecret}, &r)
+	if err != nil {
+		return "", err
+	}
+	if r.Code != 0 {
+		return "", apiErr(r.Code, r.Msg)
+	}
+	expire := r.Expire
+	if expire <= 0 {
+		expire = 7200
+	}
+	c.token = r.Token
+	c.tokenExp = time.Now().Add(time.Duration(expire)*time.Second - 5*time.Minute)
+	return c.token, nil
+}
+
+// UserInfo is the identity resolved from an OAuth login exchange.
+type UserInfo struct {
+	OpenID, UnionID, UserID, Name, Email, AvatarURL string
+}
+
+// OAuthURL builds the authorization URL the browser is redirected to.
+func (c *Client) OAuthURL(state, redirectURI string) string {
+	q := url.Values{}
+	q.Set("app_id", c.appID)
+	q.Set("redirect_uri", redirectURI)
+	q.Set("state", state)
+	return c.base + "/open-apis/authen/v1/authorize?" + q.Encode()
+}
+
+// exchangeResp is the OIDC access_token response carrying the user identity.
+type exchangeResp struct {
+	envelope
+	Data struct {
+		OpenID    string `json:"open_id"`
+		UnionID   string `json:"union_id"`
+		UserID    string `json:"user_id"`
+		Name      string `json:"name"`
+		Email     string `json:"email"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"data"`
+}
+
+// ExchangeUser exchanges an authorization code for the caller's identity.
+func (c *Client) ExchangeUser(ctx context.Context, code, redirectURI string) (UserInfo, error) {
+	token, err := c.TenantAccessToken(ctx)
+	if err != nil {
+		return UserInfo{}, err
+	}
+	var r exchangeResp
+	err = c.do(ctx, http.MethodPost,
+		c.base+"/open-apis/authen/v1/oidc/access_token", token,
+		map[string]string{"grant_type": "authorization_code", "code": code}, &r)
+	if err != nil {
+		return UserInfo{}, err
+	}
+	if r.Code != 0 {
+		return UserInfo{}, apiErr(r.Code, r.Msg)
+	}
+	return UserInfo{
+		OpenID:    r.Data.OpenID,
+		UnionID:   r.Data.UnionID,
+		UserID:    r.Data.UserID,
+		Name:      r.Data.Name,
+		Email:     r.Data.Email,
+		AvatarURL: r.Data.AvatarURL,
+	}, nil
+}
+
+// Dept is a Feishu department.
+type Dept struct {
+	ID, ParentID, Name string
+	LeaderOpenIDs      []string
+}
+
+// deptListResp is one page of the departments list.
+type deptListResp struct {
+	envelope
+	Data struct {
+		Items []struct {
+			DepartmentID       string `json:"department_id"`
+			ParentDepartmentID string `json:"parent_department_id"`
+			Name               string `json:"name"`
+			Leaders            []struct {
+				LeaderType int    `json:"leader_type"`
+				LeaderID   string `json:"leader_id"`
+			} `json:"leaders"`
+		} `json:"items"`
+		PageToken string `json:"page_token"`
+		HasMore   bool   `json:"has_more"`
+	} `json:"data"`
+}
+
+// ListDepartments returns every department, following pagination.
+func (c *Client) ListDepartments(ctx context.Context) ([]Dept, error) {
+	token, err := c.TenantAccessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Dept
+	pageToken := ""
+	for {
+		q := url.Values{}
+		q.Set("page_size", "50")
+		if pageToken != "" {
+			q.Set("page_token", pageToken)
+		}
+		var r deptListResp
+		err := c.do(ctx, http.MethodGet,
+			c.base+"/open-apis/contact/v3/departments?"+q.Encode(), token, nil, &r)
+		if err != nil {
+			return nil, err
+		}
+		if r.Code != 0 {
+			return nil, apiErr(r.Code, r.Msg)
+		}
+		for _, it := range r.Data.Items {
+			d := Dept{ID: it.DepartmentID, ParentID: it.ParentDepartmentID, Name: it.Name}
+			for _, l := range it.Leaders {
+				if l.LeaderID != "" {
+					d.LeaderOpenIDs = append(d.LeaderOpenIDs, l.LeaderID)
+				}
+			}
+			out = append(out, d)
+		}
+		if !r.Data.HasMore || r.Data.PageToken == "" {
+			break
+		}
+		pageToken = r.Data.PageToken
+	}
+	return out, nil
+}
+
+// User is a Feishu user with its department memberships.
+type User struct {
+	OpenID, UnionID, UserID, Name, Email, AvatarURL string
+	Active                                          bool
+	DeptFeishuIDs                                   []string
+}
+
+// userListResp is one page of the users list.
+type userListResp struct {
+	envelope
+	Data struct {
+		Items []struct {
+			OpenID  string `json:"open_id"`
+			UnionID string `json:"union_id"`
+			UserID  string `json:"user_id"`
+			Name    string `json:"name"`
+			Email   string `json:"email"`
+			Avatar  string `json:"avatar"`
+			Status  struct {
+				IsActivated bool `json:"is_activated"`
+			} `json:"status"`
+			DepartmentIDs []string `json:"department_ids"`
+		} `json:"items"`
+		PageToken string `json:"page_token"`
+		HasMore   bool   `json:"has_more"`
+	} `json:"data"`
+}
+
+// ListUsers returns every user, following pagination.
+func (c *Client) ListUsers(ctx context.Context) ([]User, error) {
+	token, err := c.TenantAccessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []User
+	pageToken := ""
+	for {
+		q := url.Values{}
+		q.Set("page_size", "50")
+		if pageToken != "" {
+			q.Set("page_token", pageToken)
+		}
+		var r userListResp
+		err := c.do(ctx, http.MethodGet,
+			c.base+"/open-apis/contact/v3/users?"+q.Encode(), token, nil, &r)
+		if err != nil {
+			return nil, err
+		}
+		if r.Code != 0 {
+			return nil, apiErr(r.Code, r.Msg)
+		}
+		for _, it := range r.Data.Items {
+			out = append(out, User{
+				OpenID:        it.OpenID,
+				UnionID:       it.UnionID,
+				UserID:        it.UserID,
+				Name:          it.Name,
+				Email:         it.Email,
+				AvatarURL:     it.Avatar,
+				Active:        it.Status.IsActivated,
+				DeptFeishuIDs: it.DepartmentIDs,
+			})
+		}
+		if !r.Data.HasMore || r.Data.PageToken == "" {
+			break
+		}
+		pageToken = r.Data.PageToken
+	}
+	return out, nil
+}
+
+// sendText/sendCard share this message-send helper.
+func (c *Client) sendMessage(ctx context.Context, openID, msgType, content string) error {
+	token, err := c.TenantAccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	var r envelope
+	err = c.do(ctx, http.MethodPost,
+		c.base+"/open-apis/im/v1/messages?receive_id_type=open_id", token,
+		map[string]string{"receive_id": openID, "msg_type": msgType, "content": content}, &r)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return apiErr(r.Code, r.Msg)
+	}
+	return nil
+}
+
+// SendText sends a plain-text IM message to an open_id.
+func (c *Client) SendText(ctx context.Context, openID, text string) error {
+	content, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return err
+	}
+	return c.sendMessage(ctx, openID, "text", string(content))
+}
+
+// SendCard sends an interactive card, marshaled to the JSON string content.
+func (c *Client) SendCard(ctx context.Context, openID string, card any) error {
+	content, err := json.Marshal(card)
+	if err != nil {
+		return err
+	}
+	return c.sendMessage(ctx, openID, "interactive", string(content))
+}
