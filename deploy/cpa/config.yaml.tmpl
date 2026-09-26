@@ -1,0 +1,38 @@
+# CLIProxyAPI 配置模板 —— 由 init.sh 渲染成 config.yaml。
+# 只有网关（gateway 容器）会调用 CPA；员工无法直连。
+#
+# 关键点：
+#  - force-model-prefix + 每个账号文件的 prefix，实现"一个 Key 只打一个账号"。
+#  - disable-codex-cloaking=true：不再把 UA/Originator 覆写成 CPA 写死的旧常量，
+#    改为透传网关设置好的请求头（指纹一致性由网关负责）。
+#  - passthrough-headers=true：把上游的额度响应头回传给网关。
+
+port: 8317
+
+# 只信任内网网关转发过来的头（按需收紧到 gateway 容器网段）。
+trusted-proxies: []
+
+# 网关与 CPA 之间的内部 Key（外部不可见）。由 init.sh 生成填入。
+api-keys:
+  - "__CPA_INTERNAL_KEY__"
+
+# 强制前缀路由：不带前缀的请求只会用不带前缀的账号；我们所有账号都带
+# acct-<id> 前缀，因此每个前缀唯一对应一个账号，实现真正的隔离。
+force-model-prefix: true
+
+# 把过滤后的上游响应头回传给下游（网关据此读取额度）。
+passthrough-headers: true
+
+# 关闭 Codex "伪装"（不覆写 UA/Originator），改由网关透传/构造。
+codex:
+  disable-codex-cloaking: true
+
+# 管理 API：只有网关持有该密钥；留空则整个 /v0/management 返回 404。
+remote-management:
+  allow-remote: true   # 允许内网其它容器（gateway）访问；仍需密钥
+  secret-key: "__CPA_MANAGEMENT_KEY__"
+  disable-control-panel: true
+
+# 请求日志由网关负责，这里关闭以免重复留存明文。排障时可临时打开。
+request-log: false
+logging-to-file: true

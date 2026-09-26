@@ -1,0 +1,87 @@
+# AI 订阅网关 —— 生产编排
+#
+# 拓扑：员工 -> caddy(443) -> gateway(:8080) -> cpa(:8317, 仅内网) -> chatgpt.com
+# 其中 cpa 通过每个账号文件的 proxy_url 走分组固定的海外出口 IP。
+#
+# 首次部署见 ../docs/deploy.md，或运行 ./init.sh。
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    <<: *restart
+    depends_on: [gateway]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ai-seat-gateway:latest
+    <<: *restart
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cpa:
+        condition: service_started
+    env_file: [.env]
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATABASE_URL: "postgres://gateway:${POSTGRES_PASSWORD}@postgres:5432/gateway?sslmode=disable"
+      CPA_BASE_URL: "http://cpa:8317"
+      SPOOL_DIR: "/data/spool"
+    volumes:
+      - gateway_spool:/data/spool
+    networks: [edge, backend, data]
+
+  cpa:
+    image: ${CPA_IMAGE:-eceasy/cli-proxy-api:latest}
+    <<: *restart
+    # 不发布任何端口：外网无法直连。cpa 需要访问 chatgpt.com，
+    # 因此放在有出口的 backend 网络（真正的出口 IP 由每个账号文件的 proxy_url 决定）。
+    volumes:
+      - ./cpa/config.yaml:/CLIProxyAPI/config.yaml:ro
+      - ./cpa/auths:/root/.cli-proxy-api
+      - cpa_logs:/CLIProxyAPI/logs
+    networks: [backend]
+
+  postgres:
+    image: postgres:16-alpine
+    <<: *restart
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: gateway
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [data]
+
+networks:
+  # 对外网络：只有 caddy 在这里发布 80/443。
+  edge:
+  # cpa 出口网络：有互联网出口，但不发布端口，外网无法直连。
+  backend:
+  # 数据库网络：内网隔离，无互联网出口。
+  data:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  gateway_spool:
+  cpa_logs:
+  pgdata:

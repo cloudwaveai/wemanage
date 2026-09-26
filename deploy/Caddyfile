@@ -1,0 +1,13 @@
+# 把 DOMAIN 换成你的域名；Caddy 会自动签发并续期 TLS 证书。
+# 本地/无域名测试可改为 `:80` 并去掉 TLS。
+{$GATEWAY_DOMAIN} {
+	encode zstd gzip
+
+	# /v1/* 是数据面（员工的 AI 客户端）；SSE 需要关闭缓冲。
+	@stream path /v1/*
+	reverse_proxy @stream gateway:8080 {
+		flush_interval -1
+	}
+
+	reverse_proxy gateway:8080
+}
