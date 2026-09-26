@@ -39,6 +39,7 @@ type RequestRow struct {
 	ReqHashes       []byte // encoded (tail when prefix-compressed, else full)
 	ReqInputStart   int
 	RespHashes      []byte // full list of response segment hashes
+	BodiesPurged    bool
 }
 
 // RequestEnc is the minimal encoding needed to reconstruct a request's hash list.
