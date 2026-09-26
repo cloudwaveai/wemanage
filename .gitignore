@@ -2,7 +2,7 @@
 *.log
 web/node_modules/
 web/dist/
-internal/webui/dist/
+internal/webui/dist/assets/
 deploy/.env
 deploy/cpa/auths/
 deploy/cpa/config.yaml

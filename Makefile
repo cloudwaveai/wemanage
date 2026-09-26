@@ -24,7 +24,11 @@ vet:
 tidy:
 	GOPROXY=$${GOPROXY:-https://goproxy.cn,direct} go mod tidy
 
-build:
+build: web
+	CGO_ENABLED=0 go build -o gateway ./cmd/gateway
+
+# build the Go binary without rebuilding the SPA (uses whatever is in internal/webui/dist)
+build-go:
 	CGO_ENABLED=0 go build -o gateway ./cmd/gateway
 
 web:
