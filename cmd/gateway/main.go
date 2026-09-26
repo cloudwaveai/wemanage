@@ -22,8 +22,15 @@ func main() {
 			os.Exit(1)
 		}
 	case "serve":
-		fmt.Fprintln(os.Stderr, "serve: not yet implemented")
-		os.Exit(1)
+		if err := runServe(); err != nil {
+			fmt.Fprintln(os.Stderr, "serve:", err)
+			os.Exit(1)
+		}
+	case "admin":
+		if err := runAdmin(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "admin:", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 		os.Exit(2)
