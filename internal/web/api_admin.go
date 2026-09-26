@@ -51,7 +51,16 @@ func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"employees": rows})
+	out := make([]map[string]any, 0, len(rows))
+	for _, e := range rows {
+		out = append(out, map[string]any{
+			"id": e.ID, "name": e.Name, "email": e.Email, "status": e.Status,
+			"is_super_admin": e.IsSuperAdmin, "notice_acked": e.NoticeAckAt != nil,
+			"account_id": e.AccountID, "account_email": e.AccountEmail, "account_status": e.AccountStatus,
+			"active_key_prefix": e.ActiveKeyPrefix, "department_names": e.DepartmentNames,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"employees": out})
 }
 
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
