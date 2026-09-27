@@ -21,6 +21,7 @@ type Config struct {
 	FeishuAppID          string
 	FeishuAppSecret      string
 	FeishuBaseURL        string
+	FeishuLoginScope     string
 	BootstrapSuperAdmins []string
 	ReportLLMBaseURL     string
 	ReportLLMAPIKey      string
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 		FeishuAppID:      strings.TrimSpace(os.Getenv("FEISHU_APP_ID")),
 		FeishuAppSecret:  strings.TrimSpace(os.Getenv("FEISHU_APP_SECRET")),
 		FeishuBaseURL:    strings.TrimRight(getenv("FEISHU_BASE_URL", "https://open.feishu.cn"), "/"),
+		FeishuLoginScope: strings.TrimSpace(os.Getenv("FEISHU_LOGIN_SCOPE")),
 		ReportLLMBaseURL: strings.TrimRight(getenv("REPORT_LLM_BASE_URL", "https://api.openai.com/v1"), "/"),
 		ReportLLMAPIKey:  strings.TrimSpace(os.Getenv("REPORT_LLM_API_KEY")),
 		ReportLLMModel:   getenv("REPORT_LLM_MODEL", "gpt-5-mini"),

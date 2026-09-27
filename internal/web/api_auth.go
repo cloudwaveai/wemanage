@@ -21,7 +21,7 @@ func (s *Server) handleFeishuLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirect := s.deps.PublicBaseURL + "/api/auth/feishu/callback"
-	http.Redirect(w, r, s.deps.Feishu.OAuthURL(state, redirect), http.StatusFound)
+	http.Redirect(w, r, s.deps.Feishu.OAuthURL(state, redirect, s.deps.FeishuLoginScope), http.StatusFound)
 }
 
 func (s *Server) handleFeishuCallback(w http.ResponseWriter, r *http.Request) {

@@ -16,14 +16,15 @@ import (
 
 // Deps wires the web layer.
 type Deps struct {
-	Store         *store.Store
-	Settings      *settings.Service
-	Box           *secure.Box
-	CPA           *cpa.Client
-	Feishu        *feishu.Client
-	PublicBaseURL string
-	SecureCookies bool
-	DevLogin      bool
+	Store            *store.Store
+	Settings         *settings.Service
+	Box              *secure.Box
+	CPA              *cpa.Client
+	Feishu           *feishu.Client
+	FeishuLoginScope string
+	PublicBaseURL    string
+	SecureCookies    bool
+	DevLogin         bool
 	// SyncFeishu triggers a directory sync; wired by the serve command so the
 	// web layer need not import the feishu sync logic directly.
 	SyncFeishu func(ctx context.Context) (int, int, error)

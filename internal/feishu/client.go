@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,7 +20,8 @@ const defaultBase = "https://open.feishu.cn"
 // Client talks to the Feishu OpenAPI. The tenant access token is cached in
 // memory and refreshed shortly before it expires.
 type Client struct {
-	base      string
+	base      string // OpenAPI host, e.g. https://open.feishu.cn
+	authBase  string // OAuth authorize host, e.g. https://accounts.feishu.cn
 	appID     string
 	appSecret string
 	hc        *http.Client
@@ -39,8 +41,16 @@ func NewClient(base, appID, appSecret string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &Client{base: base, appID: appID, appSecret: appSecret, hc: hc}
+	// The OAuth authorize endpoint lives on the accounts.* host, not the API host.
+	authBase := "https://accounts.feishu.cn"
+	if strings.Contains(base, "larksuite") {
+		authBase = "https://accounts.larksuite.com"
+	}
+	return &Client{base: base, authBase: authBase, appID: appID, appSecret: appSecret, hc: hc}
 }
+
+// SetAuthBase overrides the OAuth authorize host (used in tests).
+func (c *Client) SetAuthBase(u string) { c.authBase = trimTrailingSlash(u) }
 
 func trimTrailingSlash(s string) string {
 	for len(s) > 0 && s[len(s)-1] == '/' {
@@ -133,17 +143,33 @@ type UserInfo struct {
 	OpenID, UnionID, UserID, Name, Email, AvatarURL string
 }
 
-// OAuthURL builds the authorization URL the browser is redirected to.
-func (c *Client) OAuthURL(state, redirectURI string) string {
+// OAuthURL builds the authorization URL the browser is redirected to
+// (Feishu OAuth 2.0: https://accounts.feishu.cn/open-apis/authen/v1/authorize).
+// An empty scope relies on the app's platform-configured permissions.
+func (c *Client) OAuthURL(state, redirectURI, scope string) string {
 	q := url.Values{}
-	q.Set("app_id", c.appID)
+	q.Set("client_id", c.appID)
 	q.Set("redirect_uri", redirectURI)
+	q.Set("response_type", "code")
 	q.Set("state", state)
-	return c.base + "/open-apis/authen/v1/authorize?" + q.Encode()
+	if scope != "" {
+		q.Set("scope", scope)
+	}
+	return c.authBase + "/open-apis/authen/v1/authorize?" + q.Encode()
 }
 
-// exchangeResp is the OIDC access_token response carrying the user identity.
-type exchangeResp struct {
+// oauthTokenResp is the authen/v2/oauth/token response. Feishu returns a flat
+// OAuth2 object; parsed defensively to tolerate an envelope or error body.
+type oauthTokenResp struct {
+	Code             int    `json:"code"`
+	Msg              string `json:"msg"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+	AccessToken      string `json:"access_token"`
+}
+
+// userInfoResp is the authen/v1/user_info response.
+type userInfoResp struct {
 	envelope
 	Data struct {
 		OpenID    string `json:"open_id"`
@@ -155,29 +181,48 @@ type exchangeResp struct {
 	} `json:"data"`
 }
 
-// ExchangeUser exchanges an authorization code for the caller's identity.
+// ExchangeUser exchanges an authorization code for the caller's identity:
+// authen/v2/oauth/token (code -> user access token) then authen/v1/user_info.
 func (c *Client) ExchangeUser(ctx context.Context, code, redirectURI string) (UserInfo, error) {
-	token, err := c.TenantAccessToken(ctx)
+	var tok oauthTokenResp
+	err := c.do(ctx, http.MethodPost,
+		c.base+"/open-apis/authen/v2/oauth/token", "",
+		map[string]string{
+			"grant_type":    "authorization_code",
+			"client_id":     c.appID,
+			"client_secret": c.appSecret,
+			"code":          code,
+			"redirect_uri":  redirectURI,
+		}, &tok)
 	if err != nil {
 		return UserInfo{}, err
 	}
-	var r exchangeResp
-	err = c.do(ctx, http.MethodPost,
-		c.base+"/open-apis/authen/v1/oidc/access_token", token,
-		map[string]string{"grant_type": "authorization_code", "code": code}, &r)
-	if err != nil {
+	if tok.AccessToken == "" {
+		msg := tok.Msg
+		if tok.Error != "" {
+			msg = tok.Error + ": " + tok.ErrorDescription
+		}
+		return UserInfo{}, apiErr(tok.Code, msg)
+	}
+
+	var info userInfoResp
+	if err := c.do(ctx, http.MethodGet,
+		c.base+"/open-apis/authen/v1/user_info", tok.AccessToken, nil, &info); err != nil {
 		return UserInfo{}, err
 	}
-	if r.Code != 0 {
-		return UserInfo{}, apiErr(r.Code, r.Msg)
+	if info.Code != 0 {
+		return UserInfo{}, apiErr(info.Code, info.Msg)
+	}
+	if info.Data.OpenID == "" {
+		return UserInfo{}, fmt.Errorf("feishu: user_info returned no open_id (check app permissions)")
 	}
 	return UserInfo{
-		OpenID:    r.Data.OpenID,
-		UnionID:   r.Data.UnionID,
-		UserID:    r.Data.UserID,
-		Name:      r.Data.Name,
-		Email:     r.Data.Email,
-		AvatarURL: r.Data.AvatarURL,
+		OpenID:    info.Data.OpenID,
+		UnionID:   info.Data.UnionID,
+		UserID:    info.Data.UserID,
+		Name:      info.Data.Name,
+		Email:     info.Data.Email,
+		AvatarURL: info.Data.AvatarURL,
 	}, nil
 }
 

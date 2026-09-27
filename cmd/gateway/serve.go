@@ -87,7 +87,8 @@ func runServe() error {
 
 	webSrv := web.NewServer(web.Deps{
 		Store: st, Settings: set, Box: box, CPA: cpaClient, Feishu: fs,
-		PublicBaseURL: cfg.PublicBaseURL, SecureCookies: isHTTPS(cfg.PublicBaseURL),
+		FeishuLoginScope: cfg.FeishuLoginScope,
+		PublicBaseURL:    cfg.PublicBaseURL, SecureCookies: isHTTPS(cfg.PublicBaseURL),
 		DevLogin: cfg.DevLogin, Log: log,
 		SyncFeishu: func(ctx context.Context) (int, int, error) {
 			if fs == nil {

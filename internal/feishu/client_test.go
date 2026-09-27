@@ -86,18 +86,28 @@ func TestTenantAccessTokenCaches(t *testing.T) {
 }
 
 func TestExchangeUser(t *testing.T) {
-	c := newCounter()
 	mux := http.NewServeMux()
-	tokenHandler(t, mux, c)
-	mux.HandleFunc("/open-apis/authen/v1/oidc/access_token",
+	// Step 1: code -> user access token (v2 oauth/token, flat OAuth2 response).
+	mux.HandleFunc("/open-apis/authen/v2/oauth/token",
 		func(w http.ResponseWriter, r *http.Request) {
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body["grant_type"] != "authorization_code" || body["code"] != "the-code" {
-				t.Errorf("unexpected exchange body: %v", body)
+				t.Errorf("unexpected token body: %v", body)
 			}
-			if got := r.Header.Get("Authorization"); got != "Bearer tok-abc" {
-				t.Errorf("Authorization = %q, want Bearer tok-abc", got)
+			if body["client_id"] != "app" || body["client_secret"] != "secret" {
+				t.Errorf("client creds not sent: %v", body)
+			}
+			if body["redirect_uri"] != "http://cb" {
+				t.Errorf("redirect_uri = %q", body["redirect_uri"])
+			}
+			writeJSON(t, w, map[string]any{"code": 0, "access_token": "u-alice-token", "token_type": "Bearer", "expires_in": 7200})
+		})
+	// Step 2: user access token -> profile (v1 user_info).
+	mux.HandleFunc("/open-apis/authen/v1/user_info",
+		func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got != "Bearer u-alice-token" {
+				t.Errorf("Authorization = %q, want Bearer u-alice-token", got)
 			}
 			writeJSON(t, w, map[string]any{
 				"code": 0,
@@ -289,13 +299,23 @@ func TestAPIErrorNonZeroCode(t *testing.T) {
 
 func TestOAuthURL(t *testing.T) {
 	cl := feishu.NewClient("https://open.feishu.cn", "cli_app", "secret", http.DefaultClient)
-	got := cl.OAuthURL("st ate", "https://cb/x?y=1")
-	if !hasPrefix(got, "https://open.feishu.cn/open-apis/authen/v1/authorize?") {
+	got := cl.OAuthURL("st ate", "https://cb/x?y=1", "")
+	// Authorize lives on accounts.feishu.cn, uses client_id + response_type=code.
+	if !hasPrefix(got, "https://accounts.feishu.cn/open-apis/authen/v1/authorize?") {
 		t.Fatalf("url prefix wrong: %q", got)
 	}
-	if !contains(got, "app_id=cli_app") ||
+	if !contains(got, "client_id=cli_app") ||
+		!contains(got, "response_type=code") ||
 		!contains(got, "state=st+ate") ||
 		!contains(got, "redirect_uri=https%3A%2F%2Fcb%2Fx%3Fy%3D1") {
 		t.Fatalf("url missing encoded params: %q", got)
+	}
+	// Scope is included only when non-empty.
+	if contains(got, "scope=") {
+		t.Fatalf("empty scope should be omitted: %q", got)
+	}
+	got2 := cl.OAuthURL("s", "https://cb", "contact:user.base:readonly")
+	if !contains(got2, "scope=contact") {
+		t.Fatalf("scope not included: %q", got2)
 	}
 }
