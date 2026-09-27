@@ -30,6 +30,15 @@ type Config struct {
 	EgressEchoURL        string
 	DevLogin             bool
 	Timezone             *time.Location
+
+	// Blob storage backend: "postgres" (default) or "s3".
+	BlobBackend string
+	S3Endpoint  string
+	S3Region    string
+	S3Bucket    string
+	S3AccessKey string
+	S3SecretKey string
+	S3UseSSL    bool
 }
 
 func getenv(key, def string) string {
@@ -58,6 +67,13 @@ func Load() (*Config, error) {
 		SpoolDir:         getenv("SPOOL_DIR", "./spool"),
 		EgressEchoURL:    getenv("EGRESS_ECHO_URL", "https://api.ipify.org?format=text"),
 		DevLogin:         strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN")), "true"),
+		BlobBackend:      strings.ToLower(getenv("BLOB_BACKEND", "postgres")),
+		S3Endpoint:       strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
+		S3Region:         strings.TrimSpace(os.Getenv("S3_REGION")),
+		S3Bucket:         strings.TrimSpace(os.Getenv("S3_BUCKET")),
+		S3AccessKey:      strings.TrimSpace(os.Getenv("S3_ACCESS_KEY")),
+		S3SecretKey:      strings.TrimSpace(os.Getenv("S3_SECRET_KEY")),
+		S3UseSSL:         !strings.EqualFold(strings.TrimSpace(os.Getenv("S3_USE_SSL")), "false"),
 	}
 
 	if c.DatabaseURL == "" {
@@ -73,6 +89,15 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: MASTER_KEY: %w", err)
 	}
 	c.MasterKey = key
+
+	if c.BlobBackend != "postgres" && c.BlobBackend != "s3" {
+		return nil, fmt.Errorf("config: BLOB_BACKEND must be postgres or s3, got %q", c.BlobBackend)
+	}
+	if c.BlobBackend == "s3" {
+		if c.S3Endpoint == "" || c.S3Bucket == "" || c.S3AccessKey == "" || c.S3SecretKey == "" {
+			return nil, fmt.Errorf("config: BLOB_BACKEND=s3 requires S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY")
+		}
+	}
 
 	c.BootstrapSuperAdmins = splitList(os.Getenv("BOOTSTRAP_SUPER_ADMINS"))
 

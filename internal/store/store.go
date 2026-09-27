@@ -17,13 +17,28 @@ var (
 	ErrConflict = errors.New("store: conflict")
 )
 
-// Store wraps a pgx pool.
+// BlobBackend stores opaque (already-compressed) blob bytes outside Postgres,
+// e.g. in S3/R2. Keys are content-addressed. Implementations live in
+// internal/blobstore; a nil backend means blobs are kept inline in Postgres.
+type BlobBackend interface {
+	Put(ctx context.Context, key string, data []byte) error
+	Get(ctx context.Context, key string) ([]byte, error)
+	Delete(ctx context.Context, keys []string) error
+}
+
+// Store wraps a pgx pool and an optional external blob backend.
 type Store struct {
-	Pool *pgxpool.Pool
+	Pool        *pgxpool.Pool
+	blobBackend BlobBackend
 }
 
 // New creates a Store.
 func New(pool *pgxpool.Pool) *Store { return &Store{Pool: pool} }
+
+// SetBlobBackend switches blob byte storage to an external backend (S3/R2).
+// When set, new blobs store their bytes in the backend and only metadata in
+// Postgres; a nil backend (default) keeps bytes inline in the blobs table.
+func (s *Store) SetBlobBackend(b BlobBackend) { s.blobBackend = b }
 
 // DeviceProfile is the stable per-account fingerprint used for non-Codex clients.
 type DeviceProfile struct {

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"aiseat/internal/blobstore"
 	"aiseat/internal/config"
 	"aiseat/internal/cpa"
 	"aiseat/internal/db"
@@ -54,6 +55,21 @@ func runServe() error {
 	box, err := secure.NewBox(cfg.MasterKey)
 	if err != nil {
 		return err
+	}
+
+	// Optional external blob backend (S3/R2/OSS) for conversation content.
+	if cfg.BlobBackend == "s3" {
+		bs, err := blobstore.NewS3(ctx, blobstore.S3Config{
+			Endpoint: cfg.S3Endpoint, Region: cfg.S3Region, Bucket: cfg.S3Bucket,
+			AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, UseSSL: cfg.S3UseSSL,
+		})
+		if err != nil {
+			return err
+		}
+		st.SetBlobBackend(bs)
+		log.Info("blob backend: s3", "endpoint", cfg.S3Endpoint, "bucket", cfg.S3Bucket)
+	} else {
+		log.Info("blob backend: postgres (inline)")
 	}
 
 	upstream := &http.Client{} // no client timeout; per-request contexts bound it
