@@ -1,0 +1,516 @@
+package risk
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"aiseat/internal/settings"
+	"aiseat/internal/store"
+)
+
+// Rule names.
+const (
+	RuleNewDevice           = "new_device"
+	RuleNonCodexBlocked     = "non_codex_blocked"
+	RuleDatacenterIP        = "datacenter_ip"
+	RuleTooManyDevices      = "too_many_devices"
+	RuleConcurrentUntrusted = "concurrent_untrusted"
+	RuleMultiNetwork        = "multi_network"
+	RuleDeviceDenied        = "device_denied"
+	RuleVolumeSpike         = "volume_spike"
+	RuleSleepless           = "sleepless"
+)
+
+// multiNetworkMin is how many distinct coarse networks inside the concurrency
+// window count as "the key is being used from several places at once".
+const multiNetworkMin = 3
+
+// Messenger delivers a text message to a Feishu open_id.
+type Messenger interface {
+	SendText(ctx context.Context, openID, text string) error
+}
+
+// Config wires an Engine.
+type Config struct {
+	Store     *store.Store
+	Settings  *settings.Service
+	Geo       GeoLookup // optional
+	Messenger Messenger // optional; nil disables notifications
+	PortalURL string    // public base URL of the portal
+	Log       *slog.Logger
+	Now       func() time.Time // for tests
+}
+
+// CachedDevice is the gate-relevant view of a device.
+type CachedDevice struct {
+	ID        int64
+	Status    string
+	FirstSeen time.Time
+	Label     string
+}
+
+// Observation is what the data plane reports about one request.
+type Observation struct {
+	EmployeeID int64
+	OpenID     string
+	Device     CachedDevice // zero ID when the request was rejected before device lookup
+	NewDevice  bool
+	IP         string
+	At         time.Time
+	ClientKind string
+	UserAgent  string
+	Denied     string // gate error code when the request was rejected
+}
+
+type cacheEntry struct {
+	dev CachedDevice
+	at  time.Time
+}
+
+// Engine registers devices for the data-plane gate and evaluates risk rules
+// asynchronously so requests are never slowed by detection work.
+type Engine struct {
+	cfg Config
+	log *slog.Logger
+	ch  chan Observation
+	wg  sync.WaitGroup
+	win *window
+
+	devMu sync.Mutex
+	devs  map[int64]map[string]cacheEntry
+
+	seenMu sync.Mutex
+	seen   map[string]time.Time
+}
+
+const deviceCacheTTL = 15 * time.Second
+
+// NewEngine builds an Engine. Call Start to run the worker.
+func NewEngine(cfg Config) *Engine {
+	if cfg.Log == nil {
+		cfg.Log = slog.Default()
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	return &Engine{
+		cfg: cfg, log: cfg.Log, ch: make(chan Observation, 4096), win: newWindow(),
+		devs: make(map[int64]map[string]cacheEntry), seen: make(map[string]time.Time),
+	}
+}
+
+// Start runs the observation worker until ctx is done.
+func (e *Engine) Start(ctx context.Context) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case o := <-e.ch:
+				e.process(ctx, o)
+				e.wg.Done()
+			}
+		}
+	}()
+}
+
+// Flush waits for queued observations to be processed (tests).
+func (e *Engine) Flush() { e.wg.Wait() }
+
+// Observe queues an observation without blocking; it is dropped when the queue
+// is full (detection is best-effort, serving requests is not).
+func (e *Engine) Observe(o Observation) {
+	e.wg.Add(1)
+	select {
+	case e.ch <- o:
+	default:
+		e.wg.Done()
+		e.log.Warn("risk: observation queue full, dropping", "employee", o.EmployeeID)
+	}
+}
+
+// PortalDevicesURL is where employees confirm devices.
+func (e *Engine) PortalDevicesURL() string {
+	return strings.TrimRight(e.cfg.PortalURL, "/") + "/devices"
+}
+
+// Device returns the (cached) device for the request, registering it as
+// pending on first sight. created is true when this call registered it.
+func (e *Engine) Device(ctx context.Context, employeeID int64, info DeviceInfo, clientKind, ip string) (CachedDevice, bool, error) {
+	now := e.cfg.Now()
+	e.devMu.Lock()
+	if ent, ok := e.devs[employeeID][info.Key]; ok && now.Sub(ent.at) < deviceCacheTTL {
+		e.devMu.Unlock()
+		return ent.dev, false, nil
+	}
+	e.devMu.Unlock()
+
+	d, created, err := e.cfg.Store.EnsureDevice(ctx, store.Device{
+		EmployeeID: employeeID, DeviceKey: info.Key, Kind: info.Kind, Label: info.Label,
+		ClientKind: clientKind, UserAgent: info.UserAgent, FirstIP: ip,
+	})
+	if err != nil {
+		return CachedDevice{}, false, err
+	}
+	cd := CachedDevice{ID: d.ID, Status: d.Status, FirstSeen: d.FirstSeen, Label: d.Label}
+	e.devMu.Lock()
+	if e.devs[employeeID] == nil {
+		e.devs[employeeID] = make(map[string]cacheEntry)
+	}
+	e.devs[employeeID][info.Key] = cacheEntry{dev: cd, at: now}
+	e.devMu.Unlock()
+	return cd, created, nil
+}
+
+// DeviceChanged drops cached state after a device's status changed so the
+// gate sees it immediately.
+func (e *Engine) DeviceChanged(employeeID, deviceID int64, status string) {
+	e.devMu.Lock()
+	delete(e.devs, employeeID)
+	e.devMu.Unlock()
+	e.win.setTrusted(employeeID, deviceID, status == store.DeviceTrusted)
+}
+
+// Unfrozen resets an employee's in-memory detection state after an admin
+// unfreeze, so stale sightings do not immediately freeze them again.
+func (e *Engine) Unfrozen(employeeID int64) {
+	e.devMu.Lock()
+	delete(e.devs, employeeID)
+	e.devMu.Unlock()
+	e.win.forget(employeeID)
+	prefix := fmt.Sprintf("%d|", employeeID)
+	e.seenMu.Lock()
+	for k := range e.seen {
+		if strings.HasPrefix(k, prefix) {
+			delete(e.seen, k)
+		}
+	}
+	e.seenMu.Unlock()
+}
+
+// once reports whether a (employee, rule, key) alert should fire now, muting
+// repeats within span. With useDB it also consults stored events so restarts
+// do not re-alert.
+func (e *Engine) once(ctx context.Context, emp int64, rule, key string, span time.Duration, useDB bool) bool {
+	now := e.cfg.Now()
+	k := fmt.Sprintf("%d|%s|%s", emp, rule, key)
+	e.seenMu.Lock()
+	if t, ok := e.seen[k]; ok && now.Sub(t) < span {
+		e.seenMu.Unlock()
+		return false
+	}
+	e.seen[k] = now
+	if len(e.seen) > 20000 {
+		for kk, t := range e.seen {
+			if now.Sub(t) > 48*time.Hour {
+				delete(e.seen, kk)
+			}
+		}
+	}
+	e.seenMu.Unlock()
+	if useDB {
+		if has, err := e.cfg.Store.HasRecentRiskEvent(ctx, emp, rule, nil, now.Add(-span)); err == nil && has {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *Engine) process(ctx context.Context, o Observation) {
+	set := e.cfg.Settings.Get(ctx)
+	now := o.At
+
+	if o.Denied == "client_not_allowed" {
+		if e.once(ctx, o.EmployeeID, RuleNonCodexBlocked, "", 24*time.Hour, true) {
+			ev := e.addEvent(ctx, o.EmployeeID, RuleNonCodexBlocked, "warn", nil, nil,
+				map[string]any{"user_agent": o.UserAgent, "ip": o.IP, "client_kind": o.ClientKind})
+			e.notifyEmployee(ctx, o.OpenID, fmt.Sprintf(
+				"【AI 网关】有一个非 Codex 客户端用你的 Key 发起了请求，已被拦截。\n客户端：%s\nIP：%s\n公司只允许用官方 Codex 客户端。如果不是你本人操作，说明 Key 可能已经泄露，请到门户重新生成：%s",
+				short(o.UserAgent), o.IP, e.cfg.PortalURL))
+			e.markNotified(ctx, ev)
+		}
+		return
+	}
+	if o.Device.ID == 0 {
+		return
+	}
+	devID := o.Device.ID
+
+	if o.NewDevice {
+		ev := e.addEvent(ctx, o.EmployeeID, RuleNewDevice, "warn", &devID, nil,
+			map[string]any{"label": o.Device.Label, "ip": o.IP, "location": e.location(o.IP)})
+		hint := fmt.Sprintf("请在 %d 小时内确认，逾期会暂停这台设备。", set.DeviceConfirmHours)
+		if o.Denied != "" {
+			hint = "这台设备在确认前无法使用。"
+		} else if set.RiskMode == settings.RiskLax {
+			hint = "请及时确认。"
+		}
+		e.notifyEmployee(ctx, o.OpenID, fmt.Sprintf(
+			"【AI 网关】你的 Key 在一台新设备上被使用。\n设备：%s\nIP：%s %s\n如果是你本人，请到门户确认；如果不是你，请点「不是我」，Key 会立即作废。%s\n%s",
+			o.Device.Label, o.IP, e.location(o.IP), hint, e.PortalDevicesURL()))
+		_ = e.cfg.Store.MarkDeviceNotified(ctx, devID)
+		e.markNotified(ctx, ev)
+		e.checkDeviceCount(ctx, o, set)
+	}
+	if o.Denied != "" {
+		return
+	}
+
+	_ = e.cfg.Store.TouchDevice(ctx, devID, o.IP, now)
+
+	key, coarse := NetKeys(o.IP)
+	if key == "" {
+		return
+	}
+	var geo GeoInfo
+	if e.cfg.Geo != nil {
+		geo, _ = e.cfg.Geo.Lookup(o.IP)
+	}
+	nw, newNet, err := e.cfg.Store.UpsertNetwork(ctx, store.Network{
+		EmployeeID: o.EmployeeID, NetKey: key, IPSample: o.IP, Country: geo.Country,
+		Province: geo.Province, City: geo.City, ISP: geo.ISP, Datacenter: geo.Datacenter,
+	}, now)
+	if err != nil {
+		e.log.Warn("risk: upsert network", "err", err)
+	} else if newNet && nw.Datacenter {
+		nid := nw.ID
+		ev := e.addEvent(ctx, o.EmployeeID, RuleDatacenterIP, "warn", &devID, &nid,
+			map[string]any{"ip": o.IP, "isp": geo.ISP, "location": e.location(o.IP)})
+		msg := fmt.Sprintf("Key 从机房/云服务器网络发起请求：%s（%s %s），设备：%s", o.IP, e.location(o.IP), geo.ISP, o.Device.Label)
+		e.notifyEmployee(ctx, o.OpenID, "【AI 网关】你的 "+msg+"。如果是你挂了 VPN/代理，请改为直连；如果不是你，请到门户处理："+e.PortalDevicesURL())
+		e.notifyAdmins(ctx, o.EmployeeID, msg)
+		e.markNotified(ctx, ev)
+	}
+
+	span := time.Duration(set.ConcurrencyWindowMinutes) * time.Minute
+	grace := time.Duration(set.NewDeviceGraceMinutes) * time.Minute
+	snap := e.win.add(o.EmployeeID, sighting{
+		Device: devID, Net: coarse, At: now,
+		Trusted: o.Device.Status == store.DeviceTrusted, FirstSeen: o.Device.FirstSeen,
+	}, span)
+	for _, f := range evalWindow(snap, now, grace, multiNetworkMin) {
+		e.high(ctx, o, set, f)
+	}
+}
+
+// high handles a high-severity window finding: record, freeze (unless lax) and notify.
+func (e *Engine) high(ctx context.Context, o Observation, set settings.Settings, f finding) {
+	if !e.once(ctx, o.EmployeeID, f.Rule, "", time.Hour, false) {
+		return
+	}
+	var dev *int64
+	if f.DeviceID != 0 {
+		d := f.DeviceID
+		dev = &d
+	}
+	ev := e.addEvent(ctx, o.EmployeeID, f.Rule, "high", dev, nil, f.Detail)
+	reason := describeRule(f.Rule)
+	if set.RiskMode == settings.RiskLax {
+		e.notifyAdmins(ctx, o.EmployeeID, reason+"（宽松模式：仅通知，未冻结）"+detailText(f.Detail))
+		e.markNotified(ctx, ev)
+		return
+	}
+	froze, err := e.cfg.Store.FreezeEmployee(ctx, o.EmployeeID, reason)
+	if err != nil {
+		e.log.Warn("risk: freeze", "employee", o.EmployeeID, "err", err)
+		return
+	}
+	if froze {
+		e.notifyEmployee(ctx, o.OpenID, fmt.Sprintf(
+			"【AI 网关】你的 Key 已被暂停使用。\n原因：%s。\n这通常说明 Key 可能被他人使用。请联系管理员核实后解冻。", reason))
+		e.notifyAdmins(ctx, o.EmployeeID, reason+"，已自动冻结，请核实后在「风险中心」解冻。"+detailText(f.Detail))
+	}
+	e.markNotified(ctx, ev)
+}
+
+func (e *Engine) checkDeviceCount(ctx context.Context, o Observation, set settings.Settings) {
+	n, err := e.cfg.Store.CountActiveDevices(ctx, o.EmployeeID, e.cfg.Now().Add(-7*24*time.Hour))
+	if err != nil || n <= set.MaxActiveDevices {
+		return
+	}
+	if !e.once(ctx, o.EmployeeID, RuleTooManyDevices, "", 24*time.Hour, true) {
+		return
+	}
+	ev := e.addEvent(ctx, o.EmployeeID, RuleTooManyDevices, "warn", nil, nil,
+		map[string]any{"active_devices": n, "limit": set.MaxActiveDevices})
+	e.notifyAdmins(ctx, o.EmployeeID, fmt.Sprintf("7 天内在 %d 台设备上使用（上限 %d）", n, set.MaxActiveDevices))
+	e.markNotified(ctx, ev)
+}
+
+// Notify sends an ad-hoc message to an employee (no-op without a messenger).
+func (e *Engine) Notify(ctx context.Context, openID, text string) {
+	e.notifyEmployee(ctx, openID, text)
+}
+
+// DeviceDenied handles an employee reporting "not me" for a device: the caller
+// has already blocked the device and revoked the key.
+func (e *Engine) DeviceDenied(ctx context.Context, emp store.Employee, dev store.Device) {
+	id := dev.ID
+	ev := e.addEvent(ctx, emp.ID, RuleDeviceDenied, "high", &id, nil,
+		map[string]any{"label": dev.Label, "last_ip": dev.LastIP, "requests": dev.Requests})
+	e.DeviceChanged(emp.ID, dev.ID, store.DeviceBlocked)
+	e.notifyAdmins(ctx, emp.ID, fmt.Sprintf("员工报告设备「%s」不是本人（最近 IP %s，%d 次请求），已拉黑设备并作废 Key",
+		dev.Label, dev.LastIP, dev.Requests))
+	e.markNotified(ctx, ev)
+}
+
+// ExpirePending marks pending devices past the confirmation window as expired
+// and tells their owners.
+func (e *Engine) ExpirePending(ctx context.Context) error {
+	set := e.cfg.Settings.Get(ctx)
+	if set.RiskMode == settings.RiskLax {
+		return nil
+	}
+	cutoff := e.cfg.Now().Add(-time.Duration(set.DeviceConfirmHours) * time.Hour)
+	devs, err := e.cfg.Store.ExpirePendingDevices(ctx, cutoff)
+	if err != nil {
+		return err
+	}
+	for _, d := range devs {
+		e.DeviceChanged(d.EmployeeID, d.ID, store.DeviceExpired)
+		emp, err := e.cfg.Store.GetEmployee(ctx, d.EmployeeID)
+		if err != nil {
+			continue
+		}
+		e.notifyEmployee(ctx, emp.FeishuOpenID, fmt.Sprintf(
+			"【AI 网关】设备「%s」超过 %d 小时没有确认，已暂停使用。如果是你本人的设备，确认后即可恢复：%s",
+			d.Label, set.DeviceConfirmHours, e.PortalDevicesURL()))
+	}
+	return nil
+}
+
+// DailyCheck evaluates volume_spike and sleepless for the day [from, from+24h)
+// and sends administrators one summary.
+func (e *Engine) DailyCheck(ctx context.Context, from time.Time) error {
+	to := from.Add(24 * time.Hour)
+	usage, err := e.cfg.Store.UsageForWindow(ctx, from, to)
+	if err != nil {
+		return err
+	}
+	var lines []string
+	for _, u := range usage {
+		name := e.employeeName(ctx, u.EmployeeID)
+		if u.ActiveHours >= 20 {
+			e.addEvent(ctx, u.EmployeeID, RuleSleepless, "warn", nil, nil,
+				map[string]any{"day": from.Format("2006-01-02"), "active_hours": u.ActiveHours})
+			lines = append(lines, fmt.Sprintf("· %s：%d 个小时都有请求", name, u.ActiveHours))
+		}
+		median, days, err := e.cfg.Store.MedianDailyRequests(ctx, u.EmployeeID, from.AddDate(0, 0, -14), from)
+		if err != nil || days < 3 {
+			continue
+		}
+		if u.Requests >= 200 && float64(u.Requests) > 3*median {
+			e.addEvent(ctx, u.EmployeeID, RuleVolumeSpike, "warn", nil, nil,
+				map[string]any{"day": from.Format("2006-01-02"), "requests": u.Requests, "median_14d": median})
+			lines = append(lines, fmt.Sprintf("· %s：%d 次请求，是平时（中位数 %.0f）的 %.1f 倍", name, u.Requests, median, float64(u.Requests)/median))
+		}
+	}
+	if len(lines) > 0 {
+		e.broadcastAdmins(ctx, fmt.Sprintf("【AI 网关·风险日报 %s】\n%s\n详情见门户「风险中心」。", from.Format("01-02"), strings.Join(lines, "\n")))
+	}
+	return nil
+}
+
+// --- helpers ---
+
+func (e *Engine) addEvent(ctx context.Context, emp int64, rule, sev string, dev, nw *int64, detail map[string]any) store.RiskEvent {
+	ev, err := e.cfg.Store.AddRiskEvent(ctx, store.RiskEvent{
+		EmployeeID: emp, Rule: rule, Severity: sev, DeviceID: dev, NetworkID: nw, Detail: detail,
+	})
+	if err != nil {
+		e.log.Warn("risk: add event", "rule", rule, "employee", emp, "err", err)
+	}
+	return ev
+}
+
+func (e *Engine) markNotified(ctx context.Context, ev store.RiskEvent) {
+	if ev.ID != 0 && e.cfg.Messenger != nil {
+		_ = e.cfg.Store.MarkRiskEventNotified(ctx, ev.ID)
+	}
+}
+
+func (e *Engine) notifyEmployee(ctx context.Context, openID, text string) {
+	if e.cfg.Messenger == nil || openID == "" {
+		return
+	}
+	if err := e.cfg.Messenger.SendText(ctx, openID, text); err != nil {
+		e.log.Warn("risk: notify employee", "err", err)
+	}
+}
+
+func (e *Engine) notifyAdmins(ctx context.Context, emp int64, what string) {
+	e.broadcastAdmins(ctx, fmt.Sprintf("【AI 网关·风险】%s：%s", e.employeeName(ctx, emp), what))
+}
+
+func (e *Engine) broadcastAdmins(ctx context.Context, text string) {
+	if e.cfg.Messenger == nil {
+		return
+	}
+	ids, err := e.cfg.Store.SuperAdminOpenIDs(ctx)
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		if err := e.cfg.Messenger.SendText(ctx, id, text); err != nil {
+			e.log.Warn("risk: notify admin", "err", err)
+		}
+	}
+}
+
+func (e *Engine) employeeName(ctx context.Context, id int64) string {
+	if emp, err := e.cfg.Store.GetEmployee(ctx, id); err == nil && emp.Name != "" {
+		return emp.Name
+	}
+	return fmt.Sprintf("员工#%d", id)
+}
+
+func (e *Engine) location(ip string) string {
+	if e.cfg.Geo == nil {
+		return ""
+	}
+	g, ok := e.cfg.Geo.Lookup(ip)
+	if !ok {
+		return ""
+	}
+	parts := []string{}
+	for _, p := range []string{g.Country, g.Province, g.City} {
+		if p != "" && (len(parts) == 0 || parts[len(parts)-1] != p) {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func describeRule(rule string) string {
+	switch rule {
+	case RuleConcurrentUntrusted:
+		return "未确认的设备与另一台设备在不同网络同时使用 Key"
+	case RuleMultiNetwork:
+		return "短时间内在 3 个以上不同网络同时使用 Key"
+	case RuleDeviceDenied:
+		return "员工报告有设备不是本人"
+	default:
+		return rule
+	}
+}
+
+func detailText(d map[string]any) string {
+	if len(d) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\n详情：%v", d)
+}
+
+func short(s string) string {
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	if s == "" {
+		return "（无 User-Agent）"
+	}
+	return s
+}

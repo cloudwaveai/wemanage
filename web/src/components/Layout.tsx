@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "./Toast";
@@ -35,6 +35,12 @@ const PERSONAL: NavItem[] = [
     label: "我的 Key",
     roles: ["employee", "leader", "super_admin"],
     icon: I("M15 7a4 4 0 11-4 4m4-4l6 6m-3-3l-2 2M7 11a4 4 0 108 0 4 4 0 00-8 0z"),
+  },
+  {
+    to: "/devices",
+    label: "我的设备",
+    roles: ["employee", "leader", "super_admin"],
+    icon: I("M4 5h16a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM8 20h8M12 16v4"),
   },
   {
     to: "/config",
@@ -80,6 +86,12 @@ const ADMIN: NavItem[] = [
     icon: I("M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4z"),
   },
   {
+    to: "/risk",
+    label: "风险中心",
+    roles: ["super_admin"],
+    icon: I("M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3zM12 8v5M12 16h.01"),
+  },
+  {
     to: "/accounts",
     label: "账号",
     roles: ["super_admin"],
@@ -118,11 +130,13 @@ function NavSection({
   items,
   role,
   onNavigate,
+  counts = {},
 }: {
   title: string;
   items: NavItem[];
   role: Role;
   onNavigate: () => void;
+  counts?: Record<string, number>;
 }) {
   const visible = items.filter((i) => i.roles.includes(role));
   if (!visible.length) return null;
@@ -147,11 +161,51 @@ function NavSection({
           >
             <span className="text-slate-400">{item.icon}</span>
             {item.label}
+            {(counts[item.to] ?? 0) > 0 && (
+              <span className="ml-auto rounded-full bg-amber-500 px-1.5 py-px text-[10px] font-semibold leading-4 text-white">
+                {counts[item.to]}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
     </div>
   );
+}
+
+// Account-level warnings shown above every page: a frozen key wins over
+// devices awaiting confirmation.
+function RiskBanner() {
+  const { me } = useAuth();
+  const { pathname } = useLocation();
+  if (!me) return null;
+
+  if (me.frozen) {
+    return (
+      <div className="mb-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        你的 Key 已被冻结：{me.frozen_reason || "未说明原因"}
+        。这通常表示 Key 可能被他人使用，需要管理员核实后解冻。
+      </div>
+    );
+  }
+
+  const n = me.pending_devices ?? 0;
+  if (n > 0) {
+    return (
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <span>有 {n} 台设备等待你确认，确认前可能无法使用。</span>
+        {pathname !== "/devices" && (
+          <Link
+            to="/devices"
+            className="font-medium text-amber-900 underline underline-offset-2 hover:text-amber-700"
+          >
+            去确认
+          </Link>
+        )}
+      </div>
+    );
+  }
+  return null;
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -184,7 +238,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-2 py-2">
-        <NavSection title="个人" items={PERSONAL} role={role} onNavigate={closeMobile} />
+        <NavSection
+          title="个人"
+          items={PERSONAL}
+          role={role}
+          onNavigate={closeMobile}
+          counts={{ "/devices": me?.pending_devices ?? 0 }}
+        />
         <NavSection
           title="监管"
           items={OVERSIGHT}
@@ -273,6 +333,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </header>
 
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
+          <RiskBanner />
           {children}
         </main>
       </div>

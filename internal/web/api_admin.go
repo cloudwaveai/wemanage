@@ -58,6 +58,7 @@ func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 			"is_super_admin": e.IsSuperAdmin, "notice_acked": e.NoticeAckAt != nil,
 			"account_id": e.AccountID, "account_email": e.AccountEmail, "account_status": e.AccountStatus,
 			"active_key_prefix": e.ActiveKeyPrefix, "department_names": e.DepartmentNames,
+			"frozen": e.FrozenAt != nil, "frozen_reason": e.FrozenReason, "open_risk_events": e.OpenRiskEvents,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"employees": out})

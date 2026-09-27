@@ -21,20 +21,22 @@ type EmployeeRow struct {
 	AccountStatus   string
 	ActiveKeyPrefix string
 	DepartmentNames []string
+	OpenRiskEvents  int
 }
 
 func scanEmployee(r pgx.Row) (Employee, error) {
 	var e Employee
 	var openID *string
 	err := r.Scan(&e.ID, &openID, &e.FeishuUnionID, &e.FeishuUserID, &e.Name,
-		&e.Email, &e.AvatarURL, &e.Status, &e.IsSuperAdmin, &e.NoticeAckAt, &e.CreatedAt)
+		&e.Email, &e.AvatarURL, &e.Status, &e.IsSuperAdmin, &e.NoticeAckAt, &e.CreatedAt,
+		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason)
 	if openID != nil {
 		e.FeishuOpenID = *openID
 	}
 	return e, err
 }
 
-const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at`
+const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason`
 
 // GetEmployee returns one employee by id.
 func (s *Store) GetEmployee(ctx context.Context, id int64) (Employee, error) {
@@ -98,9 +100,49 @@ func (s *Store) SetSuperAdmin(ctx context.Context, id int64, v bool) error {
 }
 
 // AckNotice records that the employee acknowledged the logging notice now.
-func (s *Store) AckNotice(ctx context.Context, id int64) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE employees SET notice_ack_at=now(), updated_at=now() WHERE id=$1 AND notice_ack_at IS NULL`, id)
+func (s *Store) AckNotice(ctx context.Context, id int64, version int) error {
+	_, err := s.Pool.Exec(ctx, `
+		UPDATE employees SET notice_ack_at=now(), notice_ack_version=GREATEST(notice_ack_version,$2), updated_at=now()
+		WHERE id=$1`, id, version)
 	return err
+}
+
+// FreezeEmployee freezes an employee (all keys unusable, no self-service key
+// reissue) until an admin unfreezes. A no-op if already frozen.
+func (s *Store) FreezeEmployee(ctx context.Context, id int64, reason string) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE employees SET frozen_at=now(), frozen_reason=$2, updated_at=now()
+		WHERE id=$1 AND frozen_at IS NULL`, id, reason)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// UnfreezeEmployee clears a freeze.
+func (s *Store) UnfreezeEmployee(ctx context.Context, id int64) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE employees SET frozen_at=NULL, frozen_reason='', updated_at=now() WHERE id=$1`, id)
+	return err
+}
+
+// SuperAdminOpenIDs returns the Feishu open_ids of active super admins.
+func (s *Store) SuperAdminOpenIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT feishu_open_id FROM employees
+		WHERE is_super_admin AND status='active' AND feishu_open_id IS NOT NULL AND feishu_open_id <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // DisableEmployeesNotIn disables every active employee whose open_id is not in keep.
@@ -123,7 +165,9 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 			e.email, e.avatar_url, e.status, e.is_super_admin, e.notice_ack_at, e.created_at,
 			a.id, COALESCE(a.email,''), COALESCE(a.status,''),
 			COALESCE(k.key_prefix,''),
-			COALESCE(ARRAY_AGG(d.name) FILTER (WHERE d.name IS NOT NULL), '{}')
+			COALESCE(ARRAY_AGG(d.name) FILTER (WHERE d.name IS NOT NULL), '{}'),
+			e.frozen_at, e.frozen_reason,
+			(SELECT COUNT(*) FROM risk_events r WHERE r.employee_id = e.id AND r.resolved_at IS NULL)
 		FROM employees e
 		LEFT JOIN upstream_accounts a ON a.employee_id = e.id
 		LEFT JOIN api_keys k ON k.employee_id = e.id AND k.revoked_at IS NULL
@@ -144,7 +188,8 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 		var openID *string
 		err := rows.Scan(&er.ID, &openID, &er.FeishuUnionID, &er.FeishuUserID, &er.Name,
 			&er.Email, &er.AvatarURL, &er.Status, &er.IsSuperAdmin, &er.NoticeAckAt, &er.CreatedAt,
-			&er.AccountID, &er.AccountEmail, &er.AccountStatus, &er.ActiveKeyPrefix, &er.DepartmentNames)
+			&er.AccountID, &er.AccountEmail, &er.AccountStatus, &er.ActiveKeyPrefix, &er.DepartmentNames,
+			&er.FrozenAt, &er.FrozenReason, &er.OpenRiskEvents)
 		if err != nil {
 			return nil, err
 		}

@@ -52,16 +52,20 @@ func (s *Store) ActiveKey(ctx context.Context, employeeID int64) (APIKey, error)
 // LookupKey resolves an active key hash to its principal (employee + bound account).
 func (s *Store) LookupKey(ctx context.Context, hash []byte) (KeyPrincipal, error) {
 	var kp KeyPrincipal
-	var noticeAck *any // placeholder, we read via bool expr
-	_ = noticeAck
 	var acctID *int64
+	var openID *string
 	err := s.Pool.QueryRow(ctx, `
-		SELECT k.id, e.id, e.status, (e.notice_ack_at IS NOT NULL), a.id
+		SELECT k.id, e.id, e.feishu_open_id, e.status, (e.notice_ack_at IS NOT NULL), e.notice_ack_version,
+			(e.frozen_at IS NOT NULL), e.frozen_reason, a.id
 		FROM api_keys k
 		JOIN employees e ON e.id = k.employee_id
 		LEFT JOIN upstream_accounts a ON a.employee_id = e.id
 		WHERE k.key_hash=$1 AND k.revoked_at IS NULL`, hash).
-		Scan(&kp.KeyID, &kp.EmployeeID, &kp.EmployeeStatus, &kp.NoticeAcked, &acctID)
+		Scan(&kp.KeyID, &kp.EmployeeID, &openID, &kp.EmployeeStatus, &kp.NoticeAcked, &kp.NoticeAckVersion,
+			&kp.Frozen, &kp.FrozenReason, &acctID)
+	if openID != nil {
+		kp.EmployeeOpenID = *openID
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return KeyPrincipal{}, ErrNotFound
 	}

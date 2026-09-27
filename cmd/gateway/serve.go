@@ -21,6 +21,7 @@ import (
 	"aiseat/internal/proxy"
 	"aiseat/internal/recorder"
 	"aiseat/internal/report"
+	"aiseat/internal/risk"
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
@@ -90,10 +91,28 @@ func runServe() error {
 		}
 	}
 
+	// Anti key-sharing engine.
+	var geo risk.GeoLookup
+	if cfg.GeoIPDB != "" {
+		g, err := risk.NewIP2Region(cfg.GeoIPDB)
+		if err != nil {
+			log.Warn("geoip disabled", "err", err)
+		} else {
+			geo = g
+			log.Info("geoip enabled", "db", cfg.GeoIPDB)
+		}
+	}
+	riskEngine := risk.NewEngine(risk.Config{
+		Store: st, Settings: set, Geo: geo, Messenger: riskMessenger(fs),
+		PortalURL: cfg.PublicBaseURL, Log: log,
+	})
+	riskEngine.Start(ctx)
+
 	// Data plane.
 	dp := proxy.NewHandler(proxy.HandlerDeps{
 		Store: st, Settings: set, Limiter: proxy.NewLimiter(), Recorder: rec,
 		CPABaseURL: cfg.CPABaseURL, CPAAPIKey: cfg.CPAAPIKey, Upstream: upstream, Log: log,
+		Risk: riskEngine, TrustProxy: cfg.TrustProxyHeaders,
 	})
 
 	// Web / management plane.
@@ -105,7 +124,7 @@ func runServe() error {
 		Store: st, Settings: set, Box: box, CPA: cpaClient, Feishu: fs,
 		FeishuLoginScope: cfg.FeishuLoginScope,
 		PublicBaseURL:    cfg.PublicBaseURL, SecureCookies: isHTTPS(cfg.PublicBaseURL),
-		DevLogin: cfg.DevLogin, Log: log,
+		DevLogin: cfg.DevLogin, Log: log, Risk: riskEngine,
 		SyncFeishu: func(ctx context.Context) (int, int, error) {
 			if fs == nil {
 				return 0, 0, errors.New("feishu not configured")
@@ -123,7 +142,7 @@ func runServe() error {
 			Sender: reportSender(fs), Loc: cfg.Timezone, Enabled: set.Get(ctx).ReportEnabled && cfg.ReportLLMAPIKey != "",
 		},
 		EgressEchoURL: cfg.EgressEchoURL, Loc: cfg.Timezone,
-		GitHub: health.GitHub{}, Log: log,
+		GitHub: health.GitHub{}, Risk: riskEngine, Log: log,
 	})
 	c.Start()
 	defer c.Stop()
@@ -163,6 +182,13 @@ func reportSender(fs *feishu.Client) report.Sender {
 }
 
 func notifySender(fs *feishu.Client) notify.Sender {
+	if fs == nil {
+		return nil
+	}
+	return fs
+}
+
+func riskMessenger(fs *feishu.Client) risk.Messenger {
 	if fs == nil {
 		return nil
 	}

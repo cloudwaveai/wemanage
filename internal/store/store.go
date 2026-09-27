@@ -60,6 +60,11 @@ type Employee struct {
 	IsSuperAdmin  bool
 	NoticeAckAt   *time.Time
 	CreatedAt     time.Time
+	// NoticeAckVersion is the usage-notice version the employee last acknowledged.
+	NoticeAckVersion int
+	// FrozenAt is set when risk controls froze the employee; only an admin can clear it.
+	FrozenAt     *time.Time
+	FrozenReason string
 }
 
 // Account is an upstream ChatGPT subscription account.
@@ -108,11 +113,15 @@ type APIKey struct {
 
 // KeyPrincipal is the resolved identity behind an API key, for the data plane.
 type KeyPrincipal struct {
-	KeyID          int64
-	EmployeeID     int64
-	EmployeeStatus string
-	NoticeAcked    bool
-	Account        *Account
+	KeyID            int64
+	EmployeeID       int64
+	EmployeeOpenID   string
+	EmployeeStatus   string
+	NoticeAcked      bool // acknowledged any version
+	NoticeAckVersion int
+	Frozen           bool
+	FrozenReason     string
+	Account          *Account
 }
 
 // AuditEntry is a single append-only audit record.

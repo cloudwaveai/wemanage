@@ -87,3 +87,19 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("defaults should validate: %v", err)
 	}
 }
+
+func TestLegacyNoticeTextUpgraded(t *testing.T) {
+	svc, st, ctx := newSvc(t)
+	// A V1 settings row that stored the old default notice explicitly.
+	legacy := `{"notice_text":"本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。继续使用即表示你已知晓。"}`
+	if err := st.PutSettingRaw(ctx, "gateway", []byte(legacy)); err != nil {
+		t.Fatal(err)
+	}
+	s := svc.Get(ctx)
+	if s.NoticeText != settings.DefaultNoticeText || s.NoticeVersion != settings.Defaults().NoticeVersion {
+		t.Fatalf("legacy notice not upgraded: %q v%d", s.NoticeText, s.NoticeVersion)
+	}
+	if s.RiskMode != settings.RiskStandard || s.AllowNonCodex {
+		t.Fatalf("risk defaults not applied to a V1 row: %+v", s)
+	}
+}

@@ -47,10 +47,34 @@ type Settings struct {
 	ReportLLMModel         string              `json:"report_llm_model"`
 	NoticeText             string              `json:"notice_text"`
 	DefaultDeviceProfile   store.DeviceProfile `json:"default_device_profile"`
+
+	// NoticeVersion is bumped whenever NoticeText changes; employees who acked an
+	// older version must re-acknowledge.
+	NoticeVersion int `json:"notice_version"`
+
+	// Risk controls (anti key-sharing).
+	RiskMode                 string `json:"risk_mode"`       // lax | standard | strict
+	AllowNonCodex            bool   `json:"allow_non_codex"` // false = block non-Codex clients
+	DeviceConfirmHours       int    `json:"device_confirm_hours"`
+	ConcurrencyWindowMinutes int    `json:"concurrency_window_minutes"`
+	NewDeviceGraceMinutes    int    `json:"new_device_grace_minutes"`
+	MaxActiveDevices         int    `json:"max_active_devices"`
+	RequireCodexInstallID    bool   `json:"require_codex_installation_id"`
 }
 
+// Risk modes.
+const (
+	RiskLax      = "lax"
+	RiskStandard = "standard"
+	RiskStrict   = "strict"
+)
+
 // DefaultNoticeText is shown to employees before they can obtain a key.
-const DefaultNoticeText = "本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。继续使用即表示你已知晓。"
+const DefaultNoticeText = "本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。为保障账号安全，还会记录你使用的设备和来源 IP。请勿把 Key 分享给他人，分享或转卖将按公司制度处理。继续使用即表示你已知晓。"
+
+// legacyNoticeTextV1 is the V1 default notice (no device/IP clause). A stored
+// copy of it is upgraded to DefaultNoticeText so the new clause reaches everyone.
+const legacyNoticeTextV1 = "本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。继续使用即表示你已知晓。"
 
 // DefaultRedactionRules returns the built-in secret patterns.
 func DefaultRedactionRules() []RedactionRule {
@@ -89,6 +113,14 @@ func Defaults() Settings {
 			OS:       "Mac OS 26.5.2; arm64",
 			Terminal: "iTerm.app/3.6.11",
 		},
+		NoticeVersion:            2,
+		RiskMode:                 RiskStandard,
+		AllowNonCodex:            false,
+		DeviceConfirmHours:       24,
+		ConcurrencyWindowMinutes: 10,
+		NewDeviceGraceMinutes:    30,
+		MaxActiveDevices:         3,
+		RequireCodexInstallID:    false,
 	}
 }
 
@@ -122,7 +154,7 @@ func mergeDefaults(s Settings) Settings {
 	if s.ModelMismatchThreshold == 0 {
 		s.ModelMismatchThreshold = d.ModelMismatchThreshold
 	}
-	if s.NoticeText == "" {
+	if s.NoticeText == "" || s.NoticeText == legacyNoticeTextV1 {
 		s.NoticeText = d.NoticeText
 	}
 	if s.DefaultDeviceProfile.OS == "" {
@@ -130,6 +162,24 @@ func mergeDefaults(s Settings) Settings {
 	}
 	if s.DefaultDeviceProfile.Terminal == "" {
 		s.DefaultDeviceProfile.Terminal = d.DefaultDeviceProfile.Terminal
+	}
+	if s.NoticeVersion == 0 {
+		s.NoticeVersion = d.NoticeVersion
+	}
+	if s.RiskMode == "" {
+		s.RiskMode = d.RiskMode
+	}
+	if s.DeviceConfirmHours == 0 {
+		s.DeviceConfirmHours = d.DeviceConfirmHours
+	}
+	if s.ConcurrencyWindowMinutes == 0 {
+		s.ConcurrencyWindowMinutes = d.ConcurrencyWindowMinutes
+	}
+	if s.NewDeviceGraceMinutes == 0 {
+		s.NewDeviceGraceMinutes = d.NewDeviceGraceMinutes
+	}
+	if s.MaxActiveDevices == 0 {
+		s.MaxActiveDevices = d.MaxActiveDevices
 	}
 	return s
 }
@@ -147,6 +197,23 @@ func Validate(s Settings) error {
 	}
 	if s.ModelMismatchThreshold < 1 {
 		return fmt.Errorf("model_mismatch_threshold must be >= 1")
+	}
+	switch s.RiskMode {
+	case RiskLax, RiskStandard, RiskStrict:
+	default:
+		return fmt.Errorf("risk_mode must be lax, standard or strict")
+	}
+	if s.DeviceConfirmHours < 1 || s.DeviceConfirmHours > 720 {
+		return fmt.Errorf("device_confirm_hours must be 1..720")
+	}
+	if s.ConcurrencyWindowMinutes < 1 || s.ConcurrencyWindowMinutes > 240 {
+		return fmt.Errorf("concurrency_window_minutes must be 1..240")
+	}
+	if s.NewDeviceGraceMinutes < 1 || s.NewDeviceGraceMinutes > 1440 {
+		return fmt.Errorf("new_device_grace_minutes must be 1..1440")
+	}
+	if s.MaxActiveDevices < 1 || s.MaxActiveDevices > 50 {
+		return fmt.Errorf("max_active_devices must be 1..50")
 	}
 	for _, r := range s.ClientRules {
 		if _, err := regexp.Compile(r.Pattern); err != nil {
@@ -203,6 +270,11 @@ func (s *Service) Get(ctx context.Context) Settings {
 // Put validates and persists settings, invalidating the cache.
 func (s *Service) Put(ctx context.Context, in Settings) error {
 	in = mergeDefaults(in)
+	// Changing the notice text requires everyone to re-acknowledge.
+	cur := s.Get(ctx)
+	if in.NoticeText != cur.NoticeText && in.NoticeVersion <= cur.NoticeVersion {
+		in.NoticeVersion = cur.NoticeVersion + 1
+	}
 	if err := Validate(in); err != nil {
 		return err
 	}

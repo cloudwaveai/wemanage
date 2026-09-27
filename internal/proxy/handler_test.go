@@ -14,6 +14,7 @@ import (
 
 	"aiseat/internal/proxy"
 	"aiseat/internal/recorder"
+	"aiseat/internal/risk"
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
@@ -99,7 +100,23 @@ data: {"type":"response.completed","response":{"model":"gpt-5.1-codex","usage":{
 
 `
 
+type rig struct {
+	r     *chi.Mux
+	st    *store.Store
+	set   *settings.Service
+	key   string
+	rec   *recorder.Recorder
+	eng   *risk.Engine
+	empID int64
+	ctx   context.Context
+}
+
 func harness(t *testing.T, cpa *fakeCPA) (*chi.Mux, *store.Store, string, *recorder.Recorder, context.Context) {
+	h := newRig(t, cpa, settings.RiskStandard)
+	return h.r, h.st, h.key, h.rec, h.ctx
+}
+
+func newRig(t *testing.T, cpa *fakeCPA, mode string) *rig {
 	t.Helper()
 	pool := testutil.NewDB(t)
 	st := store.New(pool)
@@ -107,27 +124,33 @@ func harness(t *testing.T, cpa *fakeCPA) (*chi.Mux, *store.Store, string, *recor
 	box, _ := secure.NewBox(make([]byte, 32))
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	s := settings.Defaults()
+	s.RiskMode = mode
+	if err := set.Put(ctx, s); err != nil {
+		t.Fatal(err)
+	}
 
 	e, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_p", Name: "p"})
-	_ = st.AckNotice(ctx, e.ID)
+	_ = st.AckNotice(ctx, e.ID, settings.Defaults().NoticeVersion)
 	g, _ := st.CreateIPGroup(ctx, box, "g", "", 10)
 	a, _ := st.CreateAccount(ctx, store.Account{CPAAuthName: "c.json", IPGroupID: g.ID, DeviceProfile: store.DeviceProfile{OS: "Linux", Terminal: "x"}})
-	// account id is a.ID; ensure prefix acct-<id> is what the fake expects for models test
 	_ = st.BindAccount(ctx, a.ID, e.ID)
 	plain, _, _ := st.IssueKey(ctx, e.ID)
 
 	rec := recorder.New(st, set, t.TempDir(), nil, 128)
 	rec.Start(ctx)
+	eng := risk.NewEngine(risk.Config{Store: st, Settings: set, PortalURL: "https://portal"})
+	eng.Start(ctx)
 
 	h := proxy.NewHandler(proxy.HandlerDeps{
 		Store: st, Settings: set, Limiter: proxy.NewLimiter(), Recorder: rec,
 		CPABaseURL: cpa.srv.URL, CPAAPIKey: "sk-internal", Upstream: cpa.srv.Client(),
+		Risk: eng, TrustProxy: true,
 	})
 	r := chi.NewRouter()
 	h.Routes(r)
-	// stash the key + account id on the mux via closure vars using headers
 	t.Cleanup(func() { cpa.srv.Close() })
-	return r, st, plain, rec, ctx
+	return &rig{r: r, st: st, set: set, key: plain, rec: rec, eng: eng, empID: e.ID, ctx: ctx}
 }
 
 func doReq(t *testing.T, r http.Handler, key, body string) *httptest.ResponseRecorder {
@@ -269,4 +292,101 @@ data: {"type":"response.completed","response":{"model":"gpt-5.6-luna","usage":{"
 	if !has {
 		t.Fatal("expected model_mismatch signal")
 	}
+}
+
+const codexBody = `{"model":"gpt-5.1-codex","input":[],"client_metadata":{"x-codex-installation-id":"inst-1"}}`
+
+func doUA(t *testing.T, r http.Handler, key, ua, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", ua)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func wantCode(t *testing.T, w *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if w.Code != status || (code != "" && !strings.Contains(w.Body.String(), `"code":"`+code+`"`)) {
+		t.Fatalf("status=%d body=%s, want %d %s", w.Code, w.Body.String(), status, code)
+	}
+}
+
+func TestProxyBlocksNonCodexClient(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	w := doUA(t, h.r, h.key, "curl/8.7.1", codexBody)
+	wantCode(t, w, http.StatusForbidden, "client_not_allowed")
+	h.eng.Flush()
+	evs, _ := h.st.ListRiskEvents(h.ctx, store.RiskEventFilter{EmployeeID: &h.empID})
+	if len(evs) != 1 || evs[0].Rule != "non_codex_blocked" {
+		t.Fatalf("events: %+v", evs)
+	}
+}
+
+func TestProxyFrozenEmployee(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	if _, err := h.st.FreezeEmployee(h.ctx, h.empID, "test"); err != nil {
+		t.Fatal(err)
+	}
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "account_frozen")
+}
+
+func TestProxyStandardRegistersPendingDevice(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "")
+	h.rec.Flush()
+	h.eng.Flush()
+
+	devs, _ := h.st.ListDevices(h.ctx, h.empID)
+	if len(devs) != 1 || devs[0].DeviceKey != "inst:inst-1" || devs[0].Status != store.DevicePending {
+		t.Fatalf("devices: %+v", devs)
+	}
+	var ip string
+	var dev *int64
+	if err := h.st.Pool.QueryRow(h.ctx, `SELECT client_ip, device_id FROM requests`).Scan(&ip, &dev); err != nil {
+		t.Fatal(err)
+	}
+	// httptest's RemoteAddr is a public TEST-NET address, so X-Forwarded-For is ignored.
+	if ip != "192.0.2.1" || dev == nil || *dev != devs[0].ID {
+		t.Fatalf("request client_ip=%q device=%v", ip, dev)
+	}
+}
+
+func TestProxyPendingPastConfirmWindow(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "")
+	h.eng.Flush()
+	if _, err := h.st.Pool.Exec(h.ctx, `UPDATE client_devices SET first_seen = now() - interval '25 hours'`); err != nil {
+		t.Fatal(err)
+	}
+	devs, _ := h.st.ListDevices(h.ctx, h.empID)
+	h.eng.DeviceChanged(h.empID, devs[0].ID, store.DevicePending) // drop the gate cache
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "device_unconfirmed")
+
+	// Once the employee confirms, the device works again.
+	_ = h.st.SetDeviceStatus(h.ctx, devs[0].ID, store.DeviceTrusted, &h.empID)
+	h.eng.DeviceChanged(h.empID, devs[0].ID, store.DeviceTrusted)
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "")
+}
+
+func TestProxyStrictBlocksNewDevice(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStrict)
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "device_unconfirmed")
+	h.eng.Flush()
+	devs, _ := h.st.ListDevices(h.ctx, h.empID)
+	if len(devs) != 1 || devs[0].Status != store.DevicePending {
+		t.Fatalf("strict mode should still register the device as pending: %+v", devs)
+	}
+}
+
+func TestProxyOutdatedNoticeVersion(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	s := h.set.Get(h.ctx)
+	s.NoticeText += "（更新）"
+	if err := h.set.Put(h.ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "notice_required")
 }

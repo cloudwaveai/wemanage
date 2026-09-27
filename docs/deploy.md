@@ -38,6 +38,10 @@ docker compose run --rm gateway admin bootstrap
 2. "账号 → 添加"：选 IP 组 → 打开 OAuth 链接在浏览器登录该员工的 ChatGPT → 回调页打不开属正常，复制地址栏完整 URL 粘回后台 → 选择绑定的员工。
 3. 或用"导入凭证 JSON"（如已有 `~/.codex/auth.json`）。
 
+## 可选：IP 归属地库
+
+防 Key 外泄功能可以用离线 IP 库识别来源省市和"是否机房 IP"。把 ip2region 的 `.xdb` 文件放到 `deploy/geoip/ip2region.xdb`，在 `.env` 里设 `GEOIP_DB=/data/geoip/ip2region.xdb`。不配也能用，只是少了归属地和机房判断。详见 [operations.md](operations.md) 的"风险中心与冻结"。
+
 ## 首批验证
 
 上线前请完成 [verification/README.md](verification/README.md) 的 A/B 两类核实。

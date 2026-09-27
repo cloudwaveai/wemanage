@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { EmployeeRow } from "../lib/types";
@@ -46,7 +47,13 @@ export function EmployeesPage() {
                   >
                     <td className="px-4 py-2.5">
                       <div className="font-medium text-slate-800">
-                        {e.name}
+                        <Link
+                          to={`/risk/employees/${e.id}`}
+                          className="hover:text-indigo-600 hover:underline"
+                          title="查看设备与风险"
+                        >
+                          {e.name}
+                        </Link>
                         {e.is_super_admin && (
                           <span className="ml-1.5 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600">
                             管理员
@@ -58,10 +65,28 @@ export function EmployeesPage() {
                       {e.email || "-"}
                     </td>
                     <td className="px-4 py-2.5">
-                      <StatusBadge
-                        status={e.status === "active" ? "active" : "disabled"}
-                        fallbackLabel={e.status}
-                      />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <StatusBadge
+                          status={e.status === "active" ? "active" : "disabled"}
+                          fallbackLabel={e.status}
+                        />
+                        {e.frozen && (
+                          <span
+                            className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700"
+                            title={e.frozen_reason || undefined}
+                          >
+                            已冻结
+                          </span>
+                        )}
+                        {e.open_risk_events > 0 && (
+                          <Link
+                            to={`/risk/employees/${e.id}`}
+                            className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-200"
+                          >
+                            {e.open_risk_events} 条风险
+                          </Link>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">
                       {e.account_email ? (

@@ -7,6 +7,7 @@ import (
 
 	"aiseat/internal/cpa"
 	"aiseat/internal/feishu"
+	"aiseat/internal/risk"
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
@@ -28,7 +29,10 @@ type Deps struct {
 	// SyncFeishu triggers a directory sync; wired by the serve command so the
 	// web layer need not import the feishu sync logic directly.
 	SyncFeishu func(ctx context.Context) (int, int, error)
-	Log        *slog.Logger
+	// Risk is the key-sharing engine (optional); used to refresh gate caches
+	// and notify on device/freeze changes.
+	Risk *risk.Engine
+	Log  *slog.Logger
 }
 
 // Server holds web dependencies.
@@ -67,6 +71,9 @@ func (s *Server) Mount(r chi.Router) {
 			r.Get("/me/quota", s.handleMyQuota)
 			r.Get("/me/reports", s.handleMyReports)
 			r.Get("/me/config-snippets", s.handleConfigSnippets)
+			r.Get("/me/devices", s.handleMyDevices)
+			r.Post("/me/devices/{id}/confirm", s.handleConfirmDevice)
+			r.Post("/me/devices/{id}/deny", s.handleDenyDevice)
 
 			// Logs (scoped by RBAC).
 			r.Get("/logs", s.handleListLogs)
@@ -91,6 +98,14 @@ func (s *Server) Mount(r chi.Router) {
 				r.Put("/admin/settings", s.handlePutSettings)
 				r.Post("/admin/sync-feishu", s.handleSyncFeishu)
 				r.Get("/admin/audit", s.handleAudit)
+				r.Get("/admin/risk/events", s.handleRiskEvents)
+				r.Post("/admin/risk/events/{id}/resolve", s.handleResolveRiskEvent)
+				r.Get("/admin/employees/{id}/devices", s.handleEmployeeDevices)
+				r.Post("/admin/employees/{id}/freeze", s.handleFreezeEmployee(true))
+				r.Post("/admin/employees/{id}/unfreeze", s.handleFreezeEmployee(false))
+				r.Post("/admin/devices/{id}/trust", s.handleAdminDevice("trust"))
+				r.Post("/admin/devices/{id}/block", s.handleAdminDevice("block"))
+				r.Post("/admin/devices/{id}/unblock", s.handleAdminDevice("unblock"))
 			})
 		})
 	})

@@ -3,6 +3,8 @@
 
 export type Role = "employee" | "leader" | "super_admin";
 
+export type RiskMode = "lax" | "standard" | "strict";
+
 export interface Me {
   id: number;
   name: string;
@@ -10,8 +12,14 @@ export interface Me {
   avatar_url: string;
   role: Role;
   notice_acked: boolean;
+  notice_version: number;
   notice_text: string;
   csrf: string;
+  frozen: boolean;
+  frozen_reason: string;
+  frozen_at: string | null;
+  risk_mode: RiskMode;
+  pending_devices: number;
   key_prefix?: string;
   key_created_at?: string;
   account?: {
@@ -160,6 +168,9 @@ export interface EmployeeRow {
   account_status: string;
   active_key_prefix: string;
   department_names: string[] | null;
+  frozen: boolean;
+  frozen_reason: string;
+  open_risk_events: number;
 }
 
 // --- accounts (snake_case) ---
@@ -238,4 +249,90 @@ export interface Settings {
   report_llm_model: string;
   notice_text: string;
   default_device_profile: DeviceProfile;
+  // Read-only: the server bumps it whenever notice_text changes. Sent back as-is.
+  notice_version: number;
+  // Risk controls (anti key-sharing).
+  risk_mode: RiskMode;
+  allow_non_codex: boolean;
+  device_confirm_hours: number;
+  concurrency_window_minutes: number;
+  new_device_grace_minutes: number;
+  max_active_devices: number;
+  require_codex_installation_id: boolean;
+}
+
+// --- devices / networks / risk (snake_case) ---
+export type DeviceStatus = "pending" | "trusted" | "blocked" | "expired";
+export type DeviceKind = "codex_install" | "ua";
+
+export interface Device {
+  id: number;
+  employee_id: number;
+  device_key: string;
+  kind: DeviceKind;
+  label: string;
+  client_kind: string;
+  user_agent: string;
+  status: DeviceStatus;
+  first_seen: string;
+  last_seen: string;
+  first_ip: string;
+  last_ip: string;
+  requests: number;
+  confirmed_at: string | null;
+  notified_at: string | null;
+}
+
+export interface Network {
+  id: number;
+  employee_id: number;
+  net_key: string;
+  ip_sample: string;
+  // Empty strings when no GeoIP database is configured.
+  country: string;
+  province: string;
+  city: string;
+  isp: string;
+  datacenter: boolean;
+  first_seen: string;
+  last_seen: string;
+  requests: number;
+}
+
+export type RiskSeverity = "info" | "warn" | "high";
+
+export interface RiskEvent {
+  id: number;
+  employee_id: number;
+  employee_name: string;
+  rule: string;
+  severity: RiskSeverity;
+  detail: Record<string, unknown> | null;
+  device_id: number | null;
+  network_id: number | null;
+  at: string;
+  notified_at: string | null;
+  resolved_at: string | null;
+}
+
+export interface MyDevicesResp {
+  devices: Device[];
+  networks: Network[];
+  confirm_hours: number;
+  risk_mode: RiskMode;
+  max_trusted: number; // 0 = unlimited
+}
+
+export interface AdminEmployeeDevicesResp {
+  employee: {
+    id: number;
+    name: string;
+    email: string;
+    frozen: boolean;
+    frozen_at: string | null;
+    frozen_reason: string;
+  };
+  devices: Device[];
+  networks: Network[];
+  events: RiskEvent[];
 }

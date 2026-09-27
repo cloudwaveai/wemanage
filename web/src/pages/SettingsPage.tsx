@@ -10,20 +10,32 @@ import {
   Button,
 } from "../components/ui";
 import { useToast } from "../components/Toast";
+import { useAuth } from "../context/AuthContext";
+import { RISK_MODES, RISK_MODE_LABELS } from "../lib/risk";
 
 const inputCls =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100";
+
+const RISK_MODE_HINTS: Record<Settings["risk_mode"], string> = {
+  lax: "发现异常只通知管理员，不冻结；未确认的设备也能使用。",
+  standard: "新设备在确认时限内可先使用；高风险行为自动冻结 Key。",
+  strict: "新设备必须员工确认后才能使用，每人最多确认 2 台；高风险自动冻结。",
+};
 
 function NumberField({
   label,
   value,
   onChange,
   hint,
+  min,
+  max,
 }: {
   label: string;
   value: number;
   onChange: (v: number) => void;
   hint?: string;
+  min?: number;
+  max?: number;
 }) {
   return (
     <div>
@@ -32,6 +44,8 @@ function NumberField({
       </label>
       <input
         type="number"
+        min={min}
+        max={max}
         value={Number.isFinite(value) ? value : ""}
         onChange={(e) => onChange(Number(e.target.value))}
         className={inputCls}
@@ -41,8 +55,36 @@ function NumberField({
   );
 }
 
+function ToggleField({
+  label,
+  checked,
+  onChange,
+  hint,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  hint?: string;
+}) {
+  return (
+    <div>
+      <label className="flex items-center gap-2 text-sm text-slate-700">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+        />
+        {label}
+      </label>
+      {hint && <p className="mt-1 pl-6 text-xs text-slate-400">{hint}</p>}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { toast } = useToast();
+  const { refetch: refetchMe } = useAuth();
   const [form, setForm] = useState<Settings | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -59,6 +101,8 @@ export function SettingsPage() {
     onSuccess: () => {
       toast("设置已保存", "success");
       refetch();
+      // A changed notice bumps notice_version, so our own ack is reset too.
+      refetchMe();
     },
     onError: (e: unknown) =>
       toast(e instanceof Error ? e.message : "保存失败", "error"),
@@ -156,6 +200,111 @@ export function SettingsPage() {
               rows={4}
               className={inputCls}
             />
+            <p className="mt-1.5 text-xs text-slate-400">
+              当前告知版本：v{form.notice_version}（修改告知内容后会自动
+              +1，所有人需要重新确认）
+            </p>
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="mb-4 text-sm font-semibold text-slate-800">
+              风险控制
+            </h2>
+            <div className="space-y-5">
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-slate-500">
+                  风控模式
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {RISK_MODES.map((m) => {
+                    const active = form.risk_mode === m;
+                    return (
+                      <label
+                        key={m}
+                        className={
+                          "flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2.5 transition-colors " +
+                          (active
+                            ? "border-indigo-400 bg-indigo-50"
+                            : "border-slate-300 hover:bg-slate-50")
+                        }
+                      >
+                        <input
+                          type="radio"
+                          name="risk_mode"
+                          value={m}
+                          checked={active}
+                          onChange={() => patch({ risk_mode: m })}
+                          className="mt-0.5 h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>
+                          <span
+                            className={
+                              "block text-sm font-medium " +
+                              (active ? "text-indigo-700" : "text-slate-700")
+                            }
+                          >
+                            {RISK_MODE_LABELS[m]}
+                          </span>
+                          <span className="mt-0.5 block text-xs text-slate-400">
+                            {RISK_MODE_HINTS[m]}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <ToggleField
+                  label="允许非 Codex 客户端"
+                  checked={form.allow_non_codex}
+                  onChange={(v) => patch({ allow_non_codex: v })}
+                  hint="关闭时只允许官方 Codex 客户端，第三方工具会被拦截（推荐关闭）"
+                />
+                <ToggleField
+                  label="要求 Codex 安装 ID"
+                  checked={form.require_codex_installation_id}
+                  onChange={(v) => patch({ require_codex_installation_id: v })}
+                  hint="先观察一段时间，确认所有 Codex 请求都带安装 ID 后再开启"
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <NumberField
+                  label="新设备确认时限（小时）"
+                  value={form.device_confirm_hours}
+                  onChange={(v) => patch({ device_confirm_hours: v })}
+                  min={1}
+                  max={720}
+                  hint="1 – 720，逾期未确认的设备会暂停"
+                />
+                <NumberField
+                  label="同时使用检测窗口（分钟）"
+                  value={form.concurrency_window_minutes}
+                  onChange={(v) => patch({ concurrency_window_minutes: v })}
+                  min={1}
+                  max={240}
+                  hint="1 – 240，窗口内多个网络使用视为同时使用"
+                />
+                <NumberField
+                  label="新设备宽限期（分钟）"
+                  value={form.new_device_grace_minutes}
+                  onChange={(v) => patch({ new_device_grace_minutes: v })}
+                  min={1}
+                  max={1440}
+                  hint="1 – 1440，期间未确认设备不参与异地同时使用判定"
+                />
+                <NumberField
+                  label="最多活跃设备数（7 天）"
+                  value={form.max_active_devices}
+                  onChange={(v) => patch({ max_active_devices: v })}
+                  min={1}
+                  max={50}
+                  hint="1 – 50，超过会产生警告"
+                />
+              </div>
+            </div>
           </Card>
 
           <Card className="p-5">

@@ -29,7 +29,7 @@ fi
 
 # 渲染 CPA 配置
 set -a; . ./.env; set +a
-mkdir -p cpa/auths
+mkdir -p cpa/auths geoip
 sed -e "s|__CPA_INTERNAL_KEY__|${CPA_API_KEY}|" \
     -e "s|__CPA_MANAGEMENT_KEY__|${CPA_MANAGEMENT_KEY}|" \
     cpa/config.yaml.tmpl > cpa/config.yaml

@@ -41,6 +41,7 @@ services:
       SPOOL_DIR: "/data/spool"
     volumes:
       - gateway_spool:/data/spool
+      - ./geoip:/data/geoip:ro
     networks: [edge, backend, data]
 
   cpa:

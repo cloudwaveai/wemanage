@@ -10,6 +10,7 @@ import (
 	"aiseat/internal/health"
 	"aiseat/internal/notify"
 	"aiseat/internal/report"
+	"aiseat/internal/risk"
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
@@ -28,6 +29,7 @@ type Deps struct {
 	EgressEchoURL string
 	Loc           *time.Location
 	GitHub        health.GitHub
+	Risk          *risk.Engine // optional
 	Log           *slog.Logger
 }
 
@@ -109,6 +111,23 @@ func Register(c *cron.Cron, d Deps) {
 			log.Warn("daily report", "err", err)
 		}
 	})
+
+	if d.Risk != nil {
+		// Pending devices past the confirmation window — hourly.
+		_, _ = c.AddFunc("@every 1h", func() {
+			if err := d.Risk.ExpirePending(ctx); err != nil {
+				log.Warn("risk expire pending", "err", err)
+			}
+		})
+		// Usage anomalies (volume spike, sleepless) for the previous day — 08:10.
+		_, _ = c.AddFunc("10 8 * * *", func() {
+			y := time.Now().In(d.Loc).AddDate(0, 0, -1)
+			day := time.Date(y.Year(), y.Month(), y.Day(), 0, 0, 0, 0, d.Loc)
+			if err := d.Risk.DailyCheck(ctx, day); err != nil {
+				log.Warn("risk daily check", "err", err)
+			}
+		})
+	}
 
 	// Retention cleanup — daily 03:30.
 	_, _ = c.AddFunc("30 3 * * *", func() {

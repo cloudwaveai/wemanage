@@ -39,6 +39,8 @@ type Record struct {
 	DurationMS      int
 	ReqBody         []byte
 	Outcome         capture.Outcome
+	ClientIP        string
+	DeviceID        *int64
 }
 
 // Recorder buffers Records and persists them on a background worker.
@@ -190,6 +192,8 @@ func (r *Recorder) process(ctx context.Context, rec Record) error {
 		ReqHashes:       enc.Hashes,
 		ReqInputStart:   inputStart,
 		RespHashes:      store.JoinHashes(respHashes),
+		ClientIP:        rec.ClientIP,
+		DeviceID:        rec.DeviceID,
 	}
 	if rec.Outcome.HasTTFT {
 		ms := int(rec.Outcome.TTFT.Milliseconds())

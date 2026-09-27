@@ -15,6 +15,7 @@ import (
 	"aiseat/internal/capture"
 	"aiseat/internal/health"
 	"aiseat/internal/recorder"
+	"aiseat/internal/risk"
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
@@ -35,6 +36,11 @@ type HandlerDeps struct {
 	CPAAPIKey  string
 	Upstream   *http.Client // no client timeout; per-request context carries deadlines
 	Log        *slog.Logger
+	// Risk registers devices and evaluates key-sharing rules; nil disables
+	// device gating (client-type and freeze checks still apply).
+	Risk *risk.Engine
+	// TrustProxy trusts X-Forwarded-For from private-network peers (Caddy).
+	TrustProxy bool
 }
 
 // Handler implements the OpenAI-compatible data plane.
@@ -145,7 +151,11 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			oaError(w, http.StatusForbidden, "account disabled", "invalid_request_error", "employee_disabled")
 			return
 		}
-		if !prin.NoticeAcked {
+		if prin.Frozen {
+			oaError(w, http.StatusForbidden, "this key is suspended ("+prin.FrozenReason+"); contact the administrator", "invalid_request_error", "account_frozen")
+			return
+		}
+		if prin.NoticeAckVersion < set.NoticeVersion {
 			oaError(w, http.StatusForbidden, "usage notice not acknowledged; sign in to the portal first", "invalid_request_error", "notice_required")
 			return
 		}
@@ -178,6 +188,37 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		kind := h.classifier(set).Classify(r.Header)
 		if kind == KindCodex {
 			go h.recordObserved(r.Header)
+		}
+
+		// --- 2b. Anti key-sharing gate: client type, then device ---
+		clientIP := risk.ClientIP(r, h.deps.TrustProxy)
+		devInfo := risk.ExtractDevice(r.Header, body)
+		obs := risk.Observation{
+			EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
+			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
+		}
+		if d := risk.ClientGate(set, kind, devInfo); !d.Allow {
+			obs.Denied = d.Code
+			h.observe(obs)
+			oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+			return
+		}
+		var deviceID *int64
+		if h.deps.Risk != nil {
+			dev, created, err := h.deps.Risk.Device(ctx, prin.EmployeeID, devInfo, kind, clientIP)
+			if err != nil {
+				// Fail open: detection must not take the service down with the DB.
+				h.deps.Log.Warn("risk: device lookup failed", "employee", prin.EmployeeID, "err", err)
+			} else {
+				deviceID = &dev.ID
+				d := risk.DeviceGate(set, dev, created, time.Now(), h.deps.Risk.PortalDevicesURL())
+				obs.Device, obs.NewDevice, obs.Denied = dev, created, d.Code
+				h.observe(obs)
+				if !d.Allow {
+					oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+					return
+				}
+			}
 		}
 
 		model := stripPrefix(gjson.GetBytes(body, "model").String())
@@ -238,6 +279,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: endpoint,
 			Stream: stream, ModelRequested: model, ReasoningEffort: reasoning,
 			QueuedMS: int(waited.Milliseconds()), ReqBody: body,
+			ClientIP: clientIP, DeviceID: deviceID,
 		}
 
 		resp, err := h.deps.Upstream.Do(upReq)
@@ -281,6 +323,12 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 
 		// --- 6. React to upstream status / degradation ---
 		h.reactToUpstream(context.WithoutCancel(ctx), acc, resp, model, outcome, set)
+	}
+}
+
+func (h *Handler) observe(o risk.Observation) {
+	if h.deps.Risk != nil {
+		h.deps.Risk.Observe(o)
 	}
 }
 
@@ -346,6 +394,10 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	prin, err := h.cache.Get(ctx, secure.HashAPIKey(token))
 	if err != nil || prin.Account == nil {
 		oaError(w, http.StatusForbidden, "no account bound", "invalid_request_error", "no_account_bound")
+		return
+	}
+	if prin.Frozen || prin.EmployeeStatus != "active" {
+		oaError(w, http.StatusForbidden, "this key is suspended; contact the administrator", "invalid_request_error", "account_frozen")
 		return
 	}
 	acc := *prin.Account

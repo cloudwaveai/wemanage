@@ -40,6 +40,8 @@ type RequestRow struct {
 	ReqInputStart   int
 	RespHashes      []byte // full list of response segment hashes
 	BodiesPurged    bool
+	ClientIP        string
+	DeviceID        *int64
 }
 
 // RequestEnc is the minimal encoding needed to reconstruct a request's hash list.
@@ -63,16 +65,18 @@ func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
 			client_kind, user_agent, endpoint, stream, model_requested, model_responded,
 			reasoning_effort, status_code, error_type, error_body, queued_ms, ttft_ms, duration_ms,
 			tokens_input, tokens_cached, tokens_output, tokens_reasoning,
-			req_prefix_of, req_prefix_len, req_chain_depth, req_hashes, req_input_start, resp_hashes
+			req_prefix_of, req_prefix_len, req_chain_depth, req_hashes, req_input_start, resp_hashes,
+			client_ip, device_id
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-			$20,$21,$22,$23,$24,$25,$26,$27,$28,$29
+			$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
 		)`,
 		r.ID[:], r.StartedAt, r.EmployeeID, r.AccountID, r.APIKeyID, r.SessionID,
 		r.ClientKind, r.UserAgent, r.Endpoint, r.Stream, r.ModelRequested, r.ModelResponded,
 		r.ReasoningEffort, r.StatusCode, r.ErrorType, r.ErrorBody, r.QueuedMS, r.TTFTMs, r.DurationMS,
 		r.TokensInput, r.TokensCached, r.TokensOutput, r.TokensReasoning,
-		prefixOf, r.ReqPrefixLen, r.ReqChainDepth, r.ReqHashes, r.ReqInputStart, r.RespHashes)
+		prefixOf, r.ReqPrefixLen, r.ReqChainDepth, r.ReqHashes, r.ReqInputStart, r.RespHashes,
+		r.ClientIP, r.DeviceID)
 	return err
 }
 

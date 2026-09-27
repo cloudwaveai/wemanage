@@ -16,6 +16,9 @@ import { AccountsPage } from "./pages/AccountsPage";
 import { IPGroupsPage } from "./pages/IPGroupsPage";
 import { AuditPage } from "./pages/AuditPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { DevicesPage } from "./pages/DevicesPage";
+import { RiskPage } from "./pages/RiskPage";
+import { RiskEmployeePage } from "./pages/RiskEmployeePage";
 import type { Role } from "./lib/types";
 
 function FullScreen({ children }: { children: React.ReactNode }) {
@@ -64,6 +67,7 @@ export default function App() {
             element={isAdmin ? <OverviewPage /> : <Navigate to="/key" replace />}
           />
           <Route path="/key" element={<KeyPage />} />
+          <Route path="/devices" element={<DevicesPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/usage" element={<UsagePage />} />
           <Route path="/reports" element={<ReportsPage />} />
@@ -74,6 +78,10 @@ export default function App() {
           )}
 
           {isAdmin && <Route path="/employees" element={<EmployeesPage />} />}
+          {isAdmin && <Route path="/risk" element={<RiskPage />} />}
+          {isAdmin && (
+            <Route path="/risk/employees/:id" element={<RiskEmployeePage />} />
+          )}
           {isAdmin && <Route path="/accounts" element={<AccountsPage />} />}
           {isAdmin && <Route path="/ip-groups" element={<IPGroupsPage />} />}
           {isAdmin && <Route path="/audit" element={<AuditPage />} />}
