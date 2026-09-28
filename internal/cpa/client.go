@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"aiseat/internal/store"
 )
 
 // managementBase is the shared path prefix for all CPA management endpoints.
@@ -161,6 +163,30 @@ func (c *Client) APICall(ctx context.Context, call APICallRequest) (APICallRespo
 		return APICallResponse{}, err
 	}
 	return out, nil
+}
+
+// StaticModels returns CPA's built-in model catalogue for a channel
+// (GET /v0/management/model-definitions/{channel}), e.g. "codex" or "kimi".
+func (c *Client) StaticModels(ctx context.Context, channel string) ([]store.ModelInfo, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, managementBase+"/model-definitions/"+url.PathEscape(channel), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Models []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			Created     int64  `json:"created"`
+		} `json:"models"`
+	}
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	models := make([]store.ModelInfo, 0, len(out.Models))
+	for _, m := range out.Models {
+		models = append(models, store.ModelInfo{ID: m.ID, Name: m.DisplayName, Created: m.Created})
+	}
+	return models, nil
 }
 
 // UploadAuthFile uploads a new auth file.

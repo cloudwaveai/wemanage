@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -138,18 +139,33 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	base := s.deps.PublicBaseURL + "/v1"
 	provider := ""
-	var models []string
+	source := "account"
+	var models []store.ModelInfo
 	acc, accErr := s.boundAccount(ctx, currentEmployee(r).ID)
 	if accErr == nil {
 		provider = acc.Provider
 		if s.deps.Models != nil {
-			if ids, err := s.deps.Models(ctx, acc); err == nil {
-				models = ids
+			if ms, err := s.deps.Models(ctx, acc); err == nil {
+				models = ms
 			}
 		}
+	} else if s.deps.ModelCatalog != nil {
+		// No account yet: show what a ChatGPT account typically offers.
+		source = "catalog"
+		if ms, err := s.deps.ModelCatalog(ctx, "codex"); err == nil {
+			models = ms
+		}
 	}
+	// Newest first.
+	sort.SliceStable(models, func(i, j int) bool { return models[i].Created > models[j].Created })
 	chatgpt := accErr != nil || acc.IsChatGPT()
-	model := pickDefaultModel(models, chatgpt)
+	model := pickDefaultModel(models, chatgpt, s.deps.Settings.Get(ctx).DefaultCodexModel)
+	ids := make([]string, len(models))
+	modelList := make([]map[string]any, len(models))
+	for i, m := range models {
+		ids[i] = m.ID
+		modelList[i] = map[string]any{"id": m.ID, "name": m.Name, "created": m.Created}
+	}
 
 	modelLine := fmt.Sprintf("model = %q", model)
 	// ChatGPT accounts use the WebSocket transport like the official client;
@@ -161,7 +177,7 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	if !chatgpt {
 		wsLine = "# 非 ChatGPT 账号走普通 HTTP\nsupports_websockets = false"
 		if model != "" {
-			modelLine = fmt.Sprintf("# 你的账号是 %s，可用模型：%s\n%s", acc.Provider, strings.Join(models, "、"), modelLine)
+			modelLine = fmt.Sprintf("# 你的账号是 %s，可用模型：%s\n%s", acc.Provider, strings.Join(ids, "、"), modelLine)
 		} else {
 			modelLine = fmt.Sprintf(`# 你的账号不是 ChatGPT（%s）。查看可用模型：
 #   curl -s %s/models -H "Authorization: Bearer $AISEAT_API_KEY"
@@ -190,7 +206,8 @@ requires_openai_auth = false
 	writeJSON(w, http.StatusOK, map[string]any{
 		"base_url":      base,
 		"provider":      provider,
-		"models":        nonNil(models),
+		"models":        modelList,
+		"models_source": source,
 		"default_model": model,
 		"codex_toml":    codex,
 		"codex_env":     "export AISEAT_API_KEY=\"你的 sk-emp-... key\"",
@@ -209,19 +226,50 @@ requires_openai_auth = false
 	})
 }
 
-// pickDefaultModel chooses the model a new setup should use: the newest
-// coding model (…codex for ChatGPT, …-code for others), skipping speed/size
-// variants; otherwise the first listed. With no list it falls back to a
-// ChatGPT default, or "" for other providers (their ids are unknown).
-func pickDefaultModel(ids []string, chatgpt bool) string {
-	want := "-code"
+// pickDefaultModel chooses the model one-click setup recommends.
+//
+// ChatGPT: the configured model when the account has it, else the newest
+// model of the same family (the last "-" part: "gpt-6-luna" -> "luna"),
+// else the newest model that is not a review helper; with no list, the
+// configured model itself.
+//
+// Others (e.g. Kimi): the newest "-code" model, skipping speed/size variants,
+// else the first listed; with no list, "" (their ids are unknown).
+func pickDefaultModel(models []store.ModelInfo, chatgpt bool, preferred string) string {
 	if chatgpt {
-		want = "codex"
+		if len(models) == 0 {
+			return preferred
+		}
+		family := ""
+		if i := strings.LastIndex(preferred, "-"); i >= 0 {
+			family = "-" + preferred[i+1:]
+		}
+		var sameFamily, any *store.ModelInfo
+		for i := range models {
+			m := &models[i]
+			if m.ID == preferred {
+				return preferred
+			}
+			if family != "" && strings.HasSuffix(m.ID, family) && newerInfo(m, sameFamily) {
+				sameFamily = m
+			}
+			if !strings.Contains(m.ID, "review") && newerInfo(m, any) {
+				any = m
+			}
+		}
+		switch {
+		case sameFamily != nil:
+			return sameFamily.ID
+		case any != nil:
+			return any.ID
+		default:
+			return models[0].ID
+		}
 	}
 	best := ""
-	for _, id := range ids {
-		l := strings.ToLower(id)
-		if !strings.Contains(l, want) {
+	for _, m := range models {
+		l := strings.ToLower(m.ID)
+		if !strings.Contains(l, "-code") {
 			continue
 		}
 		skip := false
@@ -231,24 +279,34 @@ func pickDefaultModel(ids []string, chatgpt bool) string {
 				break
 			}
 		}
-		if !skip && (best == "" || newerModel(id, best)) {
-			best = id
+		if !skip && (best == "" || newerModel(m.ID, best)) {
+			best = m.ID
 		}
 	}
 	switch {
 	case best != "":
 		return best
-	case len(ids) > 0:
-		return ids[0]
-	case chatgpt:
-		return "gpt-5.1-codex"
+	case len(models) > 0:
+		return models[0].ID
 	default:
 		return ""
 	}
 }
 
+// newerInfo reports whether m is newer than cur (nil counts as older): by
+// release time, then by the version in the id.
+func newerInfo(m, cur *store.ModelInfo) bool {
+	if cur == nil {
+		return true
+	}
+	if m.Created != cur.Created {
+		return m.Created > cur.Created
+	}
+	return newerModel(m.ID, cur.ID)
+}
+
 // newerModel compares the version numbers embedded in two model ids
-// ("kimi-k2.8-code" > "kimi-k2.7-code", "gpt-5.1-codex" > "gpt-5-codex").
+// ("kimi-k2.8-code" > "kimi-k2.7-code", "gpt-6-luna" > "gpt-5.6-luna").
 func newerModel(a, b string) bool {
 	va, vb := modelVersion(a), modelVersion(b)
 	for i := 0; i < len(va) && i < len(vb); i++ {

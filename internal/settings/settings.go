@@ -72,6 +72,11 @@ type Settings struct {
 	// get 426 and Codex falls back to HTTP (kill switch).
 	DisableWebsocket bool `json:"disable_websocket"`
 
+	// DefaultCodexModel is the model one-click setup recommends for ChatGPT
+	// accounts. When an account lacks it, the newest model of the same family
+	// (the last "-" part, e.g. "luna") is recommended instead.
+	DefaultCodexModel string `json:"default_codex_model"`
+
 	// Content audit of the newest user message, before it is sent upstream.
 	ContentAuditMode  string        `json:"content_audit_mode"` // off | warn | block
 	ContentAuditRules []ContentRule `json:"content_audit_rules"`
@@ -167,6 +172,7 @@ func Defaults() Settings {
 		NewDeviceGraceMinutes:    30,
 		MaxActiveDevices:         3,
 		RequireCodexInstallID:    false,
+		DefaultCodexModel:        "gpt-6-luna",
 	}
 }
 
@@ -184,6 +190,9 @@ func mergeDefaults(s Settings) Settings {
 	}
 	if s.CodexProfile.Version == "" {
 		s.CodexProfile.Version = d.CodexProfile.Version
+	}
+	if strings.TrimSpace(s.DefaultCodexModel) == "" {
+		s.DefaultCodexModel = d.DefaultCodexModel
 	}
 	if s.CodexProfile.UATemplate == "" {
 		s.CodexProfile.UATemplate = d.CodexProfile.UATemplate
@@ -294,6 +303,9 @@ func Validate(s Settings) error {
 	}
 	if s.MaxActiveDevices < 1 || s.MaxActiveDevices > 50 {
 		return fmt.Errorf("max_active_devices must be 1..50")
+	}
+	if m := strings.TrimSpace(s.DefaultCodexModel); m != "" && (len(m) > 100 || strings.ContainsAny(m, " /\"\n")) {
+		return fmt.Errorf("default_codex_model must be a model id like gpt-6-luna")
 	}
 	nets, err := ParseNetworks(s.OfficeNetworks)
 	if err != nil {

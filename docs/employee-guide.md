@@ -24,7 +24,7 @@ Key 只写进你电脑上的 CC Switch，不会再发回服务器。CC Switch �
 
 ```toml
 model_provider = "company"
-model = "gpt-5.1-codex"
+model = "gpt-6-luna"   # 以「一键配置」页推荐的为准
 
 [model_providers.company]
 name = "Company Gateway"

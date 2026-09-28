@@ -82,7 +82,9 @@ export function ConfigPage() {
 function CCSwitchCard({ data }: { data: ConfigSnippets }) {
   const [key, setKey] = useState("");
   const [model, setModel] = useState(data.default_model);
-  const models = data.models.length ? data.models : [data.default_model];
+  const models = data.models.length
+    ? data.models
+    : [{ id: data.default_model, name: "", created: 0 }];
   const keyOK = looksLikeKey(key);
   const link = keyOK && model ? ccSwitchLink(data.ccswitch, key, model) : "";
   const inputCls =
@@ -127,12 +129,18 @@ function CCSwitchCard({ data }: { data: ConfigSnippets }) {
             className={inputCls}
           >
             {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-                {m === data.default_model ? "（推荐）" : ""}
+              <option key={m.id} value={m.id}>
+                {m.id}
+                {m.id === data.default_model ? "（推荐）" : ""}
+                {m.name ? ` · ${m.name}` : ""}
               </option>
             ))}
           </select>
+          {data.models_source === "catalog" && (
+            <p className="mt-1 text-xs text-slate-400">
+              你还没绑定账号，这里列的是 ChatGPT 账号通常能用的模型。
+            </p>
+          )}
         </div>
       </div>
 

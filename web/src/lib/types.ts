@@ -96,7 +96,10 @@ export interface DailyReport {
 export interface ConfigSnippets {
   base_url: string;
   provider: string; // bound account's provider, "" when none
-  models: string[]; // model ids the bound account can use
+  // Models the bound account can use (newest first), or CPA's ChatGPT
+  // catalogue when no account is bound yet (models_source "catalog").
+  models: { id: string; name: string; created: number }[];
+  models_source: "account" | "catalog";
   default_model: string;
   ccswitch: { name: string; endpoint: string; homepage: string };
   codex_toml: string;
@@ -291,6 +294,7 @@ export interface Settings {
   risk_mode: RiskMode;
   allow_non_codex: boolean;
   disable_websocket?: boolean;
+  default_codex_model?: string;
   device_confirm_hours: number;
   concurrency_window_minutes: number;
   new_device_grace_minutes: number;

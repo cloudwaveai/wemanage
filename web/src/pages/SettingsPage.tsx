@@ -208,6 +208,20 @@ export function SettingsPage() {
                 hint="≥ 1"
               />
             </div>
+            <div className="mt-5 max-w-md">
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                一键配置推荐的模型（ChatGPT 账号）
+              </label>
+              <input
+                value={form.default_codex_model ?? ""}
+                onChange={(e) => patch({ default_codex_model: e.target.value.trim() })}
+                placeholder="gpt-6-luna"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                员工在「一键配置」里默认选中这个模型。账号没有这个模型时，自动选同系列（如 luna）里最新的。
+              </p>
+            </div>
             <div className="mt-5">
               <ToggleField
                 label="关闭 WebSocket（全部改走 HTTP）"

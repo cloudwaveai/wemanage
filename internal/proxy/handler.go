@@ -511,22 +511,22 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		oaError(w, http.StatusForbidden, "this key is suspended; contact the administrator", "invalid_request_error", "account_frozen")
 		return
 	}
-	ids, err := h.AccountModels(ctx, *prin.Account)
-	if err != nil || len(ids) == 0 {
-		writeStaticModels(w)
+	models, err := h.AccountModels(ctx, *prin.Account)
+	if err != nil || len(models) == 0 {
+		writeStaticModels(w, h.deps.Settings.Get(ctx).DefaultCodexModel)
 		return
 	}
-	out := make([]map[string]any, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, map[string]any{"id": id, "object": "model", "owned_by": "company"})
+	out := make([]map[string]any, 0, len(models))
+	for _, m := range models {
+		out = append(out, map[string]any{"id": m.ID, "object": "model", "created": m.Created, "owned_by": "company"})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": out})
 }
 
-// AccountModels lists the model ids CPA serves for an account, without the
+// AccountModels lists the models CPA serves for an account, without the
 // account's routing prefix.
-func (h *Handler) AccountModels(ctx context.Context, acc store.Account) ([]string, error) {
+func (h *Handler) AccountModels(ctx context.Context, acc store.Account) ([]store.ModelInfo, error) {
 	prefix := acc.Prefix() + "/"
 	reqCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -544,24 +544,25 @@ func (h *Handler) AccountModels(ctx context.Context, acc store.Account) ([]strin
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
+	var models []store.ModelInfo
 	gjson.GetBytes(raw, "data").ForEach(func(_, v gjson.Result) bool {
 		if id := v.Get("id").String(); strings.HasPrefix(id, prefix) {
-			ids = append(ids, strings.TrimPrefix(id, prefix))
+			models = append(models, store.ModelInfo{
+				ID: strings.TrimPrefix(id, prefix), Name: v.Get("display_name").String(), Created: v.Get("created").Int(),
+			})
 		}
 		return true
 	})
-	return ids, nil
+	return models, nil
 }
 
-func writeStaticModels(w http.ResponseWriter) {
+// writeStaticModels answers /v1/models when CPA cannot list the account's
+// models: just the configured default, which Codex can still use.
+func writeStaticModels(w http.ResponseWriter, defaultModel string) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"object": "list",
-		"data": []map[string]any{
-			{"id": "gpt-5.1-codex", "object": "model", "owned_by": "company"},
-			{"id": "gpt-5.1", "object": "model", "owned_by": "company"},
-		},
+		"data":   []map[string]any{{"id": defaultModel, "object": "model", "owned_by": "company"}},
 	})
 }
 

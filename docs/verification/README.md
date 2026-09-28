@@ -13,7 +13,7 @@
 
 | # | 假设 | 断言 |
 |---|---|---|
-| A1 | `force-model-prefix: true` + 前缀路由 | 请求 `acct-1/gpt-5.1-codex` 命中账号 1；账号 1 停用时**请求失败**而非改走账号 2 |
+| A1 | `force-model-prefix: true` + 前缀路由 | 请求 `acct-1/gpt-6-luna` 命中账号 1；账号 1 停用时**请求失败**而非改走账号 2 |
 | A2 | `disable-codex-cloaking: true` 透传 UA/Originator | CPA 向模拟上游发出的 UA == 网关设置的 UA（不是 CPA 写死常量） |
 | A3 | `passthrough-headers: true` 回传额度头 | 上游返回的 `X-Codex-Primary-Used-Percent` 出现在网关回给客户端的响应头 |
 | A4 | chat 流式最后一块是否带 usage | 记录实际行为，决定是否需要回填 |

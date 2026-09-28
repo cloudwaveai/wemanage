@@ -27,8 +27,11 @@ type Deps struct {
 	PublicBaseURL    string
 	SecureCookies    bool
 	DevLogin         bool
-	// Models lists the model ids an account can use (optional).
-	Models func(ctx context.Context, acc store.Account) ([]string, error)
+	// Models lists the models an account can use (optional).
+	Models func(ctx context.Context, acc store.Account) ([]store.ModelInfo, error)
+	// ModelCatalog lists a provider channel's models when no account is
+	// bound yet (optional).
+	ModelCatalog func(ctx context.Context, channel string) ([]store.ModelInfo, error)
 	// Quota refreshes a ChatGPT account's 5-hour / weekly quota on demand.
 	Quota *health.QuotaProber
 	// BootstrapSuperAdmins are the open_ids pinned as super admin by config;

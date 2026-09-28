@@ -226,3 +226,10 @@ func (s *Store) tx(ctx context.Context, fn func(q queryer) error) error {
 }
 
 var _ queryer = (*pgxpool.Pool)(nil)
+
+// ModelInfo is a model an upstream account can serve.
+type ModelInfo struct {
+	ID      string
+	Name    string // display name, when known
+	Created int64  // unix seconds the model was released, when known
+}
