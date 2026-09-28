@@ -139,3 +139,13 @@
 - **通知对象**：员工消息发给本人的飞书 open_id；管理员消息发给数据库里所有在职超级管理员。
 - **第三方客户端配置页**：`/api/me/config-snippets` 的 `third_party.allowed` 反映当前是否放开，禁用时提示文案改为"会被拦截"。
 - **告知版本**：`settings.Put` 检测到文案变化时自动给 `notice_version` 加 1；数据面和"生成 Key"都要求 `notice_ack_version >= notice_version`。
+
+## 12. 补充：公司网络限制与内容审核（2026-09-28）
+
+参考另一家公司的中转方案后补充了两项：
+
+- **公司网络限制**：设置 `office_only` + `office_networks`（CIDR 或单个 IP）。开启后数据面在客户端类型检查之前先查来源 IP，不在公司网段且员工没有 `remote_allowed`（迁移 00004）就返回 403 `network_not_allowed`，并记 `outside_office` 事件（员工每天最多提醒一次）。这是防 Key 外泄最硬的一道：泄露的 Key 出了公司网络就没用；远程办公的人单独放开，仍受设备、并发规则约束。
+- **内容审核**：设置 `content_audit_mode`（`off`/`warn`/`block`，默认 `warn`）+ `content_audit_rules`（不区分大小写的正则）。只检查请求里最新一条用户消息（`internal/audit`），命中记 `content_flagged` 事件（规则名、前后约 40 字片段、是否拦截），同一员工同一规则一小时提醒管理员一次；`block` 模式返回 403 `content_blocked`。默认规则针对 OpenAI 会封号的网络滥用，力求少误报。
+- **检查顺序**：冻结 → 告知版本 → 账号状态 → 公司网络 → 客户端类型 → 内容审核（记录结果）→ 设备 → 内容拦截 → 并发排队。
+- **WebSocket**：对照 Codex 源码确认不需要支持（自定义服务默认 HTTP，收到 426 会退回 HTTP），员工配置片段显式写 `supports_websockets = false`。
+- **团队用量**：`GET /api/team/usage` 给部门负责人只读查看本部门成员的用量、账号状态和额度。
