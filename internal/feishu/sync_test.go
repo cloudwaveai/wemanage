@@ -3,6 +3,7 @@ package feishu_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,47 +13,71 @@ import (
 	"aiseat/internal/testutil"
 )
 
-// syncFakeServer serves one page of departments and one page of users.
-func syncFakeServer(t *testing.T) *httptest.Server {
+// syncFakeServer serves one page of departments and each department's users.
+// With emptyUsers, every department is empty.
+func syncFakeServer(t *testing.T, emptyUsers bool) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/open-apis/auth/v3/tenant_access_token/internal",
 		func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(t, w, map[string]any{"code": 0, "tenant_access_token": "tok", "expire": 7200})
 		})
-	mux.HandleFunc("/open-apis/contact/v3/departments",
+	mux.HandleFunc("/open-apis/contact/v3/departments/0/children",
 		func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(t, w, map[string]any{
 				"code": 0,
 				"data": map[string]any{
 					"items": []map[string]any{
-						{"department_id": "od-root", "parent_department_id": "0", "name": "Root",
+						{"open_department_id": "od-root", "parent_department_id": "0", "name": "Root",
 							"leaders": []map[string]any{{"leader_type": 1, "leader_id": "ou_leader"}}},
-						{"department_id": "od-eng", "parent_department_id": "od-root", "name": "Eng"},
+						{"open_department_id": "od-eng", "parent_department_id": "od-root", "name": "Eng"},
 					},
 					"page_token": "",
 					"has_more":   false,
 				},
 			})
 		})
-	mux.HandleFunc("/open-apis/contact/v3/users",
+	mux.HandleFunc("/open-apis/contact/v3/users/find_by_department",
 		func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(t, w, map[string]any{
-				"code": 0,
-				"data": map[string]any{
-					"items": []map[string]any{
+			var items []map[string]any
+			if !emptyUsers {
+				switch r.URL.Query().Get("department_id") {
+				case "od-eng":
+					items = []map[string]any{
 						{"open_id": "ou_alice", "union_id": "on_alice", "user_id": "u_alice",
-							"name": "Alice", "email": "alice@x.com", "avatar": "http://img/a.png",
-							"status": map[string]any{"is_activated": true}, "department_ids": []string{"od-eng"}},
+							"name": "Alice", "email": "alice@x.com", "avatar": map[string]any{"avatar_72": "http://img/a.png"},
+							"department_ids": []string{"od-eng"}},
+					}
+				case "od-root":
+					items = []map[string]any{
 						{"open_id": "ou_bob", "name": "Bob",
-							"status": map[string]any{"is_activated": false}, "department_ids": []string{"od-unknown"}},
-					},
-					"page_token": "",
-					"has_more":   false,
-				},
-			})
+							"status": map[string]any{"is_resigned": true}, "department_ids": []string{"od-unknown"}},
+					}
+				}
+			}
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": items, "page_token": "", "has_more": false}})
 		})
 	return httptest.NewServer(mux)
+}
+
+func TestRunSyncEmptyDirectoryDisablesNobody(t *testing.T) {
+	pool := testutil.NewDB(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	if _, err := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_keep", Name: "Keep"}); err != nil {
+		t.Fatal(err)
+	}
+	srv := syncFakeServer(t, true)
+	defer srv.Close()
+	cl := feishu.NewClient(srv.URL, "app", "secret", srv.Client())
+
+	if _, _, err := feishu.Run(ctx, st, cl); !errors.Is(err, feishu.ErrEmptyDirectory) {
+		t.Fatalf("err = %v, want ErrEmptyDirectory", err)
+	}
+	keep, _ := st.GetEmployeeByOpenID(ctx, "ou_keep")
+	if keep.Status != "active" {
+		t.Fatalf("empty feed must not disable anyone; status = %q", keep.Status)
+	}
 }
 
 func TestRunSync(t *testing.T) {
@@ -69,7 +94,7 @@ func TestRunSync(t *testing.T) {
 		t.Fatalf("seeded employee status = %q, want active", stale.Status)
 	}
 
-	srv := syncFakeServer(t)
+	srv := syncFakeServer(t, false)
 	defer srv.Close()
 	cl := feishu.NewClient(srv.URL, "app", "secret", srv.Client())
 
@@ -90,7 +115,7 @@ func TestRunSync(t *testing.T) {
 		t.Fatalf("got %d departments, want 2", len(depts))
 	}
 
-	// Alice active, Bob disabled (feed said inactive).
+	// Alice active, Bob disabled (feed said resigned).
 	alice, err := st.GetEmployeeByOpenID(ctx, "ou_alice")
 	if err != nil {
 		t.Fatalf("get alice: %v", err)

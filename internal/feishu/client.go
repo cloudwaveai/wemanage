@@ -226,31 +226,38 @@ func (c *Client) ExchangeUser(ctx context.Context, code, redirectURI string) (Us
 	}, nil
 }
 
-// Dept is a Feishu department.
+// Dept is a Feishu department. IDs are open_department_id values.
 type Dept struct {
 	ID, ParentID, Name string
 	LeaderOpenIDs      []string
 }
 
-// deptListResp is one page of the departments list.
+// deptListResp is one page of "list sub-departments".
 type deptListResp struct {
 	envelope
 	Data struct {
 		Items []struct {
-			DepartmentID       string `json:"department_id"`
+			OpenDepartmentID   string `json:"open_department_id"`
 			ParentDepartmentID string `json:"parent_department_id"`
 			Name               string `json:"name"`
+			LeaderUserID       string `json:"leader_user_id"`
 			Leaders            []struct {
 				LeaderType int    `json:"leader_type"`
 				LeaderID   string `json:"leader_id"`
 			} `json:"leaders"`
+			Status struct {
+				IsDeleted bool `json:"is_deleted"`
+			} `json:"status"`
 		} `json:"items"`
 		PageToken string `json:"page_token"`
 		HasMore   bool   `json:"has_more"`
 	} `json:"data"`
 }
 
-// ListDepartments returns every department, following pagination.
+// ListDepartments returns every department in the app's contact scope by
+// listing the root's children recursively
+// (GET /contact/v3/departments/0/children?fetch_child=true). All IDs are
+// open_department_id and leaders are open_ids.
 func (c *Client) ListDepartments(ctx context.Context) ([]Dept, error) {
 	token, err := c.TenantAccessToken(ctx)
 	if err != nil {
@@ -260,13 +267,16 @@ func (c *Client) ListDepartments(ctx context.Context) ([]Dept, error) {
 	pageToken := ""
 	for {
 		q := url.Values{}
+		q.Set("fetch_child", "true")
+		q.Set("department_id_type", "open_department_id")
+		q.Set("user_id_type", "open_id")
 		q.Set("page_size", "50")
 		if pageToken != "" {
 			q.Set("page_token", pageToken)
 		}
 		var r deptListResp
 		err := c.do(ctx, http.MethodGet,
-			c.base+"/open-apis/contact/v3/departments?"+q.Encode(), token, nil, &r)
+			c.base+"/open-apis/contact/v3/departments/0/children?"+q.Encode(), token, nil, &r)
 		if err != nil {
 			return nil, err
 		}
@@ -274,11 +284,19 @@ func (c *Client) ListDepartments(ctx context.Context) ([]Dept, error) {
 			return nil, apiErr(r.Code, r.Msg)
 		}
 		for _, it := range r.Data.Items {
-			d := Dept{ID: it.DepartmentID, ParentID: it.ParentDepartmentID, Name: it.Name}
+			if it.Status.IsDeleted || it.OpenDepartmentID == "" {
+				continue
+			}
+			d := Dept{ID: it.OpenDepartmentID, ParentID: it.ParentDepartmentID, Name: it.Name}
+			seen := map[string]bool{}
 			for _, l := range it.Leaders {
-				if l.LeaderID != "" {
+				if l.LeaderID != "" && !seen[l.LeaderID] {
+					seen[l.LeaderID] = true
 					d.LeaderOpenIDs = append(d.LeaderOpenIDs, l.LeaderID)
 				}
+			}
+			if it.LeaderUserID != "" && !seen[it.LeaderUserID] {
+				d.LeaderOpenIDs = append(d.LeaderOpenIDs, it.LeaderUserID)
 			}
 			out = append(out, d)
 		}
@@ -290,14 +308,14 @@ func (c *Client) ListDepartments(ctx context.Context) ([]Dept, error) {
 	return out, nil
 }
 
-// User is a Feishu user with its department memberships.
+// User is a Feishu user with its department memberships (open_department_id).
 type User struct {
 	OpenID, UnionID, UserID, Name, Email, AvatarURL string
 	Active                                          bool
 	DeptFeishuIDs                                   []string
 }
 
-// userListResp is one page of the users list.
+// userListResp is one page of "list a department's direct users".
 type userListResp struct {
 	envelope
 	Data struct {
@@ -307,9 +325,12 @@ type userListResp struct {
 			UserID  string `json:"user_id"`
 			Name    string `json:"name"`
 			Email   string `json:"email"`
-			Avatar  string `json:"avatar"`
-			Status  struct {
-				IsActivated bool `json:"is_activated"`
+			Avatar  struct {
+				Avatar72 string `json:"avatar_72"`
+			} `json:"avatar"`
+			Status struct {
+				IsResigned bool `json:"is_resigned"`
+				IsFrozen   bool `json:"is_frozen"`
 			} `json:"status"`
 			DepartmentIDs []string `json:"department_ids"`
 		} `json:"items"`
@@ -318,45 +339,59 @@ type userListResp struct {
 	} `json:"data"`
 }
 
-// ListUsers returns every user, following pagination.
-func (c *Client) ListUsers(ctx context.Context) ([]User, error) {
+// ListUsers returns every user who is a direct member of the root department
+// ("0") or of any of deptIDs (open_department_id), de-duplicated by open_id
+// (GET /contact/v3/users/find_by_department). A user is Active unless Feishu
+// reports them resigned or frozen; without the status field permission every
+// returned user counts as active (resigned users are not listed anyway).
+func (c *Client) ListUsers(ctx context.Context, deptIDs []string) ([]User, error) {
 	token, err := c.TenantAccessToken(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []User
-	pageToken := ""
-	for {
-		q := url.Values{}
-		q.Set("page_size", "50")
-		if pageToken != "" {
-			q.Set("page_token", pageToken)
+	seen := map[string]bool{}
+	for _, dept := range append([]string{"0"}, deptIDs...) {
+		pageToken := ""
+		for {
+			q := url.Values{}
+			q.Set("department_id", dept)
+			q.Set("department_id_type", "open_department_id")
+			q.Set("user_id_type", "open_id")
+			q.Set("page_size", "50")
+			if pageToken != "" {
+				q.Set("page_token", pageToken)
+			}
+			var r userListResp
+			err := c.do(ctx, http.MethodGet,
+				c.base+"/open-apis/contact/v3/users/find_by_department?"+q.Encode(), token, nil, &r)
+			if err != nil {
+				return nil, err
+			}
+			if r.Code != 0 {
+				return nil, apiErr(r.Code, r.Msg)
+			}
+			for _, it := range r.Data.Items {
+				if it.OpenID == "" || seen[it.OpenID] {
+					continue
+				}
+				seen[it.OpenID] = true
+				out = append(out, User{
+					OpenID:        it.OpenID,
+					UnionID:       it.UnionID,
+					UserID:        it.UserID,
+					Name:          it.Name,
+					Email:         it.Email,
+					AvatarURL:     it.Avatar.Avatar72,
+					Active:        !it.Status.IsResigned && !it.Status.IsFrozen,
+					DeptFeishuIDs: it.DepartmentIDs,
+				})
+			}
+			if !r.Data.HasMore || r.Data.PageToken == "" {
+				break
+			}
+			pageToken = r.Data.PageToken
 		}
-		var r userListResp
-		err := c.do(ctx, http.MethodGet,
-			c.base+"/open-apis/contact/v3/users?"+q.Encode(), token, nil, &r)
-		if err != nil {
-			return nil, err
-		}
-		if r.Code != 0 {
-			return nil, apiErr(r.Code, r.Msg)
-		}
-		for _, it := range r.Data.Items {
-			out = append(out, User{
-				OpenID:        it.OpenID,
-				UnionID:       it.UnionID,
-				UserID:        it.UserID,
-				Name:          it.Name,
-				Email:         it.Email,
-				AvatarURL:     it.Avatar,
-				Active:        it.Status.IsActivated,
-				DeptFeishuIDs: it.DepartmentIDs,
-			})
-		}
-		if !r.Data.HasMore || r.Data.PageToken == "" {
-			break
-		}
-		pageToken = r.Data.PageToken
 	}
 	return out, nil
 }

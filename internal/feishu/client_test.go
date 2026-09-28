@@ -141,23 +141,31 @@ func TestListDepartmentsPaginate(t *testing.T) {
 	c := newCounter()
 	mux := http.NewServeMux()
 	tokenHandler(t, mux, c)
-	mux.HandleFunc("/open-apis/contact/v3/departments",
+	mux.HandleFunc("/open-apis/contact/v3/departments/0/children",
 		func(w http.ResponseWriter, r *http.Request) {
 			c.inc("depts")
-			switch r.URL.Query().Get("page_token") {
+			q := r.URL.Query()
+			if q.Get("fetch_child") != "true" || q.Get("department_id_type") != "open_department_id" {
+				t.Errorf("query = %v, want recursive open_department_id listing", q)
+			}
+			switch q.Get("page_token") {
 			case "":
 				writeJSON(t, w, map[string]any{
 					"code": 0,
 					"data": map[string]any{
 						"items": []map[string]any{
 							{
-								"department_id":        "od-1",
+								"open_department_id":   "od-1",
+								"department_id":        "custom-1",
 								"parent_department_id": "0",
 								"name":                 "Root",
+								"leader_user_id":       "ou_leader",
 								"leaders": []map[string]any{
 									{"leader_type": 1, "leader_id": "ou_leader"},
+									{"leader_type": 2, "leader_id": "ou_deputy"},
 								},
 							},
+							{"open_department_id": "od-gone", "name": "Deleted", "status": map[string]any{"is_deleted": true}},
 						},
 						"page_token": "PAGE2",
 						"has_more":   true,
@@ -168,14 +176,14 @@ func TestListDepartmentsPaginate(t *testing.T) {
 					"code": 0,
 					"data": map[string]any{
 						"items": []map[string]any{
-							{"department_id": "od-2", "parent_department_id": "od-1", "name": "Eng"},
+							{"open_department_id": "od-2", "parent_department_id": "od-1", "name": "Eng"},
 						},
 						"page_token": "",
 						"has_more":   false,
 					},
 				})
 			default:
-				t.Errorf("unexpected page_token %q", r.URL.Query().Get("page_token"))
+				t.Errorf("unexpected page_token %q", q.Get("page_token"))
 			}
 		})
 	srv := httptest.NewServer(mux)
@@ -187,92 +195,79 @@ func TestListDepartmentsPaginate(t *testing.T) {
 		t.Fatalf("list departments: %v", err)
 	}
 	if len(depts) != 2 {
-		t.Fatalf("got %d departments, want 2", len(depts))
+		t.Fatalf("got %d departments, want 2 (deleted one skipped)", len(depts))
 	}
 	if c.get("depts") != 2 {
 		t.Fatalf("departments endpoint hit %d times, want 2 pages", c.get("depts"))
 	}
 	if depts[0].ID != "od-1" || depts[0].Name != "Root" {
-		t.Fatalf("dept[0] = %+v", depts[0])
+		t.Fatalf("dept[0] = %+v, want open_department_id od-1", depts[0])
 	}
-	if len(depts[0].LeaderOpenIDs) != 1 || depts[0].LeaderOpenIDs[0] != "ou_leader" {
-		t.Fatalf("dept[0] leaders = %v", depts[0].LeaderOpenIDs)
+	if len(depts[0].LeaderOpenIDs) != 2 || depts[0].LeaderOpenIDs[0] != "ou_leader" || depts[0].LeaderOpenIDs[1] != "ou_deputy" {
+		t.Fatalf("dept[0] leaders = %v, want de-duplicated [ou_leader ou_deputy]", depts[0].LeaderOpenIDs)
 	}
 	if depts[1].ID != "od-2" || depts[1].ParentID != "od-1" {
 		t.Fatalf("dept[1] = %+v", depts[1])
 	}
 }
 
-func TestListUsersPaginate(t *testing.T) {
+func TestListUsersByDepartment(t *testing.T) {
 	c := newCounter()
 	mux := http.NewServeMux()
 	tokenHandler(t, mux, c)
-	mux.HandleFunc("/open-apis/contact/v3/users",
+	mux.HandleFunc("/open-apis/contact/v3/users/find_by_department",
 		func(w http.ResponseWriter, r *http.Request) {
-			c.inc("users")
-			switch r.URL.Query().Get("page_token") {
-			case "":
-				writeJSON(t, w, map[string]any{
-					"code": 0,
-					"data": map[string]any{
-						"items": []map[string]any{
-							{
-								"open_id":        "ou_a",
-								"union_id":       "on_a",
-								"user_id":        "u_a",
-								"name":           "Alice",
-								"email":          "a@x.com",
-								"avatar":         "http://img/a.png",
-								"status":         map[string]any{"is_activated": true},
-								"department_ids": []string{"od-2"},
-							},
-						},
-						"page_token": "P2",
-						"has_more":   true,
-					},
-				})
-			case "P2":
-				writeJSON(t, w, map[string]any{
-					"code": 0,
-					"data": map[string]any{
-						"items": []map[string]any{
-							{
-								"open_id":        "ou_b",
-								"name":           "Bob",
-								"status":         map[string]any{"is_activated": false},
-								"department_ids": []string{},
-							},
-						},
-						"page_token": "",
-						"has_more":   false,
-					},
-				})
-			default:
-				t.Errorf("unexpected page_token %q", r.URL.Query().Get("page_token"))
+			q := r.URL.Query()
+			dept := q.Get("department_id")
+			c.inc("dept:" + dept)
+			if q.Get("department_id_type") != "open_department_id" {
+				t.Errorf("department_id_type = %q", q.Get("department_id_type"))
 			}
+			alice := map[string]any{
+				"open_id": "ou_a", "union_id": "on_a", "user_id": "u_a", "name": "Alice", "email": "a@x.com",
+				"avatar": map[string]any{"avatar_72": "http://img/a72.png", "avatar_240": "http://img/a240.png"},
+				"status": map[string]any{"is_activated": true}, "department_ids": []string{"od-2", "od-3"},
+			}
+			var items []map[string]any
+			token, more := "", false
+			switch {
+			case dept == "0":
+				items = []map[string]any{{"open_id": "ou_ceo", "name": "CEO", "department_ids": []string{"0"}}}
+			case dept == "od-2" && q.Get("page_token") == "":
+				items, token, more = []map[string]any{alice}, "P2", true
+			case dept == "od-2":
+				items = []map[string]any{{"open_id": "ou_b", "name": "Bob", "status": map[string]any{"is_frozen": true}}}
+			case dept == "od-3":
+				items = []map[string]any{alice} // Alice is in two departments
+			}
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": items, "page_token": token, "has_more": more}})
 		})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	cl := feishu.NewClient(srv.URL, "app", "secret", srv.Client())
-	users, err := cl.ListUsers(context.Background())
+	users, err := cl.ListUsers(context.Background(), []string{"od-2", "od-3"})
 	if err != nil {
 		t.Fatalf("list users: %v", err)
 	}
-	if len(users) != 2 {
-		t.Fatalf("got %d users, want 2", len(users))
+	if len(users) != 3 {
+		t.Fatalf("got %d users, want 3 (root member + Alice once + Bob): %+v", len(users), users)
 	}
-	if c.get("users") != 2 {
-		t.Fatalf("users endpoint hit %d times, want 2 pages", c.get("users"))
+	if c.get("dept:0") != 1 || c.get("dept:od-2") != 2 || c.get("dept:od-3") != 1 {
+		t.Fatalf("calls: root=%d od-2=%d od-3=%d", c.get("dept:0"), c.get("dept:od-2"), c.get("dept:od-3"))
 	}
-	if users[0].OpenID != "ou_a" || !users[0].Active {
-		t.Fatalf("user[0] = %+v, want active ou_a", users[0])
+	byID := map[string]feishu.User{}
+	for _, u := range users {
+		byID[u.OpenID] = u
 	}
-	if len(users[0].DeptFeishuIDs) != 1 || users[0].DeptFeishuIDs[0] != "od-2" {
-		t.Fatalf("user[0] depts = %v", users[0].DeptFeishuIDs)
+	if a := byID["ou_a"]; !a.Active || a.AvatarURL != "http://img/a72.png" || len(a.DeptFeishuIDs) != 2 {
+		t.Fatalf("alice = %+v", a)
 	}
-	if users[1].OpenID != "ou_b" || users[1].Active {
-		t.Fatalf("user[1] = %+v, want inactive ou_b", users[1])
+	if !byID["ou_ceo"].Active {
+		t.Fatal("a user without status fields must count as active")
+	}
+	if byID["ou_b"].Active {
+		t.Fatal("a frozen Feishu account must be inactive")
 	}
 }
 
@@ -280,7 +275,7 @@ func TestAPIErrorNonZeroCode(t *testing.T) {
 	c := newCounter()
 	mux := http.NewServeMux()
 	tokenHandler(t, mux, c)
-	mux.HandleFunc("/open-apis/contact/v3/departments",
+	mux.HandleFunc("/open-apis/contact/v3/departments/0/children",
 		func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(t, w, map[string]any{"code": 99991663, "msg": "tenant access token invalid"})
 		})

@@ -2,9 +2,14 @@ package feishu
 
 import (
 	"context"
+	"errors"
 
 	"aiseat/internal/store"
 )
+
+// ErrEmptyDirectory is returned when Feishu lists no users at all; nobody is
+// disabled in that case.
+var ErrEmptyDirectory = errors.New("feishu sync: directory returned 0 users; check the app's contact data scope (通讯录权限范围) and contact permissions")
 
 // Run mirrors the Feishu contact directory into the store: it upserts every
 // department and user, links each user to its departments, disables employees
@@ -36,9 +41,18 @@ func Run(ctx context.Context, st *store.Store, c *Client) (deptCount, userCount 
 		deptCount++
 	}
 
-	users, err := c.ListUsers(ctx)
+	deptIDs := make([]string, 0, len(depts))
+	for _, d := range depts {
+		deptIDs = append(deptIDs, d.ID)
+	}
+	users, err := c.ListUsers(ctx, deptIDs)
 	if err != nil {
 		return 0, 0, err
+	}
+	// An empty feed almost always means the app's contact scope or
+	// permissions are not set up; never treat it as "everyone left".
+	if len(users) == 0 {
+		return deptCount, 0, ErrEmptyDirectory
 	}
 	seen := make([]string, 0, len(users))
 	for _, u := range users {

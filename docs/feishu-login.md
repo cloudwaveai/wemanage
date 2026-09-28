@@ -33,27 +33,42 @@
 
 ## 二、在飞书开放平台建应用（一次性）
 
-1. 打开 https://open.feishu.cn/app → **创建企业自建应用**，拿到 **App ID** 和 **App Secret**。
-2. **添加应用能力 → 网页应用**（开启网页登录）。
-3. **安全设置 → 重定向 URL（回调地址白名单）** 里加上：
+在 https://open.feishu.cn/app 操作，需要飞书**企业管理员**配合审批。
+
+1. **创建企业自建应用**，在「凭证与基础信息」里拿到 **App ID**（`cli_` 开头）和 **App Secret**。
+2. **添加应用能力 → 机器人**。网关用应用身份给员工和管理员发飞书消息（新设备确认、冻结通知、账号告警、日报），没有机器人能力发不出去。
+3. **安全设置 → 重定向 URL** 加上：
    ```
    https://<你的网关域名>/api/auth/feishu/callback
    ```
-   > 测试期如果网关是 `http://IP:8080`，飞书要求回调走 HTTPS/可信域名——所以**验证阶段建议给网关配一个域名 + HTTPS**（或用飞书允许的测试重定向）。这一点在“测试期注意”里再说。
-4. **权限管理**，至少开通（申请后需管理员在后台批准）：
-   - 获取用户基本信息（`user_info` 需要）：登录必需。
-   - 通讯录只读：`contact:department.base:readonly`、`contact:user.base:readonly`（同步部门/员工用）。
-   - 发送单聊消息 `im:message`（日报 / 告警推送用）。
-5. **发布版本**并让企业管理员**安装/审批**，权限才生效。
-6. 把 App ID / App Secret 填进网关 `.env`：
+   必须和 `.env` 里的 `PUBLIC_BASE_URL` 拼出来的地址**完全一致**（协议、域名、路径都一样）。
+4. **权限管理 → 开通权限**（在搜索框里直接搜下面的权限标识）：
+
+   | 权限标识 | 用途 | 必需 |
+   |---|---|---|
+   | `contact:contact.base:readonly` | 读通讯录（列部门、列部门成员） | 是 |
+   | `contact:department.base:readonly` | 部门名称 | 是 |
+   | `contact:department.organize:readonly` | 部门负责人（决定谁能看本部门日志） | 是 |
+   | `contact:user.base:readonly` | 员工姓名、头像 | 是 |
+   | `contact:user.department:readonly` | 员工属于哪些部门 | 是 |
+   | `contact:user.employee:readonly` | 员工状态（离职、冻结的飞书账号同步后停用） | 建议 |
+   | `contact:user.email:readonly` | 员工邮箱（仅展示） | 可选 |
+   | `im:message:send_as_bot` | 以应用身份发消息 | 是 |
+
+   飞书登录本身（换 token、取 open_id）不需要额外权限。
+5. **权限管理 → 数据权限 → 通讯录权限范围**：设为**全部成员**。同步是从根部门往下递归列的，范围不是全员就拿不到根部门，同步会失败或漏人。
+6. **版本管理与发布 → 可用范围**：设为**全部成员**（至少覆盖所有要用网关的人）。不在可用范围里的人收不到机器人消息，通常也无法授权登录。
+7. **创建版本并发布**，由企业管理员审批通过后，上面的能力和权限才生效。以后改权限、改可用范围，都要重新发版本。
+8. 把凭证填进网关 `.env`：
    ```
    FEISHU_APP_ID=cli_xxx
    FEISHU_APP_SECRET=xxx
    FEISHU_BASE_URL=https://open.feishu.cn
-   PUBLIC_BASE_URL=https://<你的网关域名>     # 决定回调地址，必须和白名单一致
-   # 可选：若 user_info 因权限返回不全，可显式声明 scope
-   # FEISHU_LOGIN_SCOPE=contact:user.base:readonly
+   PUBLIC_BASE_URL=https://<你的网关域名>     # 决定回调地址，必须和重定向 URL 一致
+   BOOTSTRAP_SUPER_ADMINS=ou_xxx             # 你自己的 open_id，见第三节
    ```
+
+**同步用到的接口**（便于排查权限报错）：`GET /open-apis/contact/v3/departments/0/children?fetch_child=true` 递归列部门；对根部门和每个部门调 `GET /open-apis/contact/v3/users/find_by_department` 列直属成员并去重；ID 一律用 `open_department_id` 和 `open_id`。**如果一个人都没同步到，网关会直接报错、不会停用任何员工**，这种情况几乎都是通讯录权限范围或权限没开。
 
 > 国际版 Lark：`FEISHU_BASE_URL=https://open.larksuite.com`，授权域名会自动切到 `accounts.larksuite.com`。
 
