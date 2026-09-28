@@ -67,12 +67,6 @@ const PERSONAL: NavItem[] = [
     roles: ["employee", "leader", "super_admin"],
     icon: I("M8 3v4M16 3v4M4 9h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z"),
   },
-  {
-    to: "/data-notice",
-    label: "数据说明",
-    roles: ["employee", "leader", "super_admin"],
-    icon: I("M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3zM12 11v5M12 8h.01"),
-  },
 ];
 
 const OVERSIGHT: NavItem[] = [

@@ -28,13 +28,11 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"id":         emp.ID,
-		"name":       emp.Name,
-		"email":      emp.Email,
-		"avatar_url": emp.AvatarURL,
-		"role":       role,
-		// Shown on the "数据说明" page; nobody has to acknowledge it.
-		"notice_text":    set.NoticeText,
+		"id":             emp.ID,
+		"name":           emp.Name,
+		"email":          emp.Email,
+		"avatar_url":     emp.AvatarURL,
+		"role":           role,
 		"csrf":           currentCSRF(r),
 		"frozen":         emp.FrozenAt != nil,
 		"frozen_reason":  emp.FrozenReason,

@@ -123,7 +123,6 @@ export function SettingsPage() {
     onSuccess: () => {
       toast("设置已保存", "success");
       refetch();
-      // The data notice is shown from /api/me.
       refetchMe();
     },
     onError: (e: unknown) =>
@@ -256,21 +255,6 @@ export function SettingsPage() {
                 />
               </div>
             </div>
-          </Card>
-
-          <Card className="p-5">
-            <h2 className="mb-4 text-sm font-semibold text-slate-800">
-              数据说明
-            </h2>
-            <textarea
-              value={form.notice_text}
-              onChange={(e) => patch({ notice_text: e.target.value })}
-              rows={4}
-              className={inputCls}
-            />
-            <p className="mt-1.5 text-xs text-slate-400">
-              显示在员工的「数据说明」页，说清楚记录了什么、谁能看、保存多久。员工不需要点确认。
-            </p>
           </Card>
 
           <Card className="p-5">

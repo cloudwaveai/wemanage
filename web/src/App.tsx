@@ -7,7 +7,6 @@ import { KeyPage } from "./pages/KeyPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { UsagePage } from "./pages/UsagePage";
 import { ReportsPage } from "./pages/ReportsPage";
-import { DataNoticePage } from "./pages/DataNoticePage";
 import { LogsPage } from "./pages/LogsPage";
 import { LogDetailPage } from "./pages/LogDetailPage";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -72,7 +71,6 @@ export default function App() {
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/usage" element={<UsagePage />} />
           <Route path="/reports" element={<ReportsPage />} />
-          <Route path="/data-notice" element={<DataNoticePage />} />
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/logs/:id" element={<LogDetailPage />} />
 

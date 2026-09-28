@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"regexp"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -48,12 +47,7 @@ type Settings struct {
 	ModelMismatchThreshold int                 `json:"model_mismatch_threshold"`
 	ReportEnabled          bool                `json:"report_enabled"`
 	ReportLLMModel         string              `json:"report_llm_model"`
-	NoticeText             string              `json:"notice_text"`
 	DefaultDeviceProfile   store.DeviceProfile `json:"default_device_profile"`
-
-	// NoticeVersion is bumped whenever NoticeText changes; employees who acked an
-	// older version must re-acknowledge.
-	NoticeVersion int `json:"notice_version"`
 
 	// Risk controls (anti key-sharing).
 	RiskMode                 string `json:"risk_mode"`       // lax | standard | strict
@@ -119,17 +113,6 @@ const (
 	RiskStrict   = "strict"
 )
 
-// DefaultNoticeText is shown on the employees' "数据说明" page. It states
-// plainly what is recorded, why and who can see it; nobody has to accept it.
-const DefaultNoticeText = "为了保护账号安全、方便排查问题，网关会记录你经过网关的请求和回复，原文保留 180 天。只有你本人和超级管理员能查看，管理员每次查看都会留下审计记录；部门负责人只能看到团队总用量。\n\n网关还会记录你使用的设备和来源 IP，只用来发现 Key 是否被别人使用。Key 相当于你的个人账号，请不要分享给别人；如果发现不是你本人在用，可以随时在「我的 Key」重新生成。"
-
-// legacyNoticeTexts are earlier built-in notices. A stored copy of one is
-// replaced with DefaultNoticeText, so the current wording reaches everyone.
-var legacyNoticeTexts = []string{
-	"本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。继续使用即表示你已知晓。",
-	"本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。为保障账号安全，还会记录你使用的设备和来源 IP。请勿把 Key 分享给他人，分享或转卖将按公司制度处理。继续使用即表示你已知晓。",
-}
-
 // DefaultRedactionRules returns the built-in secret patterns.
 func DefaultRedactionRules() []RedactionRule {
 	return []RedactionRule{
@@ -162,14 +145,12 @@ func Defaults() Settings {
 		ModelMismatchThreshold: 3,
 		ReportEnabled:          true,
 		ReportLLMModel:         "",
-		NoticeText:             DefaultNoticeText,
 		DefaultDeviceProfile: store.DeviceProfile{
 			OS:       "Mac OS 26.5.2; arm64",
 			Terminal: "iTerm.app/3.6.11",
 		},
 		ContentAuditMode:         AuditWarn,
 		ContentAuditRules:        DefaultContentRules(),
-		NoticeVersion:            2,
 		RiskMode:                 RiskStandard,
 		AllowNonCodex:            false,
 		DeviceConfirmHours:       24,
@@ -214,17 +195,11 @@ func mergeDefaults(s Settings) Settings {
 	if s.ModelMismatchThreshold == 0 {
 		s.ModelMismatchThreshold = d.ModelMismatchThreshold
 	}
-	if s.NoticeText == "" || slices.Contains(legacyNoticeTexts, s.NoticeText) {
-		s.NoticeText = d.NoticeText
-	}
 	if s.DefaultDeviceProfile.OS == "" {
 		s.DefaultDeviceProfile.OS = d.DefaultDeviceProfile.OS
 	}
 	if s.DefaultDeviceProfile.Terminal == "" {
 		s.DefaultDeviceProfile.Terminal = d.DefaultDeviceProfile.Terminal
-	}
-	if s.NoticeVersion == 0 {
-		s.NoticeVersion = d.NoticeVersion
 	}
 	if s.RiskMode == "" {
 		s.RiskMode = d.RiskMode
@@ -404,11 +379,6 @@ func (s *Service) Get(ctx context.Context) Settings {
 // Put validates and persists settings, invalidating the cache.
 func (s *Service) Put(ctx context.Context, in Settings) error {
 	in = mergeDefaults(in)
-	// Changing the notice text requires everyone to re-acknowledge.
-	cur := s.Get(ctx)
-	if in.NoticeText != cur.NoticeText && in.NoticeVersion <= cur.NoticeVersion {
-		in.NoticeVersion = cur.NoticeVersion + 1
-	}
 	if err := Validate(in); err != nil {
 		return err
 	}

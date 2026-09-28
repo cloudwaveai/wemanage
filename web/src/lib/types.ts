@@ -11,7 +11,6 @@ export interface Me {
   email: string;
   avatar_url: string;
   role: Role;
-  notice_text: string;
   csrf: string;
   frozen: boolean;
   frozen_reason: string;
@@ -286,10 +285,7 @@ export interface Settings {
   model_mismatch_threshold: number;
   report_enabled: boolean;
   report_llm_model: string;
-  notice_text: string;
   default_device_profile: DeviceProfile;
-  // Read-only: the server bumps it whenever notice_text changes. Sent back as-is.
-  notice_version: number;
   // Risk controls (anti key-sharing).
   risk_mode: RiskMode;
   allow_non_codex: boolean;
