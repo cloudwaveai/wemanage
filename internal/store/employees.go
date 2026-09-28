@@ -29,14 +29,14 @@ func scanEmployee(r pgx.Row) (Employee, error) {
 	var openID *string
 	err := r.Scan(&e.ID, &openID, &e.FeishuUnionID, &e.FeishuUserID, &e.Name,
 		&e.Email, &e.AvatarURL, &e.Status, &e.IsSuperAdmin, &e.NoticeAckAt, &e.CreatedAt,
-		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason)
+		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason, &e.RemoteAllowed)
 	if openID != nil {
 		e.FeishuOpenID = *openID
 	}
 	return e, err
 }
 
-const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason`
+const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason, remote_allowed`
 
 // GetEmployee returns one employee by id.
 func (s *Store) GetEmployee(ctx context.Context, id int64) (Employee, error) {
@@ -119,6 +119,12 @@ func (s *Store) FreezeEmployee(ctx context.Context, id int64, reason string) (bo
 	return tag.RowsAffected() > 0, nil
 }
 
+// SetRemoteAllowed toggles the "may use the key outside office networks" exemption.
+func (s *Store) SetRemoteAllowed(ctx context.Context, id int64, allowed bool) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE employees SET remote_allowed=$2, updated_at=now() WHERE id=$1`, id, allowed)
+	return err
+}
+
 // UnfreezeEmployee clears a freeze.
 func (s *Store) UnfreezeEmployee(ctx context.Context, id int64) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE employees SET frozen_at=NULL, frozen_reason='', updated_at=now() WHERE id=$1`, id)
@@ -167,7 +173,8 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 			COALESCE(k.key_prefix,''),
 			COALESCE(ARRAY_AGG(d.name) FILTER (WHERE d.name IS NOT NULL), '{}'),
 			e.frozen_at, e.frozen_reason,
-			(SELECT COUNT(*) FROM risk_events r WHERE r.employee_id = e.id AND r.resolved_at IS NULL)
+			(SELECT COUNT(*) FROM risk_events r WHERE r.employee_id = e.id AND r.resolved_at IS NULL),
+			e.remote_allowed
 		FROM employees e
 		LEFT JOIN upstream_accounts a ON a.employee_id = e.id
 		LEFT JOIN api_keys k ON k.employee_id = e.id AND k.revoked_at IS NULL
@@ -189,7 +196,7 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 		err := rows.Scan(&er.ID, &openID, &er.FeishuUnionID, &er.FeishuUserID, &er.Name,
 			&er.Email, &er.AvatarURL, &er.Status, &er.IsSuperAdmin, &er.NoticeAckAt, &er.CreatedAt,
 			&er.AccountID, &er.AccountEmail, &er.AccountStatus, &er.ActiveKeyPrefix, &er.DepartmentNames,
-			&er.FrozenAt, &er.FrozenReason, &er.OpenRiskEvents)
+			&er.FrozenAt, &er.FrozenReason, &er.OpenRiskEvents, &er.RemoteAllowed)
 		if err != nil {
 			return nil, err
 		}

@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +62,44 @@ type Settings struct {
 	NewDeviceGraceMinutes    int    `json:"new_device_grace_minutes"`
 	MaxActiveDevices         int    `json:"max_active_devices"`
 	RequireCodexInstallID    bool   `json:"require_codex_installation_id"`
+
+	// Office networks: when OfficeOnly is on, keys work only from these
+	// networks (CIDRs or single IPs), except for employees marked remote_allowed.
+	OfficeOnly     bool     `json:"office_only"`
+	OfficeNetworks []string `json:"office_networks"`
+
+	// Content audit of the newest user message, before it is sent upstream.
+	ContentAuditMode  string        `json:"content_audit_mode"` // off | warn | block
+	ContentAuditRules []ContentRule `json:"content_audit_rules"`
+}
+
+// ContentRule is a named case-insensitive regex matched against the newest
+// user message of a request.
+type ContentRule struct {
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+}
+
+// Content audit modes.
+const (
+	AuditOff   = "off"
+	AuditWarn  = "warn"
+	AuditBlock = "block"
+)
+
+// DefaultContentRules target the cyber-abuse OpenAI bans accounts for:
+// malware, credential theft, AV evasion, botnets/DDoS, phishing kits and
+// weaponised exploits. They favour precision; admins can edit them.
+func DefaultContentRules() []ContentRule {
+	return []ContentRule{
+		{Name: "ransomware", Pattern: `ransomware|勒索(软件|病毒)`},
+		{Name: "credential-theft", Pattern: `keylogger|键盘记录器|(credential|password|cookie|token)[ _-]?stealer|窃取.{0,6}(密码|凭证|cookie|token)`},
+		{Name: "av-evasion", Pattern: `免杀|bypass.{0,12}(antivirus|anti-virus|defender|edr)|绕过.{0,6}(杀软|杀毒|defender|edr)`},
+		{Name: "botnet-ddos", Pattern: `botnet|僵尸网络|ddos.{0,12}(attack|tool|script|工具|脚本)|(发起|实施).{0,6}ddos`},
+		{Name: "malware-build", Pattern: `(write|create|build|develop|编写|写一个|开发).{0,24}(malware|trojan|rootkit|backdoor|木马|后门|病毒)`},
+		{Name: "phishing-kit", Pattern: `phishing.{0,8}(kit|page|site)|钓鱼(网站|页面|邮件模板)`},
+		{Name: "weaponised-exploit", Pattern: `(weaponi[sz]e|working|reliable).{0,12}exploit|exploit.{0,20}(unauthori[sz]ed|without permission)|未授权.{0,6}(渗透|入侵)`},
+	}
 }
 
 // Risk modes.
@@ -113,6 +153,8 @@ func Defaults() Settings {
 			OS:       "Mac OS 26.5.2; arm64",
 			Terminal: "iTerm.app/3.6.11",
 		},
+		ContentAuditMode:         AuditWarn,
+		ContentAuditRules:        DefaultContentRules(),
 		NoticeVersion:            2,
 		RiskMode:                 RiskStandard,
 		AllowNonCodex:            false,
@@ -181,7 +223,41 @@ func mergeDefaults(s Settings) Settings {
 	if s.MaxActiveDevices == 0 {
 		s.MaxActiveDevices = d.MaxActiveDevices
 	}
+	if s.ContentAuditMode == "" {
+		s.ContentAuditMode = d.ContentAuditMode
+	}
+	if s.ContentAuditRules == nil {
+		s.ContentAuditRules = d.ContentAuditRules
+	}
 	return s
+}
+
+// ParseNetworks parses CIDRs or single IPs (as /32 or /128).
+func ParseNetworks(list []string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, raw := range list {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if !strings.Contains(v, "/") {
+			ip := net.ParseIP(v)
+			if ip == nil {
+				return nil, fmt.Errorf("office network %q is not an IP or CIDR", v)
+			}
+			if ip.To4() != nil {
+				v += "/32"
+			} else {
+				v += "/128"
+			}
+		}
+		_, n, err := net.ParseCIDR(v)
+		if err != nil {
+			return nil, fmt.Errorf("office network %q is not an IP or CIDR", raw)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // Validate checks bounds and regex compilability.
@@ -214,6 +290,26 @@ func Validate(s Settings) error {
 	}
 	if s.MaxActiveDevices < 1 || s.MaxActiveDevices > 50 {
 		return fmt.Errorf("max_active_devices must be 1..50")
+	}
+	nets, err := ParseNetworks(s.OfficeNetworks)
+	if err != nil {
+		return err
+	}
+	if s.OfficeOnly && len(nets) == 0 {
+		return fmt.Errorf("office_only needs at least one office network")
+	}
+	switch s.ContentAuditMode {
+	case AuditOff, AuditWarn, AuditBlock:
+	default:
+		return fmt.Errorf("content_audit_mode must be off, warn or block")
+	}
+	for _, r := range s.ContentAuditRules {
+		if strings.TrimSpace(r.Name) == "" {
+			return fmt.Errorf("content audit rules need a name")
+		}
+		if _, err := regexp.Compile("(?i)" + r.Pattern); err != nil {
+			return fmt.Errorf("content audit rule %q: %w", r.Name, err)
+		}
 	}
 	for _, r := range s.ClientRules {
 		if _, err := regexp.Compile(r.Pattern); err != nil {

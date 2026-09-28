@@ -34,3 +34,29 @@ func (s *Store) LatestQuota(ctx context.Context, accountID int64) (QuotaSnapshot
 	}
 	return q, err
 }
+
+// LatestQuotas returns the newest quota snapshot of each given account.
+func (s *Store) LatestQuotas(ctx context.Context, accountIDs []int64) (map[int64]QuotaSnapshot, error) {
+	out := map[int64]QuotaSnapshot{}
+	if len(accountIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT DISTINCT ON (account_id) account_id, at, primary_used_pct, primary_window_minutes, primary_reset_at,
+			secondary_used_pct, secondary_window_minutes, secondary_reset_at
+		FROM quota_snapshots WHERE account_id = ANY($1)
+		ORDER BY account_id, at DESC`, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var q QuotaSnapshot
+		if err := rows.Scan(&q.AccountID, &q.At, &q.PrimaryUsedPct, &q.PrimaryWindowMinutes, &q.PrimaryResetAt,
+			&q.SecondaryUsedPct, &q.SecondaryWindowMinutes, &q.SecondaryResetAt); err != nil {
+			return nil, err
+		}
+		out[q.AccountID] = q
+	}
+	return out, rows.Err()
+}

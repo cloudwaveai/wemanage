@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"aiseat/internal/audit"
 	"aiseat/internal/capture"
 	"aiseat/internal/health"
 	"aiseat/internal/recorder"
@@ -51,6 +52,9 @@ type Handler struct {
 	clsMu    sync.Mutex
 	cls      *Classifier
 	clsRules []settings.ClientRule
+
+	office  risk.OfficeMatcher
+	auditor audit.Auditor
 
 	// Per-request bookkeeping writes are coalesced (the database may be remote).
 	bkMu     sync.Mutex
@@ -213,18 +217,29 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			go h.recordObserved(r.Header)
 		}
 
-		// --- 2b. Anti key-sharing gate: client type, then device ---
+		// --- 2b. Gates: office network, client type, content audit, device ---
 		clientIP := risk.ClientIP(r, h.deps.TrustProxy)
 		devInfo := risk.ExtractDevice(r.Header, body)
 		obs := risk.Observation{
 			EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
 			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
 		}
-		if d := risk.ClientGate(set, kind, devInfo); !d.Allow {
+		deny := func(d risk.Decision) {
 			obs.Denied = d.Code
 			h.observe(obs)
 			oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+		}
+		if d := risk.NetworkGate(set, prin.RemoteAllowed, clientIP, &h.office); !d.Allow {
+			deny(d)
 			return
+		}
+		if d := risk.ClientGate(set, kind, devInfo); !d.Allow {
+			deny(d)
+			return
+		}
+		if hit, flagged := h.auditor.Check(set, endpoint, body); flagged {
+			obs.ContentRule, obs.ContentSnippet = hit.Rule, hit.Snippet
+			obs.ContentBlocked = set.ContentAuditMode == settings.AuditBlock
 		}
 		var deviceID *int64
 		if h.deps.Risk != nil {
@@ -234,15 +249,19 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 				h.deps.Log.Warn("risk: device lookup failed", "employee", prin.EmployeeID, "err", err)
 			} else {
 				deviceID = &dev.ID
-				d := risk.DeviceGate(set, dev, created, time.Now(), h.deps.Risk.PortalDevicesURL())
-				obs.Device, obs.NewDevice, obs.Denied = dev, created, d.Code
-				h.observe(obs)
-				if !d.Allow {
-					oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+				obs.Device, obs.NewDevice = dev, created
+				if d := risk.DeviceGate(set, dev, created, time.Now(), h.deps.Risk.PortalDevicesURL()); !d.Allow {
+					deny(d)
 					return
 				}
 			}
 		}
+		if obs.ContentBlocked {
+			deny(risk.Decision{Status: http.StatusForbidden, Code: "content_blocked",
+				Message: "request blocked by the company's AI usage policy (" + obs.ContentRule + "); contact the administrator if this is a mistake"})
+			return
+		}
+		h.observe(obs)
 
 		model := stripPrefix(gjson.GetBytes(body, "model").String())
 		stream := gjson.GetBytes(body, "stream").Bool()

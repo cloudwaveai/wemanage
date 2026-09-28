@@ -36,6 +36,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"frozen_reason":  emp.FrozenReason,
 		"frozen_at":      emp.FrozenAt,
 		"risk_mode":      set.RiskMode,
+		"office_only":    set.OfficeOnly,
+		"remote_allowed": emp.RemoteAllowed,
 	}
 	// Devices awaiting the employee's confirmation.
 	pending := 0
@@ -138,7 +140,9 @@ model = "gpt-5.1-codex"
 name = "Company Gateway"
 base_url = "%s"
 wire_api = "responses"
-requires_openai_auth = false`, base)
+requires_openai_auth = false
+# 网关走普通 HTTP（不支持 WebSocket）；显式写明，Codex 就不会先尝试 WebSocket
+supports_websockets = false`, base)
 
 	note := "在 Cursor / Cherry Studio 等工具中把 Base URL 设为上面地址，API Key 填你的 sk-emp- key。第三方客户端风险较高，建议优先使用 Codex。"
 	allowed := s.deps.Settings.Get(r.Context()).AllowNonCodex

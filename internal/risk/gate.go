@@ -1,7 +1,9 @@
 package risk
 
 import (
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"aiseat/internal/settings"
@@ -64,3 +66,57 @@ func DeviceGate(set settings.Settings, dev CachedDevice, created bool, now time.
 
 // KindCodex mirrors proxy.KindCodex (kept here to avoid an import cycle).
 const KindCodex = "codex"
+
+// OfficeMatcher caches the parsed office networks between requests.
+type OfficeMatcher struct {
+	mu   sync.Mutex
+	list []string
+	nets []*net.IPNet
+}
+
+// Contains reports whether ip is inside one of the listed networks.
+func (m *OfficeMatcher) Contains(list []string, ip string) bool {
+	m.mu.Lock()
+	if !sameStrings(m.list, list) {
+		nets, err := settings.ParseNetworks(list)
+		if err != nil {
+			nets = nil
+		}
+		m.list, m.nets = append([]string(nil), list...), nets
+	}
+	nets := m.nets
+	m.mu.Unlock()
+	p := net.ParseIP(ip)
+	if p == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// NetworkGate enforces "office networks only" when it is switched on.
+// Employees marked remote_allowed are exempt (they remain subject to the
+// device and concurrency rules).
+func NetworkGate(set settings.Settings, remoteAllowed bool, ip string, m *OfficeMatcher) Decision {
+	if !set.OfficeOnly || remoteAllowed || m.Contains(set.OfficeNetworks, ip) {
+		return allow
+	}
+	return Decision{Status: http.StatusForbidden, Code: "network_not_allowed",
+		Message: "this key can only be used from the company network; ask the administrator if you need remote access"}
+}

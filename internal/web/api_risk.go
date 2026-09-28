@@ -173,6 +173,7 @@ func (s *Server) handleEmployeeDevices(w http.ResponseWriter, r *http.Request) {
 		"employee": map[string]any{
 			"id": emp.ID, "name": emp.Name, "email": emp.Email,
 			"frozen": emp.FrozenAt != nil, "frozen_at": emp.FrozenAt, "frozen_reason": emp.FrozenReason,
+			"remote_allowed": emp.RemoteAllowed,
 		},
 		"devices":  nonNil(devs),
 		"networks": nonNil(nets),
@@ -257,6 +258,33 @@ func (s *Server) handleFreezeEmployee(freeze bool) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "frozen": freeze})
 	}
+}
+
+// handleRemoteAllowed toggles an employee's exemption from "office networks only".
+func (s *Server) handleRemoteAllowed(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		Allowed bool `json:"allowed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	ctx := r.Context()
+	if _, err := s.deps.Store.GetEmployee(ctx, id); err != nil {
+		writeErr(w, http.StatusNotFound, "employee not found")
+		return
+	}
+	if err := s.deps.Store.SetRemoteAllowed(ctx, id, body.Allowed); err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot update")
+		return
+	}
+	s.audit(r, "employee_remote_allowed", "employee", fmt.Sprint(id), map[string]any{"allowed": body.Allowed})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "remote_allowed": body.Allowed})
 }
 
 // nonNil turns a nil slice into an empty one so JSON renders [] not null.

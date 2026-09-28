@@ -65,6 +65,8 @@ type Employee struct {
 	// FrozenAt is set when risk controls froze the employee; only an admin can clear it.
 	FrozenAt     *time.Time
 	FrozenReason string
+	// RemoteAllowed exempts the employee from "office networks only".
+	RemoteAllowed bool
 }
 
 // Account is an upstream ChatGPT subscription account.
@@ -121,6 +123,7 @@ type KeyPrincipal struct {
 	NoticeAckVersion int
 	Frozen           bool
 	FrozenReason     string
+	RemoteAllowed    bool
 	Account          *Account
 }
 

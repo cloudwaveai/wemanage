@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -146,4 +147,67 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatal("condition not met in time")
+}
+
+func TestTeamUsageScope(t *testing.T) {
+	ts, st, ctx := newServer(t)
+	leader, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_tl", Name: "leader"})
+	sub, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_ts", Name: "sub"})
+	out, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_to", Name: "outsider"})
+	d, _ := st.UpsertDepartment(ctx, store.Department{FeishuDeptID: "td", Name: "D", LeaderOpenIDs: []string{"ou_tl"}})
+	_ = st.SetEmployeeDepartments(ctx, leader.ID, []int64{d})
+	_ = st.SetEmployeeDepartments(ctx, sub.ID, []int64{d})
+	for _, id := range []int64{sub.ID, out.ID} {
+		if err := st.InsertRequest(ctx, store.RequestRow{ID: newUUID(), StartedAt: time.Now(), EmployeeID: id,
+			ClientKind: "codex", Endpoint: "responses", StatusCode: 200, TokensInput: 10}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp, body := login(t, ts, "ou_tl").do(http.MethodGet, "/api/team/usage", "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("leader team usage: %d %s", resp.StatusCode, body)
+	}
+	var got struct {
+		Summary struct{ Requests int64 }
+		Members []struct {
+			EmployeeID int64 `json:"employee_id"`
+			Requests   int64 `json:"requests"`
+		}
+	}
+	_ = json.Unmarshal(body, &got)
+	ids := map[int64]int64{}
+	for _, m := range got.Members {
+		ids[m.EmployeeID] = m.Requests
+	}
+	if _, ok := ids[out.ID]; ok || ids[sub.ID] != 1 || got.Summary.Requests != 1 {
+		t.Fatalf("leader must see only their department: %s", body)
+	}
+
+	resp, _ = login(t, ts, "ou_to").do(http.MethodGet, "/api/team/usage", "")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("plain employee: status %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestRemoteAllowedToggleIsAdminOnly(t *testing.T) {
+	ts, st, ctx := newServer(t)
+	emp, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_rm", Name: "rm"})
+	path := "/api/admin/employees/" + itoa(emp.ID) + "/remote"
+	if resp, _ := login(t, ts, "ou_rm").do(http.MethodPost, path, `{"allowed":true}`); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("self toggle: status %d, want 403", resp.StatusCode)
+	}
+	_ = st.EnsureSuperAdmin(ctx, "ou_boss2", "boss")
+	if resp, body := login(t, ts, "ou_boss2").do(http.MethodPost, path, `{"allowed":true}`); resp.StatusCode != 200 {
+		t.Fatalf("admin toggle: %d %s", resp.StatusCode, body)
+	}
+	if e, _ := st.GetEmployee(ctx, emp.ID); !e.RemoteAllowed {
+		t.Fatal("remote_allowed not set")
+	}
+}
+
+func newUUID() [16]byte {
+	var u [16]byte
+	_, _ = rand.Read(u[:])
+	return u
 }

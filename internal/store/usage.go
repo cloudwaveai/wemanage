@@ -113,3 +113,36 @@ func (s *Store) ActiveEmployeeCount(ctx context.Context, from, to time.Time) (in
 		from, to).Scan(&n)
 	return n, err
 }
+
+// MemberUsage is one employee's usage over a period.
+type MemberUsage struct {
+	EmployeeID   int64      `json:"employee_id"`
+	Requests     int64      `json:"requests"`
+	TokensInput  int64      `json:"tokens_input"`
+	TokensOutput int64      `json:"tokens_output"`
+	LastActive   *time.Time `json:"last_active"`
+}
+
+// UsageByEmployee returns per-employee usage over [from,to) for the given
+// employees (nil = all). Employees without requests are omitted.
+func (s *Store) UsageByEmployee(ctx context.Context, from, to time.Time, employeeIDs []int64) (map[int64]MemberUsage, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT employee_id, COUNT(*), COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_output),0), MAX(started_at)
+		FROM requests
+		WHERE started_at >= $1 AND started_at < $2
+		  AND ($3::bigint[] IS NULL OR employee_id = ANY($3))
+		GROUP BY employee_id`, from, to, nullableIDs(employeeIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]MemberUsage{}
+	for rows.Next() {
+		var m MemberUsage
+		if err := rows.Scan(&m.EmployeeID, &m.Requests, &m.TokensInput, &m.TokensOutput, &m.LastActive); err != nil {
+			return nil, err
+		}
+		out[m.EmployeeID] = m
+	}
+	return out, rows.Err()
+}

@@ -75,6 +75,9 @@ func (s *Server) Mount(r chi.Router) {
 			r.Post("/me/devices/{id}/confirm", s.handleConfirmDevice)
 			r.Post("/me/devices/{id}/deny", s.handleDenyDevice)
 
+			// Team usage (department leaders see their departments; super admins everyone).
+			r.Get("/team/usage", s.handleTeamUsage)
+
 			// Logs (scoped by RBAC).
 			r.Get("/logs", s.handleListLogs)
 			r.Get("/logs/{id}", s.handleViewLog)
@@ -103,6 +106,7 @@ func (s *Server) Mount(r chi.Router) {
 				r.Get("/admin/employees/{id}/devices", s.handleEmployeeDevices)
 				r.Post("/admin/employees/{id}/freeze", s.handleFreezeEmployee(true))
 				r.Post("/admin/employees/{id}/unfreeze", s.handleFreezeEmployee(false))
+				r.Post("/admin/employees/{id}/remote", s.handleRemoteAllowed)
 				r.Post("/admin/devices/{id}/trust", s.handleAdminDevice("trust"))
 				r.Post("/admin/devices/{id}/block", s.handleAdminDevice("block"))
 				r.Post("/admin/devices/{id}/unblock", s.handleAdminDevice("unblock"))

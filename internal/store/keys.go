@@ -56,13 +56,13 @@ func (s *Store) LookupKey(ctx context.Context, hash []byte) (KeyPrincipal, error
 	var openID *string
 	err := s.Pool.QueryRow(ctx, `
 		SELECT k.id, e.id, e.feishu_open_id, e.status, (e.notice_ack_at IS NOT NULL), e.notice_ack_version,
-			(e.frozen_at IS NOT NULL), e.frozen_reason, a.id
+			(e.frozen_at IS NOT NULL), e.frozen_reason, e.remote_allowed, a.id
 		FROM api_keys k
 		JOIN employees e ON e.id = k.employee_id
 		LEFT JOIN upstream_accounts a ON a.employee_id = e.id
 		WHERE k.key_hash=$1 AND k.revoked_at IS NULL`, hash).
 		Scan(&kp.KeyID, &kp.EmployeeID, &openID, &kp.EmployeeStatus, &kp.NoticeAcked, &kp.NoticeAckVersion,
-			&kp.Frozen, &kp.FrozenReason, &acctID)
+			&kp.Frozen, &kp.FrozenReason, &kp.RemoteAllowed, &acctID)
 	if openID != nil {
 		kp.EmployeeOpenID = *openID
 	}

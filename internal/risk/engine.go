@@ -23,6 +23,8 @@ const (
 	RuleDeviceDenied        = "device_denied"
 	RuleVolumeSpike         = "volume_spike"
 	RuleSleepless           = "sleepless"
+	RuleOutsideOffice       = "outside_office"
+	RuleContentFlagged      = "content_flagged"
 )
 
 // multiNetworkMin is how many distinct coarse networks inside the concurrency
@@ -64,6 +66,11 @@ type Observation struct {
 	ClientKind string
 	UserAgent  string
 	Denied     string // gate error code when the request was rejected
+
+	// Content audit result for the newest user message (empty rule = clean).
+	ContentRule    string
+	ContentSnippet string
+	ContentBlocked bool
 }
 
 type cacheEntry struct {
@@ -314,6 +321,13 @@ func (e *Engine) process(ctx context.Context, o Observation) {
 	set := e.cfg.Settings.Get(ctx)
 	now := o.At
 
+	if o.ContentRule != "" {
+		e.contentFlagged(ctx, o)
+	}
+	if o.Denied == "network_not_allowed" {
+		e.outsideOffice(ctx, o)
+		return
+	}
 	if o.Denied == "client_not_allowed" {
 		if e.once(ctx, o.EmployeeID, RuleNonCodexBlocked, "", 24*time.Hour, true) {
 			ev := e.addEvent(ctx, o.EmployeeID, RuleNonCodexBlocked, "warn", nil, nil,
@@ -411,6 +425,41 @@ func (e *Engine) windowCheck(ctx context.Context, o Observation, set settings.Se
 	for _, f := range evalWindow(snap, now, grace, multiNetworkMin) {
 		e.high(ctx, o, set, f)
 	}
+}
+
+// outsideOffice records a key used outside the office networks and tells the
+// employee (at most once a day).
+func (e *Engine) outsideOffice(ctx context.Context, o Observation) {
+	if !e.once(ctx, o.EmployeeID, RuleOutsideOffice, "", 24*time.Hour, true) {
+		return
+	}
+	ev := e.addEvent(ctx, o.EmployeeID, RuleOutsideOffice, "warn", nil, nil,
+		map[string]any{"ip": o.IP, "location": e.location(o.IP), "user_agent": o.UserAgent})
+	e.notifyEmployee(ctx, o.OpenID, fmt.Sprintf(
+		"【AI 网关】你的 Key 在公司网络以外被使用，已拦截。\nIP：%s %s\n如果是你本人在外办公，请联系管理员开通远程使用；如果不是你，请到门户检查设备，必要时重新生成 Key：%s",
+		o.IP, e.location(o.IP), e.PortalDevicesURL()))
+	e.markNotified(ctx, ev)
+}
+
+// contentFlagged records a content-audit hit and tells the administrators
+// (the same employee and rule at most once an hour).
+func (e *Engine) contentFlagged(ctx context.Context, o Observation) {
+	if !e.once(ctx, o.EmployeeID, RuleContentFlagged, o.ContentRule, time.Hour, false) {
+		return
+	}
+	var dev *int64
+	if o.Device.ID != 0 {
+		d := o.Device.ID
+		dev = &d
+	}
+	ev := e.addEvent(ctx, o.EmployeeID, RuleContentFlagged, "warn", dev, nil,
+		map[string]any{"rule": o.ContentRule, "snippet": o.ContentSnippet, "blocked": o.ContentBlocked, "ip": o.IP})
+	action := "仅提醒，请求已放行"
+	if o.ContentBlocked {
+		action = "已拦截"
+	}
+	e.notifyAdmins(ctx, o.EmployeeID, fmt.Sprintf("触发内容审核规则「%s」（%s）：%s", o.ContentRule, action, o.ContentSnippet))
+	e.markNotified(ctx, ev)
 }
 
 // high handles a high-severity window finding: record, freeze (unless lax) and notify.
