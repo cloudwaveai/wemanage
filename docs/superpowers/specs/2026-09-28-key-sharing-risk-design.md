@@ -149,3 +149,7 @@
 - **检查顺序**：冻结 → 告知版本 → 账号状态 → 公司网络 → 客户端类型 → 内容审核（记录结果）→ 设备 → 内容拦截 → 并发排队。
 - **WebSocket**：对照 Codex 源码确认不需要支持（自定义服务默认 HTTP，收到 426 会退回 HTTP），员工配置片段显式写 `supports_websockets = false`。
 - **团队用量**：`GET /api/team/usage` 给部门负责人只读查看本部门成员的用量、账号状态和额度。
+
+## 13. 补充：Responses WebSocket（2026-09-28）
+
+官方 Codex 连 OpenAI 默认用 WebSocket（HTTP 是它的退路），原先我们全程 HTTP，是和官方行为最明显的差异。现在网关在 `GET /v1/responses` 接受 WebSocket：握手时做认证、公司网络与客户端检查，然后以 WebSocket 连 CPA（CPA 对 `websockets=true` 的账号再以 WebSocket 连 OpenAI）。连接上的每个 `response.create` / `response.append` 视为一轮：重新检查冻结/账号状态、设备、内容审核，占用账号并发名额，改写模型前缀，事件流解析后记日志；`generate:false` 预热不记；`codex.rate_limits` 事件记为额度快照。非 ChatGPT 账号和设置里的总开关返回 426，Codex 自动退回 HTTP。TLS 指纹差异（CPA 用 Chrome uTLS）仍未处理。

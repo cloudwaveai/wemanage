@@ -68,6 +68,10 @@ type Settings struct {
 	OfficeOnly     bool     `json:"office_only"`
 	OfficeNetworks []string `json:"office_networks"`
 
+	// DisableWebsocket turns off the Responses WebSocket transport: handshakes
+	// get 426 and Codex falls back to HTTP (kill switch).
+	DisableWebsocket bool `json:"disable_websocket"`
+
 	// Content audit of the newest user message, before it is sent upstream.
 	ContentAuditMode  string        `json:"content_audit_mode"` // off | warn | block
 	ContentAuditRules []ContentRule `json:"content_audit_rules"`

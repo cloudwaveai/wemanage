@@ -44,11 +44,15 @@ func (s *Server) handleFeishuCallback(w http.ResponseWriter, r *http.Request) {
 	redirect := s.deps.PublicBaseURL + "/api/auth/feishu/callback"
 	info, err := s.deps.Feishu.ExchangeUser(r.Context(), code, redirect)
 	if err != nil {
+		s.deps.Log.Warn("feishu login: code exchange failed", "err", err)
 		writeErr(w, http.StatusBadGateway, "feishu exchange failed")
 		return
 	}
 	emp, err := s.deps.Store.GetEmployeeByOpenID(r.Context(), info.OpenID)
 	if err != nil {
+		// Logged so the first administrator can find their open_id for
+		// BOOTSTRAP_SUPER_ADMINS before the directory has been synced.
+		s.deps.Log.Info("feishu login rejected: not in the employee list", "open_id", info.OpenID, "name", info.Name)
 		writeErr(w, http.StatusForbidden, "账号未开通，请联系管理员先同步通讯录")
 		return
 	}

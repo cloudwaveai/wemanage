@@ -134,7 +134,14 @@ func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	base := s.deps.PublicBaseURL + "/v1"
 	modelLine := `model = "gpt-5.1-codex"`
+	// ChatGPT accounts use the WebSocket transport like the official client;
+	// other providers (and the kill switch) stay on HTTP.
+	wsLine := "# 与官方 Codex 一致，走 WebSocket（网关不支持时 Codex 会自动退回 HTTP）\nsupports_websockets = true"
+	if s.deps.Settings.Get(r.Context()).DisableWebsocket {
+		wsLine = "# 公司暂时关闭了 WebSocket，走普通 HTTP\nsupports_websockets = false"
+	}
 	if acc, err := s.boundAccount(r.Context(), currentEmployee(r).ID); err == nil && !acc.IsChatGPT() {
+		wsLine = "# 非 ChatGPT 账号走普通 HTTP\nsupports_websockets = false"
 		// Non-ChatGPT accounts (e.g. Kimi Code during trials) expose their own model IDs.
 		modelLine = fmt.Sprintf(`# 你的账号不是 ChatGPT（%s）。查看可用模型：
 #   curl -s %s/models -H "Authorization: Bearer $AISEAT_API_KEY"
@@ -152,8 +159,7 @@ wire_api = "responses"
 env_key = "AISEAT_API_KEY"
 env_key_instructions = "在门户「我的 Key」生成后：export AISEAT_API_KEY=sk-emp-..."
 requires_openai_auth = false
-# 网关走普通 HTTP（不支持 WebSocket）；显式写明，Codex 就不会先尝试 WebSocket
-supports_websockets = false`, modelLine, base)
+%s`, modelLine, base, wsLine)
 
 	note := "在 Cursor / Cherry Studio 等工具中把 Base URL 设为上面地址，API Key 填你的 sk-emp- key。第三方客户端风险较高，建议优先使用 Codex。"
 	allowed := s.deps.Settings.Get(r.Context()).AllowNonCodex

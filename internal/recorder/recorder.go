@@ -63,6 +63,10 @@ type Record struct {
 	Outcome         capture.Outcome
 	ClientIP        string
 	DeviceID        *int64
+	// Delta marks a request that carries only new input on top of an earlier
+	// response (WebSocket previous_response_id): it is stored as-is instead of
+	// being prefix-encoded against, or de-duplicated with, the previous one.
+	Delta bool
 }
 
 // Tunables.
@@ -105,13 +109,13 @@ type Recorder struct {
 	spoolDir string
 	log      *slog.Logger
 
-	shards []chan Record
-	out    chan *prepared
-	kick   chan struct{}
-	wg     sync.WaitGroup // records not yet committed or spooled
-	mu     sync.Mutex     // guards spool file writes
-	ctx    context.Context
-	replay atomic.Bool // an early spool replay is scheduled
+	shards   []chan Record
+	out      chan *prepared
+	kick     chan struct{}
+	inflight atomic.Int64 // records not yet committed or spooled (a counter, not a WaitGroup: Submit may race with Flush)
+	mu       sync.Mutex   // guards spool file writes
+	ctx      context.Context
+	replay   atomic.Bool // an early spool replay is scheduled
 
 	stMu     sync.Mutex
 	epoch    uint64                 // bumped when a commit fails; older prepared records are re-done
@@ -180,11 +184,11 @@ func (r *Recorder) Start(ctx context.Context) {
 
 // Submit enqueues a record without blocking; on a full queue it spools to disk.
 func (r *Recorder) Submit(rec Record) {
-	r.wg.Add(1)
+	r.inflight.Add(1)
 	select {
 	case r.shardFor(rec) <- rec:
 	default:
-		r.wg.Done()
+		r.inflight.Add(-1)
 		r.spool(rec)
 	}
 }
@@ -196,8 +200,6 @@ func (r *Recorder) Flush() { r.FlushTimeout(0) }
 // FlushTimeout is Flush with an upper bound (0 = no bound). It reports whether
 // everything was flushed in time.
 func (r *Recorder) FlushTimeout(d time.Duration) bool {
-	done := make(chan struct{})
-	go func() { r.wg.Wait(); close(done) }()
 	var deadline <-chan time.Time
 	if d > 0 {
 		deadline = time.After(d)
@@ -205,9 +207,10 @@ func (r *Recorder) FlushTimeout(d time.Duration) bool {
 	t := time.NewTicker(5 * time.Millisecond)
 	defer t.Stop()
 	for {
-		select {
-		case <-done:
+		if r.inflight.Load() == 0 {
 			return true
+		}
+		select {
 		case <-deadline:
 			return false
 		case <-t.C:
@@ -227,7 +230,7 @@ func (r *Recorder) prepareLoop(ctx context.Context, ch chan Record) {
 				select {
 				case rec := <-ch:
 					r.spool(rec)
-					r.wg.Done()
+					r.inflight.Add(-1)
 				default:
 					return
 				}
@@ -237,14 +240,14 @@ func (r *Recorder) prepareLoop(ctx context.Context, ch chan Record) {
 			if err != nil {
 				r.log.Warn("recorder: prepare failed, spooling", "err", err, "request_id", uuidString(rec.RequestID))
 				r.spool(rec)
-				r.wg.Done()
+				r.inflight.Add(-1)
 				continue
 			}
 			select {
 			case r.out <- p:
 			case <-ctx.Done():
 				r.spool(rec)
-				r.wg.Done()
+				r.inflight.Add(-1)
 			}
 		}
 	}
@@ -307,7 +310,7 @@ func (r *Recorder) prepare(ctx context.Context, rec Record) (*prepared, error) {
 		}
 	}
 	var prevState *capture.PrevState
-	if sess.lastReq != nil {
+	if sess.lastReq != nil && !rec.Delta {
 		prevState = &capture.PrevState{ID: capture.UUID(*sess.lastReq), Full: sess.full, ChainDepth: sess.depth}
 	}
 	enc := capture.Encode(reqHashes, prevState)
@@ -396,7 +399,11 @@ func (r *Recorder) prepare(ctx context.Context, rec Record) (*prepared, error) {
 		copy(u[:], enc.PrefixOf[:])
 		p.row.ReqPrefixOf = &u
 	}
-	for _, t := range capture.ExtractTexts(rec.Endpoint, reqSegs, inputStart, sess.inputCount, rec.Outcome) {
+	prevInputs := sess.inputCount
+	if rec.Delta {
+		prevInputs = 0 // every input item of a delta request is new
+	}
+	for _, t := range capture.ExtractTexts(rec.Endpoint, reqSegs, inputStart, prevInputs, rec.Outcome) {
 		if t.Text == "" {
 			continue
 		}
@@ -443,13 +450,13 @@ func (r *Recorder) writeLoop(ctx context.Context) {
 		case <-ctx.Done():
 			for _, p := range pending {
 				r.spool(p.rec)
-				r.wg.Done()
+				r.inflight.Add(-1)
 			}
 			for {
 				select {
 				case p := <-r.out:
 					r.spool(p.rec)
-					r.wg.Done()
+					r.inflight.Add(-1)
 				default:
 					return
 				}
@@ -488,7 +495,7 @@ func (r *Recorder) commit(ctx context.Context, ps []*prepared) {
 	for _, p := range ps {
 		if p.epoch != ep {
 			r.spool(p.rec)
-			r.wg.Done()
+			r.inflight.Add(-1)
 			r.replaySoon()
 			continue
 		}
@@ -521,7 +528,7 @@ func (r *Recorder) commit(ctx context.Context, ps []*prepared) {
 			r.reset()
 			for _, p := range ok {
 				r.spool(p.rec)
-				r.wg.Done()
+				r.inflight.Add(-1)
 			}
 			return
 		}
@@ -533,7 +540,7 @@ func (r *Recorder) commit(ctx context.Context, ps []*prepared) {
 	}
 	r.markStored(ok)
 	for range ok {
-		r.wg.Done()
+		r.inflight.Add(-1)
 	}
 }
 
@@ -548,7 +555,7 @@ func (r *Recorder) commitEach(ctx context.Context, ps []*prepared) {
 			failed[p.rec.RequestID] = true
 			r.spool(p.rec)
 			respool = true
-			r.wg.Done()
+			r.inflight.Add(-1)
 			continue
 		}
 		lb := store.LogBatch{Bumps: p.bumps, Requests: []store.RequestRow{p.row}, Texts: p.texts,
@@ -570,7 +577,7 @@ func (r *Recorder) commitEach(ctx context.Context, ps []*prepared) {
 			r.spool(p.rec)
 			respool = true
 		}
-		r.wg.Done()
+		r.inflight.Add(-1)
 	}
 	// Cached session states may point at failed records: start over from
 	// what is committed.
@@ -717,11 +724,11 @@ func (r *Recorder) replaySpool(ctx context.Context) {
 	// Feed replayed records through the workers (blocking is fine here) so a
 	// session's records are still written one at a time.
 	for _, rec := range records {
-		r.wg.Add(1)
+		r.inflight.Add(1)
 		select {
 		case r.shardFor(rec) <- rec:
 		case <-ctx.Done():
-			r.wg.Done()
+			r.inflight.Add(-1)
 			r.spool(rec)
 		}
 	}

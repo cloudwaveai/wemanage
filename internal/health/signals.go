@@ -94,6 +94,17 @@ func RecordQuotaFromHeaders(ctx context.Context, st *store.Store, accountID int6
 	})
 }
 
+// HasQuotaHeaders reports whether a response carries any quota header.
+func HasQuotaHeaders(h http.Header) bool {
+	for _, n := range []string{hdrPrimaryUsedPct, hdrPrimaryWindowMinutes, hdrPrimaryResetAt, hdrPrimaryResetAfter,
+		hdrSecondaryUsedPct, hdrSecondaryWindowMinutes, hdrSecondaryResetAt, hdrSecondaryResetAfter} {
+		if h.Get(n) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func parseFloatHeader(h http.Header, name string) *float64 {
 	v := h.Get(name)
 	if v == "" {

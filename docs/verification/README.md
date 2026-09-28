@@ -43,7 +43,7 @@ CPA 无法构建时该测试会 `t.Skip`，此时 A 类必须在预发用真实 
 - [ ] **B1 OAuth 登录**：管理后台"添加账号"能走通 `codex-auth-url` → 浏览器登录 → 粘贴回调 URL → CPA 完成 token 交换，账号出现在列表。
 - [ ] **B2 真实额度头**：真实账号跑几次请求后，`/api/me/quota` 能显示 5 小时 / 每周使用比例（确认 CPA 确实透传了 `X-Codex-*-Used-Percent`）。
 - [ ] **B3 token 刷新走代理**：给账号配一个只在特定出口可用的代理，确认 CPA 刷新 token 时也走该 `proxy_url`（抓包或看代理日志）。
-- [x] **B4 Codex 与 WebSocket**：已对照 Codex 源码（rust-v0.158.0）确认：自定义服务的 `supports_websockets` 默认为 false，走 HTTP；即使打开，收到网关的 426 也会立即、并在整个会话里改用 HTTP（见 `codex-rs/core/tests/suite/websocket_fallback.rs`）。员工配置片段已显式写 `supports_websockets = false`。冒烟时只需确认网关日志里没有 426 以外的 WebSocket 报错。
+- [ ] **B4 WebSocket**：官方 Codex 连 OpenAI 默认走 WebSocket（内置 OpenAI provider `supports_websockets: true`），网关已端到端支持：Codex ⇄ 网关 ⇄ CPA ⇄ OpenAI 全程 WebSocket（CPA 仅在下游是 WS 且账号 `websockets=true` 时上游用 WS，网关添加 ChatGPT 账号时自动打开）。冒烟时确认：① 员工配置 `supports_websockets = true` 能正常多轮对话；② 日志里每轮都有记录，带 `previous_response_id` 的增量轮次只记新增内容；③ 额度（`codex.rate_limits` 事件）能显示；④ 在设置里打开「关闭 WebSocket」后 Codex 自动退回 HTTP 仍可用。
 - [ ] **B5 真实并发**：用真实账号并发 6 个请求，确认网关只放行 4 个、其余排队，且上游未收到 >4 并发。
 - [ ] **B6 指纹自洽**：抓一次真实 Codex 请求，确认经网关后 UA / Version / Session-Id / Originator 一致且无 `X-Forwarded-*`。
 

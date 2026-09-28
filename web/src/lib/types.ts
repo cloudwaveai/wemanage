@@ -265,6 +265,7 @@ export interface Settings {
   // Risk controls (anti key-sharing).
   risk_mode: RiskMode;
   allow_non_codex: boolean;
+  disable_websocket?: boolean;
   device_confirm_hours: number;
   concurrency_window_minutes: number;
   new_device_grace_minutes: number;

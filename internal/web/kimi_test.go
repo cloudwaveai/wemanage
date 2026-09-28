@@ -98,7 +98,16 @@ func TestKimiAccountOnboarding(t *testing.T) {
 		CodexToml string `json:"codex_toml"`
 	}
 	_ = json.Unmarshal(body, &snip)
-	if !strings.Contains(snip.CodexToml, `env_key = "AISEAT_API_KEY"`) || strings.Contains(snip.CodexToml, "gpt-5.1-codex") {
+	if !strings.Contains(snip.CodexToml, `env_key = "AISEAT_API_KEY"`) || strings.Contains(snip.CodexToml, "gpt-5.1-codex") ||
+		!strings.Contains(snip.CodexToml, "supports_websockets = false") {
 		t.Fatalf("snippet for a Kimi account:\n%s", snip.CodexToml)
+	}
+
+	// A ChatGPT account's snippet uses the WebSocket transport like the official client.
+	_, _ = st.Pool.Exec(ctx, `UPDATE upstream_accounts SET provider='codex'`)
+	_, body = login(t, ts, "ou_kuser").do(http.MethodGet, "/api/me/config-snippets", "")
+	_ = json.Unmarshal(body, &snip)
+	if !strings.Contains(snip.CodexToml, "supports_websockets = true") || !strings.Contains(snip.CodexToml, "gpt-5.1-codex") {
+		t.Fatalf("snippet for a ChatGPT account:\n%s", snip.CodexToml)
 	}
 }

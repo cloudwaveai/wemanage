@@ -47,8 +47,14 @@ func ReconcileAccount(ctx context.Context, client *Client, account store.Account
 // ApplyExpected pushes the expected prefix and proxy_url onto the account's CPA
 // auth file via PATCH /v0/management/auth-files/fields.
 func ApplyExpected(ctx context.Context, client *Client, account store.Account, wantPrefix, wantProxy string) error {
-	return client.PatchFields(ctx, account.CPAAuthName, map[string]any{
+	fields := map[string]any{
 		"prefix":    wantPrefix,
 		"proxy_url": wantProxy,
-	})
+	}
+	if account.IsChatGPT() {
+		// Let CPA talk to OpenAI over WebSocket when the client does, like the
+		// official Codex client (CPA only uses it when the downstream is WS).
+		fields["websockets"] = true
+	}
+	return client.PatchFields(ctx, account.CPAAuthName, fields)
 }

@@ -208,6 +208,14 @@ export function SettingsPage() {
                 hint="≥ 1"
               />
             </div>
+            <div className="mt-5">
+              <ToggleField
+                label="关闭 WebSocket（全部改走 HTTP）"
+                checked={!!form.disable_websocket}
+                onChange={(v) => patch({ disable_websocket: v })}
+                hint="默认开启 WebSocket：与官方 Codex 连接 OpenAI 的方式一致。出现兼容问题时可临时关闭，员工的 Codex 会自动退回 HTTP，无需改配置。"
+              />
+            </div>
           </Card>
 
           <Card className="p-5">

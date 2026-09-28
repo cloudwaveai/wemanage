@@ -162,6 +162,8 @@ func runServe() error {
 	r.Handle("/*", webui.Handler())
 
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: r}
+	// Hijacked WebSocket connections are not closed by Shutdown; close them.
+	srv.RegisterOnShutdown(dp.CloseWebsockets)
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
