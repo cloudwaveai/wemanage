@@ -176,6 +176,7 @@ export interface EmployeeRow {
   frozen_reason: string;
   open_risk_events: number;
   remote_allowed: boolean;
+  super_admin_pinned: boolean;
 }
 
 // --- accounts (snake_case) ---

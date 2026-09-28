@@ -26,6 +26,9 @@ type Deps struct {
 	PublicBaseURL    string
 	SecureCookies    bool
 	DevLogin         bool
+	// BootstrapSuperAdmins are the open_ids pinned as super admin by config;
+	// they are re-granted at every start, so the UI cannot revoke them.
+	BootstrapSuperAdmins []string
 	// SyncFeishu triggers a directory sync; wired by the serve command so the
 	// web layer need not import the feishu sync logic directly.
 	SyncFeishu func(ctx context.Context) (int, int, error)
@@ -109,6 +112,7 @@ func (s *Server) Mount(r chi.Router) {
 				r.Post("/admin/employees/{id}/freeze", s.handleFreezeEmployee(true))
 				r.Post("/admin/employees/{id}/unfreeze", s.handleFreezeEmployee(false))
 				r.Post("/admin/employees/{id}/remote", s.handleRemoteAllowed)
+				r.Post("/admin/employees/{id}/super-admin", s.handleSuperAdmin)
 				r.Post("/admin/devices/{id}/trust", s.handleAdminDevice("trust"))
 				r.Post("/admin/devices/{id}/block", s.handleAdminDevice("block"))
 				r.Post("/admin/devices/{id}/unblock", s.handleAdminDevice("unblock"))

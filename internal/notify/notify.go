@@ -5,6 +5,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -63,10 +64,27 @@ func (n *Notifier) AccountAlert(ctx context.Context, signalID, accountID int64, 
 	}
 
 	text := fmt.Sprintf("[account %d] %s: %s", accountID, kind, detail)
-	for _, openID := range n.superAdminOpenIDs {
+	for _, openID := range n.recipients(ctx) {
 		if err := n.sender.SendText(ctx, openID, text); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// recipients is the configured admins plus every current super admin (granted
+// in the portal after startup), de-duplicated. A DB error falls back to the
+// configured list.
+func (n *Notifier) recipients(ctx context.Context) []string {
+	out := append([]string(nil), n.superAdminOpenIDs...)
+	ids, err := n.st.SuperAdminOpenIDs(ctx)
+	if err != nil {
+		return out
+	}
+	for _, id := range ids {
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }

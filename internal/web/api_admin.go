@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -60,10 +61,62 @@ func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 			"account_id": e.AccountID, "account_email": e.AccountEmail, "account_status": e.AccountStatus,
 			"active_key_prefix": e.ActiveKeyPrefix, "department_names": e.DepartmentNames,
 			"frozen": e.FrozenAt != nil, "frozen_reason": e.FrozenReason, "open_risk_events": e.OpenRiskEvents,
-			"remote_allowed": e.RemoteAllowed,
+			"remote_allowed": e.RemoteAllowed, "super_admin_pinned": s.pinnedSuperAdmin(e.FeishuOpenID),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"employees": out})
+}
+
+// pinnedSuperAdmin reports whether config (BOOTSTRAP_SUPER_ADMINS) pins openID.
+func (s *Server) pinnedSuperAdmin(openID string) bool {
+	return openID != "" && slices.Contains(s.deps.BootstrapSuperAdmins, openID)
+}
+
+// handleSuperAdmin grants or revokes super admin. Nobody can change their own
+// role, so at least one super admin always remains; admins pinned by config
+// are re-granted at every start and must be removed from
+// BOOTSTRAP_SUPER_ADMINS before they can be revoked here.
+func (s *Server) handleSuperAdmin(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var body struct {
+		Value bool `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	if me := currentEmployee(r); me != nil && me.ID == id {
+		writeErr(w, http.StatusBadRequest, "cannot change your own super admin role")
+		return
+	}
+	ctx := r.Context()
+	emp, err := s.deps.Store.GetEmployee(ctx, id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "employee not found")
+		return
+	}
+	if body.Value && emp.Status != "active" {
+		writeErr(w, http.StatusBadRequest, "employee is not active")
+		return
+	}
+	if !body.Value && s.pinnedSuperAdmin(emp.FeishuOpenID) {
+		writeErr(w, http.StatusBadRequest, "pinned by BOOTSTRAP_SUPER_ADMINS; remove it from the server config first")
+		return
+	}
+	if err := s.deps.Store.SetSuperAdmin(ctx, id, body.Value); err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot update")
+		return
+	}
+	action := "super_admin_revoke"
+	if body.Value {
+		action = "super_admin_grant"
+	}
+	s.audit(r, action, "employee", fmt.Sprint(id), map[string]any{"name": emp.Name})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "is_super_admin": body.Value})
 }
 
 func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {

@@ -127,7 +127,8 @@ func runServe() error {
 	notifier := notify.NewNotifier(st, notifySender(fs), superAdmins)
 
 	webSrv := web.NewServer(web.Deps{
-		Store: st, Settings: set, Box: box, CPA: cpaClient, Feishu: fs,
+		BootstrapSuperAdmins: cfg.BootstrapSuperAdmins,
+		Store:                st, Settings: set, Box: box, CPA: cpaClient, Feishu: fs,
 		FeishuLoginScope: cfg.FeishuLoginScope,
 		PublicBaseURL:    cfg.PublicBaseURL, SecureCookies: isHTTPS(cfg.PublicBaseURL),
 		DevLogin: cfg.DevLogin, Log: log, Risk: riskEngine,

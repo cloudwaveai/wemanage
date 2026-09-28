@@ -125,3 +125,34 @@ func TestAccountAlertSendsMarksAndDedups(t *testing.T) {
 		t.Fatalf("distinct-kind alert total sent = %d, want %d", got, 2*len(admins))
 	}
 }
+
+// Admins granted in the portal after startup get account alerts too, once.
+func TestAccountAlertAlsoReachesPortalAdmins(t *testing.T) {
+	pool := testutil.NewDB(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	box, _ := secure.NewBox(make([]byte, 32))
+	g, _ := st.CreateIPGroup(ctx, box, "g", "", 10)
+	a, err := st.CreateAccount(ctx, store.Account{CPAAuthName: "c.json", IPGroupID: g.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, _ := st.AddSignal(ctx, a.ID, "rate_limited", nil)
+	_ = st.EnsureSuperAdmin(ctx, "ou_config", "config admin") // also in the config list
+	_ = st.EnsureSuperAdmin(ctx, "ou_portal", "portal admin")
+
+	sender := &fakeSender{}
+	n := notify.NewNotifier(st, sender, []string{"ou_config"})
+	if err := n.AccountAlert(ctx, sig.ID, a.ID, "rate_limited", "429"); err != nil {
+		t.Fatal(err)
+	}
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	got := map[string]int{}
+	for _, c := range sender.calls {
+		got[c.openID]++
+	}
+	if len(got) != 2 || got["ou_config"] != 1 || got["ou_portal"] != 1 {
+		t.Fatalf("recipients = %v, want ou_config and ou_portal once each", got)
+	}
+}

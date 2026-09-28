@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { EmployeeRow } from "../lib/types";
 import {
+  Button,
   Card,
   PageHeader,
   Loading,
@@ -10,12 +12,38 @@ import {
   Empty,
   StatusBadge,
 } from "../components/ui";
+import { Modal } from "../components/Modal";
+import { useToast } from "../components/Toast";
+import { useAuth } from "../context/AuthContext";
 
 export function EmployeesPage() {
+  const { me } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const [adminFor, setAdminFor] = useState<EmployeeRow | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin-employees"],
     queryFn: () =>
       api.get<{ employees: EmployeeRow[] }>("/api/admin/employees"),
+  });
+
+  const setAdmin = useMutation({
+    mutationFn: (e: EmployeeRow) =>
+      api.post(`/api/admin/employees/${e.id}/super-admin`, {
+        value: !e.is_super_admin,
+      }),
+    onSuccess: (_, e) => {
+      toast(
+        e.is_super_admin
+          ? `已取消 ${e.name} 的超级管理员`
+          : `已把 ${e.name} 设为超级管理员`,
+        "success",
+      );
+      qc.invalidateQueries({ queryKey: ["admin-employees"] });
+      setAdminFor(null);
+    },
+    onError: (err: unknown) =>
+      toast(err instanceof Error ? err.message : "操作失败", "error"),
   });
 
   const rows = data?.employees ?? [];
@@ -37,6 +65,7 @@ export function EmployeesPage() {
                   <th className="px-4 py-2.5 font-medium">绑定账号</th>
                   <th className="px-4 py-2.5 font-medium">Key 前缀</th>
                   <th className="px-4 py-2.5 font-medium">部门</th>
+                  <th className="px-4 py-2.5 font-medium">超级管理员</th>
                 </tr>
               </thead>
               <tbody>
@@ -123,6 +152,34 @@ export function EmployeesPage() {
                         ? e.department_names.join("、")
                         : "-"}
                     </td>
+                    <td className="px-4 py-2.5">
+                      {e.id === me?.id ? (
+                        <span className="text-xs text-slate-400">本人</span>
+                      ) : e.super_admin_pinned ? (
+                        <span
+                          className="text-xs text-slate-400"
+                          title="由服务器配置 BOOTSTRAP_SUPER_ADMINS 指定，要取消请先从配置里去掉"
+                        >
+                          配置指定
+                        </span>
+                      ) : e.is_super_admin ? (
+                        <Button
+                          variant="ghost"
+                          className="!px-2 !py-1 text-xs"
+                          onClick={() => setAdminFor(e)}
+                        >
+                          取消
+                        </Button>
+                      ) : e.status === "active" ? (
+                        <Button
+                          variant="ghost"
+                          className="!px-2 !py-1 text-xs"
+                          onClick={() => setAdminFor(e)}
+                        >
+                          设为管理员
+                        </Button>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -131,6 +188,30 @@ export function EmployeesPage() {
           {rows.length === 0 && <Empty label="暂无员工，请先同步飞书" />}
         </Card>
       )}
+      <Modal
+        open={!!adminFor}
+        onClose={() => setAdminFor(null)}
+        title={adminFor?.is_super_admin ? "取消超级管理员" : "设为超级管理员"}
+        footer={
+          <>
+            <Button onClick={() => setAdminFor(null)}>取消</Button>
+            <Button
+              variant={adminFor?.is_super_admin ? "danger" : "primary"}
+              disabled={setAdmin.isPending}
+              onClick={() => adminFor && setAdmin.mutate(adminFor)}
+            >
+              {setAdmin.isPending ? "处理中…" : "确认"}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-600">
+          {adminFor?.is_super_admin
+            ? `确认取消 ${adminFor?.name} 的超级管理员？取消后立即生效，他只能看到自己的数据。`
+            : `确认把 ${adminFor?.name} 设为超级管理员？超级管理员可以查看所有员工的对话日志、管理账号和设置，也会收到账号告警。`}
+        </p>
+        <p className="mt-2 text-xs text-slate-400">此操作会记录到审计。</p>
+      </Modal>
     </div>
   );
 }
