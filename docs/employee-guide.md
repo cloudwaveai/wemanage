@@ -31,6 +31,16 @@ supports_websockets = false
 export AISEAT_API_KEY="sk-emp-你的key"
 ```
 
+**如果你电脑上开着代理 / 梯子**：Codex 会读取终端里的 `HTTPS_PROXY` 环境变量，请求会绕道代理——每次连接多花好几秒，还可能因为代理节点切换被风控当成"多个网络同时使用"。请把网关域名排除在代理之外（两种都做最稳）：
+
+```bash
+# 写进 ~/.zshrc 或 ~/.bashrc
+export NO_PROXY="$NO_PROXY,.cloudwaveai.cn"
+export no_proxy="$no_proxy,.cloudwaveai.cn"
+```
+
+并在代理软件的规则里把 `cloudwaveai.cn` 设为直连（DIRECT）。
+
 之后照常使用 `codex` 即可。请求会经公司网关转发到你的专属账号。
 
 ## 三、其它客户端（Cursor / Cherry Studio 等）
