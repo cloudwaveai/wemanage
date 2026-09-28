@@ -9,7 +9,9 @@ RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
-RUN pnpm build
+# vite.config.ts writes to ../internal/webui/dist for local builds; inside
+# the image build into ./dist, which the Go stage copies into place.
+RUN pnpm exec tsc -b && pnpm exec vite build --outDir dist --emptyOutDir
 
 # ---- stage 2: build the Go gateway ----
 FROM golang:1.26-alpine AS build
