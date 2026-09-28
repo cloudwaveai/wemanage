@@ -60,7 +60,8 @@ func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"id": e.ID, "name": e.Name, "email": e.Email, "status": e.Status,
 			"is_super_admin": e.IsSuperAdmin, "notice_acked": e.NoticeAckAt != nil,
-			"account_id": e.AccountID, "account_email": e.AccountEmail, "account_status": e.AccountStatus,
+			"account_id": e.AccountID, "account_email": e.AccountEmail, "account_provider": e.AccountProvider,
+			"account_status": e.AccountStatus,
 			"active_key_prefix": e.ActiveKeyPrefix, "department_names": e.DepartmentNames,
 			"frozen": e.FrozenAt != nil, "frozen_reason": e.FrozenReason, "open_risk_events": e.OpenRiskEvents,
 			"remote_allowed": e.RemoteAllowed, "super_admin_pinned": s.pinnedSuperAdmin(e.FeishuOpenID),

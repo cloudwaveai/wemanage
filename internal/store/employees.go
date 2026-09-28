@@ -18,6 +18,7 @@ type EmployeeRow struct {
 	Employee
 	AccountID       *int64
 	AccountEmail    string
+	AccountProvider string
 	AccountStatus   string
 	ActiveKeyPrefix string
 	DepartmentNames []string
@@ -169,7 +170,7 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 	sql := `
 		SELECT e.id, e.feishu_open_id, e.feishu_union_id, e.feishu_user_id, e.name,
 			e.email, e.avatar_url, e.status, e.is_super_admin, e.notice_ack_at, e.created_at,
-			a.id, COALESCE(a.email,''), COALESCE(a.status,''),
+			a.id, COALESCE(a.email,''), COALESCE(a.provider,''), COALESCE(a.status,''),
 			COALESCE(k.key_prefix,''),
 			COALESCE(ARRAY_AGG(d.name) FILTER (WHERE d.name IS NOT NULL), '{}'),
 			e.frozen_at, e.frozen_reason,
@@ -182,7 +183,7 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 		LEFT JOIN departments d ON d.id = ed.department_id
 		WHERE ($1::bigint[] IS NULL OR e.id = ANY($1))
 		  AND ($2 = '' OR e.status = $2)
-		GROUP BY e.id, a.id, a.email, a.status, k.key_prefix
+		GROUP BY e.id, a.id, a.email, a.provider, a.status, k.key_prefix
 		ORDER BY e.id`
 	rows, err := s.Pool.Query(ctx, sql, nullableIDs(f.IDs), f.Status)
 	if err != nil {
@@ -195,7 +196,7 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 		var openID *string
 		err := rows.Scan(&er.ID, &openID, &er.FeishuUnionID, &er.FeishuUserID, &er.Name,
 			&er.Email, &er.AvatarURL, &er.Status, &er.IsSuperAdmin, &er.NoticeAckAt, &er.CreatedAt,
-			&er.AccountID, &er.AccountEmail, &er.AccountStatus, &er.ActiveKeyPrefix, &er.DepartmentNames,
+			&er.AccountID, &er.AccountEmail, &er.AccountProvider, &er.AccountStatus, &er.ActiveKeyPrefix, &er.DepartmentNames,
 			&er.FrozenAt, &er.FrozenReason, &er.OpenRiskEvents, &er.RemoteAllowed)
 		if err != nil {
 			return nil, err

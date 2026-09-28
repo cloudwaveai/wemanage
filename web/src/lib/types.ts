@@ -176,6 +176,7 @@ export interface EmployeeRow {
   notice_acked: boolean;
   account_id: number | null;
   account_email: string;
+  account_provider: string;
   account_status: string;
   active_key_prefix: string;
   department_names: string[] | null;
