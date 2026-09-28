@@ -117,12 +117,11 @@ func Register(c *cron.Cron, d Deps) {
 		}
 	})
 
-	// AI daily report — generate + push at 08:30 for the previous day.
-	_, _ = c.AddFunc("30 8 * * *", func() {
-		yesterday := time.Now().In(d.Loc).AddDate(0, 0, -1)
-		day := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, d.Loc)
-		if err := report.GenerateForDate(ctx, d.Report, day); err != nil {
-			log.Warn("daily report", "err", err)
+	// Weekly AI recap for last week — Mondays 09:30, to each employee only.
+	_, _ = c.AddFunc("30 9 * * 1", func() {
+		lastWeek := report.WeekStart(time.Now(), d.Loc).AddDate(0, 0, -7)
+		if err := report.GenerateForWeek(ctx, d.Report, lastWeek); err != nil {
+			log.Warn("weekly report", "err", err)
 		}
 	})
 
@@ -131,14 +130,6 @@ func Register(c *cron.Cron, d Deps) {
 		_, _ = c.AddFunc("@every 1h", func() {
 			if err := d.Risk.ExpirePending(ctx); err != nil {
 				log.Warn("risk expire pending", "err", err)
-			}
-		})
-		// Usage anomalies (volume spike, sleepless) for the previous day — 08:10.
-		_, _ = c.AddFunc("10 8 * * *", func() {
-			y := time.Now().In(d.Loc).AddDate(0, 0, -1)
-			day := time.Date(y.Year(), y.Month(), y.Day(), 0, 0, 0, 0, d.Loc)
-			if err := d.Risk.DailyCheck(ctx, day); err != nil {
-				log.Warn("risk daily check", "err", err)
 			}
 		})
 	}

@@ -108,27 +108,18 @@ func TestCSRFRequired(t *testing.T) {
 	// POST without CSRF header should be rejected.
 	saved := c.csrf
 	c.csrf = ""
-	resp, _ := c.do(http.MethodPost, "/api/me/ack-notice", "{}")
+	resp, _ := c.do(http.MethodPost, "/api/me/key", "{}")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 (missing CSRF)", resp.StatusCode)
 	}
 	c.csrf = saved
 }
 
-func TestNoticeAndKeyFlow(t *testing.T) {
+func TestKeyFlow(t *testing.T) {
 	ts, _, _ := newServer(t)
 	c := login(t, ts, "ou_key")
 
-	// Issuing a key before acknowledging the notice is forbidden.
-	resp, _ := c.do(http.MethodPost, "/api/me/key", "{}")
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("key before ack: status %d, want 403", resp.StatusCode)
-	}
-	// Acknowledge, then issue.
-	resp, _ = c.do(http.MethodPost, "/api/me/ack-notice", "{}")
-	if resp.StatusCode != 200 {
-		t.Fatalf("ack status %d", resp.StatusCode)
-	}
+	// A key is issued straight away; there is no notice to acknowledge first.
 	resp, body := c.do(http.MethodPost, "/api/me/key", "{}")
 	if resp.StatusCode != 200 {
 		t.Fatalf("key status %d", resp.StatusCode)
@@ -149,7 +140,7 @@ func TestAdminRequiresSuperAdmin(t *testing.T) {
 	}
 }
 
-func TestLeaderScopeOnLogs(t *testing.T) {
+func TestLogsOnlyOwnUnlessSuperAdmin(t *testing.T) {
 	ts, st, ctx := newServer(t)
 
 	// Build an org: leader + subordinate in dept D, plus an outsider.
@@ -164,15 +155,22 @@ func TestLeaderScopeOnLogs(t *testing.T) {
 
 	c := login(t, ts, "ou_leader")
 
-	// Leader may view the subordinate.
-	resp, _ := c.do(http.MethodGet, "/api/logs?employee_id="+itoa(sub.ID), "")
-	if resp.StatusCode != 200 {
-		t.Fatalf("leader viewing subordinate: status %d, want 200", resp.StatusCode)
+	// A leader reads neither their own people's conversations nor anyone else's.
+	for _, id := range []int64{sub.ID, outsider.ID} {
+		resp, _ := c.do(http.MethodGet, "/api/logs?employee_id="+itoa(id), "")
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("leader viewing employee %d: status %d, want 403", id, resp.StatusCode)
+		}
 	}
-	// Leader may NOT view the outsider.
-	resp, _ = c.do(http.MethodGet, "/api/logs?employee_id="+itoa(outsider.ID), "")
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("leader viewing outsider: status %d, want 403", resp.StatusCode)
+	// Without a filter they get only their own.
+	resp, body := c.do(http.MethodGet, "/api/logs", "")
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"total":0`) {
+		t.Fatalf("leader own logs: %d %s", resp.StatusCode, body)
+	}
+	// A super admin may read anyone's (each view is audited).
+	_ = st.EnsureSuperAdmin(ctx, "ou_admin", "admin")
+	if resp, _ := login(t, ts, "ou_admin").do(http.MethodGet, "/api/logs?employee_id="+itoa(sub.ID), ""); resp.StatusCode != 200 {
+		t.Fatalf("super admin: status %d, want 200", resp.StatusCode)
 	}
 }
 

@@ -379,9 +379,6 @@ func (h *Handler) authorize(ctx context.Context, token string, set settings.Sett
 	if prin.Frozen {
 		return deny(http.StatusForbidden, "this key is suspended ("+prin.FrozenReason+"); contact the administrator", "invalid_request_error", "account_frozen")
 	}
-	if prin.NoticeAckVersion < set.NoticeVersion {
-		return deny(http.StatusForbidden, "usage notice not acknowledged; sign in to the portal first", "invalid_request_error", "notice_required")
-	}
 	if prin.Account == nil {
 		return deny(http.StatusForbidden, "no upstream account bound to this key", "invalid_request_error", "no_account_bound")
 	}

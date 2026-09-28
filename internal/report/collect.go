@@ -1,5 +1,6 @@
-// Package report builds and pushes the per-employee AI daily report. All
-// numeric facts come from SQL (the store); the LLM is used only for prose.
+// Package report builds the weekly AI-use recap each employee receives
+// (only they do, and they can turn it off). All numeric facts come from SQL
+// (the store); the LLM is used only for prose.
 package report
 
 import (
@@ -24,8 +25,9 @@ type SessionDigest struct {
 	Texts     []Turn
 }
 
-// Stats holds the numeric facts for a day. Every value originates from SQL,
-// never from the model.
+// Stats holds the numeric facts for a period. Every value originates from
+// SQL, never from the model. There is deliberately no time-of-day breakdown:
+// the recap is about what AI helped with, not when someone worked.
 type Stats struct {
 	Requests        int64                  `json:"requests"`
 	TokensInput     int64                  `json:"tokens_input"`
@@ -33,27 +35,19 @@ type Stats struct {
 	TokensReasoning int64                  `json:"tokens_reasoning"`
 	ByModel         []store.UsageBreakdown `json:"by_model"`
 	ByClient        []store.UsageBreakdown `json:"by_client"`
-	ActiveHours     []int                  `json:"active_hours"` // 24-length histogram of request counts by hour (in loc)
 }
 
-// Material is everything needed to write one employee's report for one day.
+// Material is everything needed to write one employee's report for a period.
 type Material struct {
 	EmployeeID int64
-	Date       time.Time
+	From, To   time.Time
 	Stats      Stats           // numeric, from SQL
 	Sessions   []SessionDigest // conversation text grouped by session, chronological
 }
 
-// Collect gathers the day's material for one employee. loc defines the day
-// boundary; the window is [date 00:00 loc, +24h).
-func Collect(ctx context.Context, st *store.Store, employeeID int64, date time.Time, loc *time.Location) (Material, error) {
-	if loc == nil {
-		loc = time.UTC
-	}
-	from := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
-	to := from.Add(24 * time.Hour)
-
-	m := Material{EmployeeID: employeeID, Date: date}
+// Collect gathers one employee's material for [from, to).
+func Collect(ctx context.Context, st *store.Store, employeeID int64, from, to time.Time) (Material, error) {
+	m := Material{EmployeeID: employeeID, From: from, To: to}
 
 	u, err := st.Usage(ctx, from, to, []int64{employeeID})
 	if err != nil {
@@ -68,44 +62,12 @@ func Collect(ctx context.Context, st *store.Store, employeeID int64, date time.T
 		ByClient:        u.ByClient,
 	}
 
-	hours, err := activeHours(ctx, st, employeeID, from, to, loc)
-	if err != nil {
-		return Material{}, err
-	}
-	m.Stats.ActiveHours = hours
-
 	sessions, err := sessionDigests(ctx, st, employeeID, from, to)
 	if err != nil {
 		return Material{}, err
 	}
 	m.Sessions = sessions
-
 	return m, nil
-}
-
-// activeHours returns a 24-length histogram of request counts by local hour.
-func activeHours(ctx context.Context, st *store.Store, employeeID int64, from, to time.Time, loc *time.Location) ([]int, error) {
-	hist := make([]int, 24)
-	rows, err := st.Pool.Query(ctx, `
-		SELECT EXTRACT(HOUR FROM started_at AT TIME ZONE $1)::int AS hr, COUNT(*)
-		FROM requests
-		WHERE employee_id = $2 AND started_at >= $3 AND started_at < $4
-		GROUP BY hr`, loc.String(), employeeID, from, to)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var hr int
-		var n int
-		if err := rows.Scan(&hr, &n); err != nil {
-			return nil, err
-		}
-		if hr >= 0 && hr < 24 {
-			hist[hr] = n
-		}
-	}
-	return hist, rows.Err()
 }
 
 // sessionDigests loads the employee's conversation texts in the window and

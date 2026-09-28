@@ -30,14 +30,14 @@ func scanEmployee(r pgx.Row) (Employee, error) {
 	var openID *string
 	err := r.Scan(&e.ID, &openID, &e.FeishuUnionID, &e.FeishuUserID, &e.Name,
 		&e.Email, &e.AvatarURL, &e.Status, &e.IsSuperAdmin, &e.NoticeAckAt, &e.CreatedAt,
-		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason, &e.RemoteAllowed)
+		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason, &e.RemoteAllowed, &e.WeeklyReportOff)
 	if openID != nil {
 		e.FeishuOpenID = *openID
 	}
 	return e, err
 }
 
-const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason, remote_allowed`
+const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason, remote_allowed, weekly_report_off`
 
 // GetEmployee returns one employee by id.
 func (s *Store) GetEmployee(ctx context.Context, id int64) (Employee, error) {
@@ -100,14 +100,6 @@ func (s *Store) SetSuperAdmin(ctx context.Context, id int64, v bool) error {
 	return err
 }
 
-// AckNotice records that the employee acknowledged the logging notice now.
-func (s *Store) AckNotice(ctx context.Context, id int64, version int) error {
-	_, err := s.Pool.Exec(ctx, `
-		UPDATE employees SET notice_ack_at=now(), notice_ack_version=GREATEST(notice_ack_version,$2), updated_at=now()
-		WHERE id=$1`, id, version)
-	return err
-}
-
 // FreezeEmployee freezes an employee (all keys unusable, no self-service key
 // reissue) until an admin unfreezes. A no-op if already frozen.
 func (s *Store) FreezeEmployee(ctx context.Context, id int64, reason string) (bool, error) {
@@ -121,6 +113,12 @@ func (s *Store) FreezeEmployee(ctx context.Context, id int64, reason string) (bo
 }
 
 // SetRemoteAllowed toggles the "may use the key outside office networks" exemption.
+// SetWeeklyReportOff turns the employee's weekly AI recap off or back on.
+func (s *Store) SetWeeklyReportOff(ctx context.Context, id int64, off bool) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE employees SET weekly_report_off=$2, updated_at=now() WHERE id=$1`, id, off)
+	return err
+}
+
 func (s *Store) SetRemoteAllowed(ctx context.Context, id int64, allowed bool) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE employees SET remote_allowed=$2, updated_at=now() WHERE id=$1`, id, allowed)
 	return err

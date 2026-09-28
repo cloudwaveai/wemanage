@@ -21,8 +21,6 @@ const (
 	RuleConcurrentUntrusted = "concurrent_untrusted"
 	RuleMultiNetwork        = "multi_network"
 	RuleDeviceDenied        = "device_denied"
-	RuleVolumeSpike         = "volume_spike"
-	RuleSleepless           = "sleepless"
 	RuleOutsideOffice       = "outside_office"
 	RuleContentFlagged      = "content_flagged"
 )
@@ -254,6 +252,8 @@ func (e *Engine) Device(ctx context.Context, employeeID int64, info DeviceInfo, 
 		return CachedDevice{}, false, err
 	}
 	cd := CachedDevice{ID: d.ID, Status: d.Status, FirstSeen: d.FirstSeen, Label: d.Label}
+	// A device created trusted (the employee's first) is not news to anyone.
+	created = created && d.Status != store.DeviceTrusted
 	e.devMu.Lock()
 	if e.devs[employeeID] == nil {
 		e.devs[employeeID] = make(map[string]cacheEntry)
@@ -544,38 +544,6 @@ func (e *Engine) ExpirePending(ctx context.Context) error {
 		e.notifyEmployee(ctx, emp.FeishuOpenID, fmt.Sprintf(
 			"【AI 网关】设备「%s」超过 %d 小时没有确认，已暂停使用。如果是你本人的设备，确认后即可恢复：%s",
 			d.Label, set.DeviceConfirmHours, e.PortalDevicesURL()))
-	}
-	return nil
-}
-
-// DailyCheck evaluates volume_spike and sleepless for the day [from, from+24h)
-// and sends administrators one summary.
-func (e *Engine) DailyCheck(ctx context.Context, from time.Time) error {
-	to := from.Add(24 * time.Hour)
-	usage, err := e.cfg.Store.UsageForWindow(ctx, from, to)
-	if err != nil {
-		return err
-	}
-	var lines []string
-	for _, u := range usage {
-		name := e.employeeName(ctx, u.EmployeeID)
-		if u.ActiveHours >= 20 {
-			e.addEvent(ctx, u.EmployeeID, RuleSleepless, "warn", nil, nil,
-				map[string]any{"day": from.Format("2006-01-02"), "active_hours": u.ActiveHours})
-			lines = append(lines, fmt.Sprintf("· %s：%d 个小时都有请求", name, u.ActiveHours))
-		}
-		median, days, err := e.cfg.Store.MedianDailyRequests(ctx, u.EmployeeID, from.AddDate(0, 0, -14), from)
-		if err != nil || days < 3 {
-			continue
-		}
-		if u.Requests >= 200 && float64(u.Requests) > 3*median {
-			e.addEvent(ctx, u.EmployeeID, RuleVolumeSpike, "warn", nil, nil,
-				map[string]any{"day": from.Format("2006-01-02"), "requests": u.Requests, "median_14d": median})
-			lines = append(lines, fmt.Sprintf("· %s：%d 次请求，是平时（中位数 %.0f）的 %.1f 倍", name, u.Requests, median, float64(u.Requests)/median))
-		}
-	}
-	if len(lines) > 0 {
-		e.broadcastAdmins(ctx, fmt.Sprintf("【AI 网关·风险日报 %s】\n%s\n详情见门户「风险中心」。", from.Format("01-02"), strings.Join(lines, "\n")))
 	}
 	return nil
 }

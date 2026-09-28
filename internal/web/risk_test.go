@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"aiseat/internal/settings"
 	"aiseat/internal/store"
 )
 
@@ -15,10 +14,11 @@ func TestDeviceConfirmAndDeny(t *testing.T) {
 	ts, st, ctx := newServer(t)
 	c := login(t, ts, "ou_dev")
 	emp, _ := st.GetEmployeeByOpenID(ctx, "ou_dev")
-	_ = st.AckNotice(ctx, emp.ID, settings.Defaults().NoticeVersion)
 	if _, _, err := st.IssueKey(ctx, emp.ID); err != nil {
 		t.Fatal(err)
 	}
+	// The first device is trusted automatically; the two after it wait.
+	_, _, _ = st.EnsureDevice(ctx, store.Device{EmployeeID: emp.ID, DeviceKey: "inst:first", Kind: "codex_install", Label: "first"})
 	mine, _, _ := st.EnsureDevice(ctx, store.Device{EmployeeID: emp.ID, DeviceKey: "inst:mine", Kind: "codex_install", Label: "mine"})
 	theirs, _, _ := st.EnsureDevice(ctx, store.Device{EmployeeID: emp.ID, DeviceKey: "inst:theirs", Kind: "codex_install", Label: "theirs"})
 
@@ -77,7 +77,6 @@ func TestFrozenCannotReissueKeyUntilAdminUnfreezes(t *testing.T) {
 	ts, st, ctx := newServer(t)
 	c := login(t, ts, "ou_frz")
 	emp, _ := st.GetEmployeeByOpenID(ctx, "ou_frz")
-	c.do(http.MethodPost, "/api/me/ack-notice", "{}")
 	if _, err := st.FreezeEmployee(ctx, emp.ID, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -107,33 +106,6 @@ func TestFrozenCannotReissueKeyUntilAdminUnfreezes(t *testing.T) {
 	resp, body := admin.do(http.MethodGet, "/api/admin/risk/events", "")
 	if resp.StatusCode != 200 {
 		t.Fatalf("risk events: status %d %s", resp.StatusCode, body)
-	}
-}
-
-func TestNoticeReackAfterTextChange(t *testing.T) {
-	ts, st, ctx := newServer(t)
-	c := login(t, ts, "ou_re")
-	c.do(http.MethodPost, "/api/me/ack-notice", "{}")
-
-	set := settings.NewService(st)
-	s := set.Get(ctx)
-	s.NoticeText = "新的告知内容"
-	if err := set.Put(ctx, s); err != nil {
-		t.Fatal(err)
-	}
-	// The server's own settings cache may lag up to its TTL; read through the API.
-	check := func() bool {
-		_, body := c.do(http.MethodGet, "/api/me", "")
-		var me struct {
-			NoticeAcked bool `json:"notice_acked"`
-		}
-		_ = json.Unmarshal(body, &me)
-		return me.NoticeAcked
-	}
-	waitFor(t, func() bool { return !check() })
-	c.do(http.MethodPost, "/api/me/ack-notice", "{}")
-	if !check() {
-		t.Fatal("re-ack should satisfy the new notice version")
 	}
 }
 
@@ -172,16 +144,27 @@ func TestTeamUsageScope(t *testing.T) {
 		Summary struct{ Requests int64 }
 		Members []struct {
 			EmployeeID int64 `json:"employee_id"`
-			Requests   int64 `json:"requests"`
 		}
 	}
 	_ = json.Unmarshal(body, &got)
-	ids := map[int64]int64{}
+	ids := map[int64]bool{}
 	for _, m := range got.Members {
-		ids[m.EmployeeID] = m.Requests
+		ids[m.EmployeeID] = true
 	}
-	if _, ok := ids[out.ID]; ok || ids[sub.ID] != 1 || got.Summary.Requests != 1 {
+	if ids[out.ID] || !ids[sub.ID] || got.Summary.Requests != 1 {
 		t.Fatalf("leader must see only their department: %s", body)
+	}
+	// Team totals only: no per-person usage or activity times.
+	var raw struct {
+		Members []map[string]any `json:"members"`
+	}
+	_ = json.Unmarshal(body, &raw)
+	for _, m := range raw.Members {
+		for _, field := range []string{"requests", "tokens_input", "last_active", "frozen", "quota"} {
+			if _, ok := m[field]; ok {
+				t.Fatalf("member exposes %s: %v", field, m)
+			}
+		}
 	}
 
 	resp, _ = login(t, ts, "ou_to").do(http.MethodGet, "/api/team/usage", "")

@@ -131,7 +131,6 @@ func newRig(t *testing.T, cpa *fakeCPA, mode string) *rig {
 	}
 
 	e, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_p", Name: "p"})
-	_ = st.AckNotice(ctx, e.ID, settings.Defaults().NoticeVersion)
 	g, _ := st.CreateIPGroup(ctx, box, "g", "", 10)
 	a, _ := st.CreateAccount(ctx, store.Account{CPAAuthName: "c.json", IPGroupID: g.ID, DeviceProfile: store.DeviceProfile{OS: "Linux", Terminal: "x"}})
 	_ = st.BindAccount(ctx, a.ID, e.ID)
@@ -226,31 +225,6 @@ func TestProxyInvalidKey(t *testing.T) {
 	}
 }
 
-func TestProxyNoticeRequired(t *testing.T) {
-	cpa := newFakeCPA()
-	pool := testutil.NewDB(t)
-	st := store.New(pool)
-	set := settings.NewService(st)
-	box, _ := secure.NewBox(make([]byte, 32))
-	ctx := context.Background()
-	e, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_n", Name: "n"})
-	g, _ := st.CreateIPGroup(ctx, box, "g", "", 10)
-	a, _ := st.CreateAccount(ctx, store.Account{CPAAuthName: "c.json", IPGroupID: g.ID, DeviceProfile: store.DeviceProfile{}})
-	_ = st.BindAccount(ctx, a.ID, e.ID)
-	plain, _, _ := st.IssueKey(ctx, e.ID) // note: NoticeAckAt is nil
-	rec := recorder.New(st, set, t.TempDir(), nil, 16)
-	rec.Start(ctx)
-	h := proxy.NewHandler(proxy.HandlerDeps{Store: st, Settings: set, Limiter: proxy.NewLimiter(), Recorder: rec, CPABaseURL: cpa.srv.URL, CPAAPIKey: "x", Upstream: cpa.srv.Client()})
-	r := chi.NewRouter()
-	h.Routes(r)
-	defer cpa.srv.Close()
-
-	w := doReq(t, r, plain, `{"model":"gpt-5.1-codex"}`)
-	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "notice_required") {
-		t.Fatalf("status=%d body=%s, want 403 notice_required", w.Code, w.Body.String())
-	}
-}
-
 func TestProxyUpstreamRateLimitSetsAccount(t *testing.T) {
 	cpa := newFakeCPA()
 	reset := time.Now().Add(2 * time.Hour).Unix()
@@ -333,15 +307,46 @@ func TestProxyFrozenEmployee(t *testing.T) {
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "account_frozen")
 }
 
+// seedDevice gives the rig's employee an earlier device, so the next one the
+// gateway sees is a second device (the first is trusted automatically).
+func seedDevice(t *testing.T, h *rig) {
+	t.Helper()
+	if _, _, err := h.st.EnsureDevice(h.ctx, store.Device{EmployeeID: h.empID, DeviceKey: "inst:earlier", Kind: "codex_install", Label: "earlier"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProxyFirstDeviceTrustedSilently(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStrict)
+	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "")
+	h.eng.Flush()
+	devs, _ := h.st.ListDevices(h.ctx, h.empID)
+	if len(devs) != 1 || devs[0].Status != store.DeviceTrusted || devs[0].ConfirmedAt == nil {
+		t.Fatalf("first device should be trusted: %+v", devs)
+	}
+	var events int
+	_ = h.st.Pool.QueryRow(h.ctx, `SELECT COUNT(*) FROM risk_events WHERE rule='new_device'`).Scan(&events)
+	if events != 0 {
+		t.Fatalf("new_device events = %d, want 0 for the first device", events)
+	}
+}
+
 func TestProxyStandardRegistersPendingDevice(t *testing.T) {
 	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	seedDevice(t, h)
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "")
 	h.rec.Flush()
 	h.eng.Flush()
 
-	devs, _ := h.st.ListDevices(h.ctx, h.empID)
-	if len(devs) != 1 || devs[0].DeviceKey != "inst:inst-1" || devs[0].Status != store.DevicePending {
-		t.Fatalf("devices: %+v", devs)
+	all, _ := h.st.ListDevices(h.ctx, h.empID)
+	var devs []store.Device
+	for _, d := range all {
+		if d.DeviceKey == "inst:inst-1" {
+			devs = append(devs, d)
+		}
+	}
+	if len(all) != 2 || len(devs) != 1 || devs[0].Status != store.DevicePending {
+		t.Fatalf("devices: %+v", all)
 	}
 	var ip string
 	var dev *int64
@@ -356,12 +361,19 @@ func TestProxyStandardRegistersPendingDevice(t *testing.T) {
 
 func TestProxyPendingPastConfirmWindow(t *testing.T) {
 	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	seedDevice(t, h)
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "")
 	h.eng.Flush()
-	if _, err := h.st.Pool.Exec(h.ctx, `UPDATE client_devices SET first_seen = now() - interval '25 hours'`); err != nil {
+	if _, err := h.st.Pool.Exec(h.ctx, `UPDATE client_devices SET first_seen = now() - interval '25 hours' WHERE device_key='inst:inst-1'`); err != nil {
 		t.Fatal(err)
 	}
-	devs, _ := h.st.ListDevices(h.ctx, h.empID)
+	var devs []store.Device
+	all, _ := h.st.ListDevices(h.ctx, h.empID)
+	for _, d := range all {
+		if d.DeviceKey == "inst:inst-1" {
+			devs = append(devs, d)
+		}
+	}
 	h.eng.DeviceChanged(h.empID, devs[0].ID, store.DevicePending) // drop the gate cache
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "device_unconfirmed")
 
@@ -373,22 +385,13 @@ func TestProxyPendingPastConfirmWindow(t *testing.T) {
 
 func TestProxyStrictBlocksNewDevice(t *testing.T) {
 	h := newRig(t, newFakeCPA(), settings.RiskStrict)
+	seedDevice(t, h)
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "device_unconfirmed")
 	h.eng.Flush()
 	devs, _ := h.st.ListDevices(h.ctx, h.empID)
-	if len(devs) != 1 || devs[0].Status != store.DevicePending {
+	if len(devs) != 2 || devs[0].Status != store.DevicePending && devs[1].Status != store.DevicePending {
 		t.Fatalf("strict mode should still register the device as pending: %+v", devs)
 	}
-}
-
-func TestProxyOutdatedNoticeVersion(t *testing.T) {
-	h := newRig(t, newFakeCPA(), settings.RiskStandard)
-	s := h.set.Get(h.ctx)
-	s.NoticeText += "（更新）"
-	if err := h.set.Put(h.ctx, s); err != nil {
-		t.Fatal(err)
-	}
-	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "notice_required")
 }
 
 func TestProxyDBDownReturns503NotInvalidKey(t *testing.T) {

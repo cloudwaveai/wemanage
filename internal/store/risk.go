@@ -78,13 +78,20 @@ func scanDevice(r pgx.Row) (Device, error) {
 	return d, err
 }
 
-// EnsureDevice returns the device for (employee, key), inserting it as pending
-// when it is new. created reports whether this call inserted it.
+// EnsureDevice returns the device for (employee, key), inserting it when it is
+// new. created reports whether this call inserted it.
+//
+// An employee's first device is created trusted: it is almost certainly their
+// own, and asking them to confirm it is just friction. Later devices start
+// pending.
 func (s *Store) EnsureDevice(ctx context.Context, d Device) (dev Device, created bool, err error) {
 	var inserted bool
 	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO client_devices (employee_id, device_key, kind, label, client_kind, user_agent, status, first_ip, last_ip)
-		VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$7)
+		WITH first AS (SELECT NOT EXISTS (SELECT 1 FROM client_devices WHERE employee_id = $1) AS yes)
+		INSERT INTO client_devices (employee_id, device_key, kind, label, client_kind, user_agent, status, first_ip, last_ip, confirmed_at)
+		SELECT $1,$2,$3,$4,$5,$6, CASE WHEN first.yes THEN 'trusted' ELSE 'pending' END, $7,$7,
+			CASE WHEN first.yes THEN now() END
+		FROM first
 		ON CONFLICT (employee_id, device_key) DO UPDATE SET device_key = EXCLUDED.device_key
 		RETURNING `+deviceCols+`, (xmax = 0)`,
 		d.EmployeeID, d.DeviceKey, d.Kind, d.Label, d.ClientKind, d.UserAgent, d.FirstIP)
@@ -327,51 +334,4 @@ func (s *Store) ResolveRiskEvent(ctx context.Context, id int64, by *int64) error
 func (s *Store) MarkRiskEventNotified(ctx context.Context, id int64) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE risk_events SET notified_at=now() WHERE id=$1`, id)
 	return err
-}
-
-// DailyUsage is one employee's request count and active hours for a day window.
-type DailyUsage struct {
-	EmployeeID  int64
-	Requests    int64
-	ActiveHours int
-}
-
-// UsageForWindow returns per-employee request counts and distinct active hours in [from,to).
-func (s *Store) UsageForWindow(ctx context.Context, from, to time.Time) ([]DailyUsage, error) {
-	rows, err := s.Pool.Query(ctx, `
-		SELECT employee_id, COUNT(*), COUNT(DISTINCT date_trunc('hour', started_at))
-		FROM requests WHERE started_at >= $1 AND started_at < $2
-		GROUP BY employee_id`, from, to)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []DailyUsage
-	for rows.Next() {
-		var u DailyUsage
-		if err := rows.Scan(&u.EmployeeID, &u.Requests, &u.ActiveHours); err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	return out, rows.Err()
-}
-
-// MedianDailyRequests returns an employee's median daily request count over the
-// days in [from,to) on which they were active (0 when no history).
-func (s *Store) MedianDailyRequests(ctx context.Context, employeeID int64, from, to time.Time) (float64, int, error) {
-	var median *float64
-	var days int
-	err := s.Pool.QueryRow(ctx, `
-		SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c), COUNT(*)
-		FROM (SELECT date_trunc('day', started_at) d, COUNT(*) c FROM requests
-		      WHERE employee_id=$1 AND started_at >= $2 AND started_at < $3 GROUP BY d) t`,
-		employeeID, from, to).Scan(&median, &days)
-	if err != nil {
-		return 0, 0, err
-	}
-	if median == nil {
-		return 0, days, nil
-	}
-	return *median, days, nil
 }

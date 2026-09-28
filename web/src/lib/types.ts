@@ -11,8 +11,6 @@ export interface Me {
   email: string;
   avatar_url: string;
   role: Role;
-  notice_acked: boolean;
-  notice_version: number;
   notice_text: string;
   csrf: string;
   frozen: boolean;
@@ -24,6 +22,7 @@ export interface Me {
   // off, the key only works from the company's egress IPs.
   office_only: boolean;
   remote_allowed: boolean;
+  weekly_report: boolean; // the employee receives their weekly recap
   key_prefix?: string;
   key_created_at?: string;
   account?: {
@@ -81,7 +80,8 @@ export interface QuotaResp {
 }
 
 // --- reports (Go-cased) ---
-export interface DailyReport {
+// A weekly AI-use recap, sent only to the employee. Date is the week's Monday.
+export interface Report {
   ID: number;
   EmployeeID: number;
   Date: string;
@@ -173,7 +173,6 @@ export interface EmployeeRow {
   email: string;
   status: string;
   is_super_admin: boolean;
-  notice_acked: boolean;
   account_id: number | null;
   account_email: string;
   account_provider: string;
@@ -386,28 +385,19 @@ export interface AdminEmployeeDevicesResp {
   events: RiskEvent[];
 }
 
-// --- team usage (snake_case) ---
-export interface TeamMemberQuota {
-  at: string;
-  primary_used_pct: number | null; // 5-hour window, 0–100
-  primary_reset_at: string | null;
-  secondary_used_pct: number | null; // weekly window, 0–100
-  secondary_reset_at: string | null;
-}
+// --- team (snake_case) ---
+// Leaders see team totals and whether each member's account works; not
+// per-person usage, activity times or conversations.
 export interface TeamMember {
   employee_id: number;
   name: string;
   department_names: string[] | null;
-  requests: number;
-  tokens_input: number;
-  tokens_output: number;
-  last_active: string | null;
-  frozen: boolean;
   has_account: boolean;
   account_status?: AccountStatus;
-  quota?: TeamMemberQuota;
+  rate_limited_until?: string | null;
 }
 export interface TeamUsageResp {
   summary: UsageSummary;
-  members: TeamMember[] | null; // sorted by requests desc
+  members: TeamMember[] | null; // sorted by name
+  with_account: number;
 }

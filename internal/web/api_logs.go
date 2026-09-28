@@ -11,13 +11,15 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+// canReadTranscripts reports whether viewer may read subject's conversations:
+// their own, or anyone's for a super admin (audited). Department leaders get
+// team totals, not their people's conversations.
+func canReadTranscripts(viewer *store.Employee, subjectID int64) bool {
+	return viewer.IsSuperAdmin || viewer.ID == subjectID
+}
+
 func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	emp := currentEmployee(r)
-	sc, err := s.computeScope(r.Context(), emp)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "scope error")
-		return
-	}
 	q := r.URL.Query()
 	f := store.RequestFilter{
 		Query:  q.Get("q"),
@@ -37,16 +39,16 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	f.Limit, _ = strconv.Atoi(q.Get("limit"))
 	f.Offset, _ = strconv.Atoi(q.Get("offset"))
 
-	// RBAC: restrict to the visible employee set.
+	// Only your own conversations, unless you are a super admin.
 	if reqEmp := q.Get("employee_id"); reqEmp != "" {
 		id, _ := strconv.ParseInt(reqEmp, 10, 64)
-		if !sc.CanViewEmployee(id) {
-			writeErr(w, http.StatusForbidden, "无权查看该员工")
+		if !canReadTranscripts(emp, id) {
+			writeErr(w, http.StatusForbidden, "只能查看自己的对话记录")
 			return
 		}
 		f.EmployeeIDs = []int64{id}
-	} else if !sc.IsSuperAdmin {
-		f.EmployeeIDs = sc.VisibleEmployeeIDs()
+	} else if !emp.IsSuperAdmin {
+		f.EmployeeIDs = []int64{emp.ID}
 	}
 
 	items, total, err := s.deps.Store.ListRequests(r.Context(), f)
@@ -84,13 +86,8 @@ func (s *Server) handleViewLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	sc, err := s.computeScope(r.Context(), emp)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "scope error")
-		return
-	}
-	if !sc.CanViewEmployee(row.EmployeeID) {
-		writeErr(w, http.StatusForbidden, "无权查看该员工的日志")
+	if !canReadTranscripts(emp, row.EmployeeID) {
+		writeErr(w, http.StatusForbidden, "只能查看自己的对话记录")
 		return
 	}
 	// Every transcript view is audited (who viewed whom).

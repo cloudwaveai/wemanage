@@ -74,7 +74,7 @@ func TestCollect(t *testing.T) {
 		t.Fatalf("insert other request: %v", err)
 	}
 
-	mat, err := report.Collect(ctx, st, emp.ID, day, loc)
+	mat, err := report.Collect(ctx, st, emp.ID, day, day.Add(24*time.Hour))
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -90,23 +90,6 @@ func TestCollect(t *testing.T) {
 	}
 	if mat.Stats.TokensReasoning != 5 {
 		t.Errorf("TokensReasoning = %d, want 5", mat.Stats.TokensReasoning)
-	}
-
-	if len(mat.Stats.ActiveHours) != 24 {
-		t.Fatalf("ActiveHours length = %d, want 24", len(mat.Stats.ActiveHours))
-	}
-	if mat.Stats.ActiveHours[9] != 1 {
-		t.Errorf("ActiveHours[9] = %d, want 1", mat.Stats.ActiveHours[9])
-	}
-	if mat.Stats.ActiveHours[14] != 1 {
-		t.Errorf("ActiveHours[14] = %d, want 1", mat.Stats.ActiveHours[14])
-	}
-	var total int
-	for _, n := range mat.Stats.ActiveHours {
-		total += n
-	}
-	if total != 2 {
-		t.Errorf("ActiveHours total = %d, want 2", total)
 	}
 
 	if len(mat.Sessions) != 2 {

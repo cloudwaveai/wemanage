@@ -72,9 +72,8 @@ func (e *env) device(t *testing.T, key string, age time.Duration, status string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != store.DevicePending {
-		_ = e.st.SetDeviceStatus(e.ctx, d.ID, status, nil)
-	}
+	// Set it explicitly: an employee's first device is created trusted.
+	_ = e.st.SetDeviceStatus(e.ctx, d.ID, status, nil)
 	return risk.CachedDevice{ID: d.ID, Status: status, FirstSeen: time.Now().Add(-age), Label: key}
 }
 
@@ -244,35 +243,6 @@ func TestEngineExpirePending(t *testing.T) {
 	}
 	if got := e.msg.to("ou_emp"); len(got) != 1 || !strings.Contains(got[0], "暂停") {
 		t.Fatalf("expiry message: %q", got)
-	}
-}
-
-func TestEngineDailyCheck(t *testing.T) {
-	e := newEnv(t, settings.RiskStandard)
-	loc := time.UTC
-	day := time.Now().In(loc).Truncate(24*time.Hour).AddDate(0, 0, -1)
-	ins := func(start time.Time, n, hours int) {
-		_, err := e.st.Pool.Exec(e.ctx, `
-			INSERT INTO requests (id, started_at, employee_id, client_kind, endpoint, status_code)
-			SELECT gen_random_uuid(), $2::timestamptz + ((g % $4) * interval '1 hour'), $1, 'codex', 'responses', 200
-			FROM generate_series(1, $3) g`, e.emp.ID, start, n, hours)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	for i := 1; i <= 5; i++ {
-		ins(day.AddDate(0, 0, -i), 10, 4)
-	}
-	ins(day, 210, 21)
-
-	if err := e.eng.DailyCheck(e.ctx, day); err != nil {
-		t.Fatal(err)
-	}
-	if len(e.events(t, risk.RuleVolumeSpike)) != 1 || len(e.events(t, risk.RuleSleepless)) != 1 {
-		t.Fatalf("want volume_spike and sleepless events")
-	}
-	if got := e.msg.to("ou_admin"); len(got) != 1 || !strings.Contains(got[0], "张三") {
-		t.Fatalf("admin summary: %q", got)
 	}
 }
 

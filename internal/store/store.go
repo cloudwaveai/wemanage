@@ -67,6 +67,8 @@ type Employee struct {
 	FrozenReason string
 	// RemoteAllowed exempts the employee from "office networks only".
 	RemoteAllowed bool
+	// WeeklyReportOff: the employee turned their weekly AI recap off.
+	WeeklyReportOff bool
 }
 
 // Account is an upstream ChatGPT subscription account.

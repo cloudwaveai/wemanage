@@ -56,23 +56,29 @@ const PERSONAL: NavItem[] = [
     icon: I("M4 19V5m0 14h16M8 15v-4m4 4V8m4 7v-2"),
   },
   {
+    to: "/logs",
+    label: "对话记录",
+    roles: ["employee", "leader", "super_admin"],
+    icon: I("M21 21l-4.3-4.3M11 18a7 7 0 100-14 7 7 0 000 14z"),
+  },
+  {
     to: "/reports",
-    label: "我的日报",
+    label: "我的周报",
     roles: ["employee", "leader", "super_admin"],
     icon: I("M8 3v4M16 3v4M4 9h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z"),
+  },
+  {
+    to: "/data-notice",
+    label: "数据说明",
+    roles: ["employee", "leader", "super_admin"],
+    icon: I("M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3zM12 11v5M12 8h.01"),
   },
 ];
 
 const OVERSIGHT: NavItem[] = [
   {
-    to: "/logs",
-    label: "日志检索",
-    roles: ["leader", "super_admin"],
-    icon: I("M21 21l-4.3-4.3M11 18a7 7 0 100-14 7 7 0 000 14z"),
-  },
-  {
     to: "/team",
-    label: "团队用量",
+    label: "团队",
     roles: ["leader", "super_admin"],
     icon: I("M9 11a3 3 0 100-6 3 3 0 000 6zM16 11a3 3 0 100-6M3 20v-1a4 4 0 014-4h4a4 4 0 014 4v1M17 15h1a4 4 0 014 4v1"),
   },

@@ -16,8 +16,6 @@ export const RULE_LABELS: Record<string, string> = {
   concurrent_untrusted: "未确认设备异地同时使用",
   multi_network: "多个网络同时使用",
   device_denied: "员工报告「不是我」",
-  volume_spike: "用量暴增",
-  sleepless: "全天候使用",
   outside_office: "公司网络外使用",
   content_flagged: "触发内容审核",
 };

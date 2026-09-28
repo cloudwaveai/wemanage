@@ -2,12 +2,12 @@ import type React from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 import { Layout } from "./components/Layout";
-import { NoticeGate } from "./components/NoticeGate";
 import { Login } from "./pages/Login";
 import { KeyPage } from "./pages/KeyPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { UsagePage } from "./pages/UsagePage";
 import { ReportsPage } from "./pages/ReportsPage";
+import { DataNoticePage } from "./pages/DataNoticePage";
 import { LogsPage } from "./pages/LogsPage";
 import { LogDetailPage } from "./pages/LogDetailPage";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -72,11 +72,10 @@ export default function App() {
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/usage" element={<UsagePage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/data-notice" element={<DataNoticePage />} />
+          <Route path="/logs" element={<LogsPage />} />
+          <Route path="/logs/:id" element={<LogDetailPage />} />
 
-          {canOversee && <Route path="/logs" element={<LogsPage />} />}
-          {canOversee && (
-            <Route path="/logs/:id" element={<LogDetailPage />} />
-          )}
           {canOversee && <Route path="/team" element={<TeamPage />} />}
 
           {isAdmin && <Route path="/employees" element={<EmployeesPage />} />}
@@ -92,7 +91,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>
-      <NoticeGate />
     </>
   );
 }

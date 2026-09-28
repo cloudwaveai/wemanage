@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -118,12 +119,16 @@ const (
 	RiskStrict   = "strict"
 )
 
-// DefaultNoticeText is shown to employees before they can obtain a key.
-const DefaultNoticeText = "本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。为保障账号安全，还会记录你使用的设备和来源 IP。请勿把 Key 分享给他人，分享或转卖将按公司制度处理。继续使用即表示你已知晓。"
+// DefaultNoticeText is shown on the employees' "数据说明" page. It states
+// plainly what is recorded, why and who can see it; nobody has to accept it.
+const DefaultNoticeText = "为了保护账号安全、方便排查问题，网关会记录你经过网关的请求和回复，原文保留 180 天。只有你本人和超级管理员能查看，管理员每次查看都会留下审计记录；部门负责人只能看到团队总用量。\n\n网关还会记录你使用的设备和来源 IP，只用来发现 Key 是否被别人使用。Key 相当于你的个人账号，请不要分享给别人；如果发现不是你本人在用，可以随时在「我的 Key」重新生成。"
 
-// legacyNoticeTextV1 is the V1 default notice (no device/IP clause). A stored
-// copy of it is upgraded to DefaultNoticeText so the new clause reaches everyone.
-const legacyNoticeTextV1 = "本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。继续使用即表示你已知晓。"
+// legacyNoticeTexts are earlier built-in notices. A stored copy of one is
+// replaced with DefaultNoticeText, so the current wording reaches everyone.
+var legacyNoticeTexts = []string{
+	"本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。继续使用即表示你已知晓。",
+	"本服务的请求和回复会被公司记录，用于用量管理和工作分析，原文保留 180 天。为保障账号安全，还会记录你使用的设备和来源 IP。请勿把 Key 分享给他人，分享或转卖将按公司制度处理。继续使用即表示你已知晓。",
+}
 
 // DefaultRedactionRules returns the built-in secret patterns.
 func DefaultRedactionRules() []RedactionRule {
@@ -209,7 +214,7 @@ func mergeDefaults(s Settings) Settings {
 	if s.ModelMismatchThreshold == 0 {
 		s.ModelMismatchThreshold = d.ModelMismatchThreshold
 	}
-	if s.NoticeText == "" || s.NoticeText == legacyNoticeTextV1 {
+	if s.NoticeText == "" || slices.Contains(legacyNoticeTexts, s.NoticeText) {
 		s.NoticeText = d.NoticeText
 	}
 	if s.DefaultDeviceProfile.OS == "" {

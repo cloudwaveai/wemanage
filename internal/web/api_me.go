@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -27,13 +28,12 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"id":             emp.ID,
-		"name":           emp.Name,
-		"email":          emp.Email,
-		"avatar_url":     emp.AvatarURL,
-		"role":           role,
-		"notice_acked":   emp.NoticeAckVersion >= set.NoticeVersion,
-		"notice_version": set.NoticeVersion,
+		"id":         emp.ID,
+		"name":       emp.Name,
+		"email":      emp.Email,
+		"avatar_url": emp.AvatarURL,
+		"role":       role,
+		// Shown on the "数据说明" page; nobody has to acknowledge it.
 		"notice_text":    set.NoticeText,
 		"csrf":           currentCSRF(r),
 		"frozen":         emp.FrozenAt != nil,
@@ -42,6 +42,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"risk_mode":      set.RiskMode,
 		"office_only":    set.OfficeOnly,
 		"remote_allowed": emp.RemoteAllowed,
+		"weekly_report":  !emp.WeeklyReportOff,
 	}
 	// Devices awaiting the employee's confirmation.
 	pending := 0
@@ -66,23 +67,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) handleAckNotice(w http.ResponseWriter, r *http.Request) {
-	emp := currentEmployee(r)
-	set := s.deps.Settings.Get(r.Context())
-	if err := s.deps.Store.AckNotice(r.Context(), emp.ID, set.NoticeVersion); err != nil {
-		writeErr(w, http.StatusInternalServerError, "cannot record acknowledgement")
-		return
-	}
-	s.audit(r, "ack_notice", "employee", fmt.Sprint(emp.ID), map[string]any{"version": set.NoticeVersion})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
 func (s *Server) handleIssueKey(w http.ResponseWriter, r *http.Request) {
 	emp := currentEmployee(r)
-	if emp.NoticeAckVersion < s.deps.Settings.Get(r.Context()).NoticeVersion {
-		writeErr(w, http.StatusForbidden, "请先确认使用告知")
-		return
-	}
 	if emp.FrozenAt != nil {
 		writeErr(w, http.StatusForbidden, "你的 Key 已被冻结，需要管理员核实后解冻")
 		return
@@ -125,9 +111,26 @@ func (s *Server) handleMyQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleWeeklyReportPref lets an employee turn their weekly recap off or on.
+func (s *Server) handleWeeklyReportPref(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	emp := currentEmployee(r)
+	if err := s.deps.Store.SetWeeklyReportOff(r.Context(), emp.ID, !body.Enabled); err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot update")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"weekly_report": body.Enabled})
+}
+
 func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {
 	emp := currentEmployee(r)
-	reports, err := s.deps.Store.GetDailyReports(r.Context(), emp.ID, 30)
+	reports, err := s.deps.Store.GetReports(r.Context(), emp.ID, 30)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "reports query failed")
 		return

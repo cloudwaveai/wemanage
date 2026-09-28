@@ -123,7 +123,7 @@ export function SettingsPage() {
     onSuccess: () => {
       toast("设置已保存", "success");
       refetch();
-      // A changed notice bumps notice_version, so our own ack is reset too.
+      // The data notice is shown from /api/me.
       refetchMe();
     },
     onError: (e: unknown) =>
@@ -233,7 +233,7 @@ export function SettingsPage() {
           </Card>
 
           <Card className="p-5">
-            <h2 className="mb-4 text-sm font-semibold text-slate-800">日报</h2>
+            <h2 className="mb-4 text-sm font-semibold text-slate-800">周报</h2>
             <div className="space-y-4">
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input
@@ -242,11 +242,11 @@ export function SettingsPage() {
                   onChange={(e) => patch({ report_enabled: e.target.checked })}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                启用日报生成
+                启用周报（每周一把上周的 AI 使用回顾发给员工本人，员工可自行关闭）
               </label>
               <div className="max-w-md">
                 <label className="mb-1 block text-xs font-medium text-slate-500">
-                  日报 LLM 模型
+                  周报 LLM 模型
                 </label>
                 <input
                   value={form.report_llm_model}
@@ -260,7 +260,7 @@ export function SettingsPage() {
 
           <Card className="p-5">
             <h2 className="mb-4 text-sm font-semibold text-slate-800">
-              使用告知
+              数据说明
             </h2>
             <textarea
               value={form.notice_text}
@@ -269,8 +269,7 @@ export function SettingsPage() {
               className={inputCls}
             />
             <p className="mt-1.5 text-xs text-slate-400">
-              当前告知版本：v{form.notice_version}（修改告知内容后会自动
-              +1，所有人需要重新确认）
+              显示在员工的「数据说明」页，说清楚记录了什么、谁能看、保存多久。员工不需要点确认。
             </p>
           </Card>
 

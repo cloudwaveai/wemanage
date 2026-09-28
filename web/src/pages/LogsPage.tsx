@@ -100,17 +100,21 @@ export function LogsPage() {
   return (
     <div>
       <PageHeader
-        title="日志检索"
-        desc="查看请求日志。查看原文会被服务端审计记录。"
+        title="对话记录"
+        desc={
+          isAdmin
+            ? "全部员工经过网关的请求。查看原文会写入审计。"
+            : "你经过网关的请求，公司记录的就是这些。只有你自己和超级管理员能看到，管理员查看会留下审计记录。"
+        }
       />
 
       <Card className="mb-5 p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">
-              员工
-            </label>
-            {isAdmin ? (
+          {isAdmin && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                员工
+              </label>
               <select
                 value={draft.employee_id}
                 onChange={(e) => set("employee_id", e.target.value)}
@@ -123,15 +127,8 @@ export function LogsPage() {
                   </option>
                 ))}
               </select>
-            ) : (
-              <input
-                value={draft.employee_id}
-                onChange={(e) => set("employee_id", e.target.value)}
-                placeholder="员工 ID"
-                className={inputCls}
-              />
-            )}
-          </div>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">
               起始日期

@@ -8,8 +8,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// DailyReport is a generated per-employee daily work summary.
-type DailyReport struct {
+// Report is an employee's weekly AI-use recap. Date is the week's Monday
+// (the table is still named daily_reports).
+type Report struct {
 	ID          int64
 	EmployeeID  int64
 	Date        time.Time
@@ -20,8 +21,8 @@ type DailyReport struct {
 	PushedAt    *time.Time
 }
 
-// UpsertDailyReport inserts or replaces a day's report for an employee.
-func (s *Store) UpsertDailyReport(ctx context.Context, employeeID int64, date time.Time, stats json.RawMessage, summaryMD, model string) (int64, error) {
+// UpsertReport inserts or replaces an employee's report for a week.
+func (s *Store) UpsertReport(ctx context.Context, employeeID int64, date time.Time, stats json.RawMessage, summaryMD, model string) (int64, error) {
 	var id int64
 	err := s.Pool.QueryRow(ctx, `
 		INSERT INTO daily_reports (employee_id, date, stats, summary_md, model)
@@ -40,8 +41,8 @@ func (s *Store) MarkReportPushed(ctx context.Context, id int64) error {
 	return err
 }
 
-// GetDailyReports returns an employee's most recent reports.
-func (s *Store) GetDailyReports(ctx context.Context, employeeID int64, limit int) ([]DailyReport, error) {
+// GetReports returns an employee's most recent reports.
+func (s *Store) GetReports(ctx context.Context, employeeID int64, limit int) ([]Report, error) {
 	if limit <= 0 || limit > 365 {
 		limit = 30
 	}
@@ -55,29 +56,29 @@ func (s *Store) GetDailyReports(ctx context.Context, employeeID int64, limit int
 	return scanReports(rows)
 }
 
-// GetDailyReport returns one report for an employee+date.
-func (s *Store) GetDailyReport(ctx context.Context, employeeID int64, date time.Time) (DailyReport, error) {
+// GetReport returns one report for an employee and week start.
+func (s *Store) GetReport(ctx context.Context, employeeID int64, date time.Time) (Report, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id, employee_id, date, stats, summary_md, model, generated_at, pushed_at
 		FROM daily_reports WHERE employee_id=$1 AND date=$2`, employeeID, date)
 	if err != nil {
-		return DailyReport{}, err
+		return Report{}, err
 	}
 	defer rows.Close()
 	list, err := scanReports(rows)
 	if err != nil {
-		return DailyReport{}, err
+		return Report{}, err
 	}
 	if len(list) == 0 {
-		return DailyReport{}, ErrNotFound
+		return Report{}, ErrNotFound
 	}
 	return list[0], nil
 }
 
-func scanReports(rows pgx.Rows) ([]DailyReport, error) {
-	var out []DailyReport
+func scanReports(rows pgx.Rows) ([]Report, error) {
+	var out []Report
 	for rows.Next() {
-		var d DailyReport
+		var d Report
 		var stats []byte
 		if err := rows.Scan(&d.ID, &d.EmployeeID, &d.Date, &stats, &d.SummaryMD, &d.Model, &d.GeneratedAt, &d.PushedAt); err != nil {
 			return nil, err
@@ -88,10 +89,14 @@ func scanReports(rows pgx.Rows) ([]DailyReport, error) {
 	return out, rows.Err()
 }
 
-// ActiveEmployeesOn returns employee ids with at least one request in [from,to).
-func (s *Store) ActiveEmployeesOn(ctx context.Context, from, to time.Time) ([]int64, error) {
-	rows, err := s.Pool.Query(ctx,
-		`SELECT DISTINCT employee_id FROM requests WHERE started_at >= $1 AND started_at < $2`, from, to)
+// ReportRecipients returns active employees who used the gateway in [from,to)
+// and have not turned their weekly recap off.
+func (s *Store) ReportRecipients(ctx context.Context, from, to time.Time) ([]int64, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT e.id FROM employees e
+		WHERE e.status = 'active' AND NOT e.weekly_report_off
+		  AND EXISTS (SELECT 1 FROM requests r WHERE r.employee_id = e.id AND r.started_at >= $1 AND r.started_at < $2)
+		ORDER BY e.id`, from, to)
 	if err != nil {
 		return nil, err
 	}

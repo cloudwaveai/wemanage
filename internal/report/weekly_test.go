@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,7 +19,7 @@ import (
 // cannedSummary intentionally contains a request-count number (777) that
 // differs from the true SQL count, to prove numbers are never sourced from
 // the model output.
-const cannedSummary = "今天完成了登录模块，共处理请求 777 次，遇到一个数据库连接卡点。"
+const cannedSummary = "这周借助 AI 完成了登录模块，一共 777 次请求。"
 
 // fakeLLMServer returns an httptest server that always replies with the canned
 // summary, plus a pointer to a call counter.
@@ -89,7 +90,7 @@ func seedActivity(t *testing.T, st *store.Store, ctx context.Context, empID int6
 	}
 }
 
-func TestGenerateForDateStoresAndPushes(t *testing.T) {
+func TestGenerateForWeekStoresAndSendsToTheEmployeeOnly(t *testing.T) {
 	pool := testutil.NewDB(t)
 	st := store.New(pool)
 	ctx := context.Background()
@@ -100,8 +101,15 @@ func TestGenerateForDateStoresAndPushes(t *testing.T) {
 	}
 
 	loc := time.UTC
-	day := time.Date(2026, 9, 26, 0, 0, 0, 0, loc)
-	seedActivity(t, st, ctx, emp.ID, day.Add(10*time.Hour), [16]byte{7})
+	week := time.Date(2026, 9, 21, 0, 0, 0, 0, loc) // a Monday
+	if got := report.WeekStart(time.Date(2026, 9, 27, 23, 0, 0, 0, loc), loc); !got.Equal(week) {
+		t.Fatalf("WeekStart(Sunday) = %v, want %v", got, week)
+	}
+	seedActivity(t, st, ctx, emp.ID, week.AddDate(0, 0, 3).Add(10*time.Hour), [16]byte{7})
+	// Someone who turned the recap off gets nothing, even with activity.
+	off, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_optout", Name: "Opt"})
+	_ = st.SetWeeklyReportOff(ctx, off.ID, true)
+	seedActivity(t, st, ctx, off.ID, week.AddDate(0, 0, 1), [16]byte{6})
 
 	srv, calls := fakeLLMServer(t)
 	sender := &fakeSender{}
@@ -113,17 +121,17 @@ func TestGenerateForDateStoresAndPushes(t *testing.T) {
 		Enabled: true,
 	}
 
-	if err := report.GenerateForDate(ctx, d, day); err != nil {
-		t.Fatalf("GenerateForDate: %v", err)
+	if err := report.GenerateForWeek(ctx, d, week); err != nil {
+		t.Fatalf("GenerateForWeek: %v", err)
 	}
 
 	if atomic.LoadInt64(calls) == 0 {
 		t.Error("expected the LLM to be called at least once")
 	}
 
-	rep, err := st.GetDailyReport(ctx, emp.ID, day)
+	rep, err := st.GetReport(ctx, emp.ID, week)
 	if err != nil {
-		t.Fatalf("GetDailyReport: %v", err)
+		t.Fatalf("GetReport: %v", err)
 	}
 
 	// Prose comes from the model.
@@ -158,9 +166,15 @@ func TestGenerateForDateStoresAndPushes(t *testing.T) {
 	if sender.texts[0].openID != "ou_daily" {
 		t.Errorf("push open_id = %q, want ou_daily", sender.texts[0].openID)
 	}
+	if !strings.Contains(sender.texts[0].text, "只发给你本人") || !strings.Contains(sender.texts[0].text, "09/21–09/27") {
+		t.Errorf("recap text = %q", sender.texts[0].text)
+	}
+	if _, err := st.GetReport(ctx, off.ID, week); err != store.ErrNotFound {
+		t.Errorf("opted-out employee got a report: err = %v", err)
+	}
 }
 
-func TestGenerateForDateDisabledNoop(t *testing.T) {
+func TestGenerateForWeekDisabledNoop(t *testing.T) {
 	pool := testutil.NewDB(t)
 	st := store.New(pool)
 	ctx := context.Background()
@@ -171,8 +185,8 @@ func TestGenerateForDateDisabledNoop(t *testing.T) {
 	}
 
 	loc := time.UTC
-	day := time.Date(2026, 9, 26, 0, 0, 0, 0, loc)
-	seedActivity(t, st, ctx, emp.ID, day.Add(10*time.Hour), [16]byte{8})
+	week := time.Date(2026, 9, 21, 0, 0, 0, 0, loc)
+	seedActivity(t, st, ctx, emp.ID, week.Add(10*time.Hour), [16]byte{8})
 
 	srv, calls := fakeLLMServer(t)
 	sender := &fakeSender{}
@@ -184,8 +198,8 @@ func TestGenerateForDateDisabledNoop(t *testing.T) {
 		Enabled: false, // disabled
 	}
 
-	if err := report.GenerateForDate(ctx, d, day); err != nil {
-		t.Fatalf("GenerateForDate (disabled): %v", err)
+	if err := report.GenerateForWeek(ctx, d, week); err != nil {
+		t.Fatalf("GenerateForWeek (disabled): %v", err)
 	}
 
 	if n := atomic.LoadInt64(calls); n != 0 {
@@ -194,7 +208,7 @@ func TestGenerateForDateDisabledNoop(t *testing.T) {
 	if n := sender.textCount(); n != 0 {
 		t.Errorf("push count = %d, want 0 when disabled", n)
 	}
-	if _, err := st.GetDailyReport(ctx, emp.ID, day); err != store.ErrNotFound {
-		t.Errorf("GetDailyReport err = %v, want ErrNotFound (no rows written)", err)
+	if _, err := st.GetReport(ctx, emp.ID, week); err != store.ErrNotFound {
+		t.Errorf("GetReport err = %v, want ErrNotFound (no rows written)", err)
 	}
 }

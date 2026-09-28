@@ -76,11 +76,11 @@ func (s *Server) Mount(r chi.Router) {
 
 			// Self-service.
 			r.Get("/me", s.handleMe)
-			r.Post("/me/ack-notice", s.handleAckNotice)
 			r.Post("/me/key", s.handleIssueKey)
 			r.Get("/me/usage", s.handleMyUsage)
 			r.Get("/me/quota", s.handleMyQuota)
 			r.Get("/me/reports", s.handleMyReports)
+			r.Post("/me/weekly-report", s.handleWeeklyReportPref)
 			r.Get("/me/config-snippets", s.handleConfigSnippets)
 			r.Get("/me/devices", s.handleMyDevices)
 			r.Post("/me/devices/{id}/confirm", s.handleConfirmDevice)

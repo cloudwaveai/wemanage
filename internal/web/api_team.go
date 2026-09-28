@@ -7,9 +7,10 @@ import (
 	"aiseat/internal/store"
 )
 
-// handleTeamUsage gives department leaders (and super admins) per-member
-// usage and each member's account status and latest quota. Read-only: the
-// actions stay with super admins.
+// handleTeamUsage gives department leaders (and super admins) their team's
+// total usage and, per member, only whether their account works (so they can
+// help when someone is rate limited or has to sign in again). Per-person
+// usage, activity times and conversations are deliberately not shown.
 func (s *Server) handleTeamUsage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sc, err := s.computeScope(ctx, currentEmployee(r))
@@ -29,52 +30,38 @@ func (s *Server) handleTeamUsage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "usage query failed")
 		return
 	}
-	per, err := s.deps.Store.UsageByEmployee(ctx, from, to, ids)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "usage query failed")
-		return
-	}
 	emps, err := s.deps.Store.ListEmployees(ctx, store.EmployeeFilter{IDs: ids, Status: "active"})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "employee query failed")
 		return
 	}
-	var accIDs []int64
-	for _, e := range emps {
-		if e.AccountID != nil {
-			accIDs = append(accIDs, *e.AccountID)
-		}
-	}
-	quotas, _ := s.deps.Store.LatestQuotas(ctx, accIDs)
-	statusByAcc := map[int64]string{}
+	accByID := map[int64]store.Account{}
 	if accs, err := s.deps.Store.ListAccounts(ctx); err == nil {
 		for _, a := range accs {
-			statusByAcc[a.ID] = accountStatus(a.Account)
+			accByID[a.ID] = a.Account
 		}
 	}
 
 	members := make([]map[string]any, 0, len(emps))
+	withAccount := 0
 	for _, e := range emps {
-		u := per[e.ID]
 		m := map[string]any{
 			"employee_id": e.ID, "name": e.Name, "department_names": nonNil(e.DepartmentNames),
-			"requests": u.Requests, "tokens_input": u.TokensInput, "tokens_output": u.TokensOutput,
-			"last_active": u.LastActive, "frozen": e.FrozenAt != nil,
 			"has_account": e.AccountID != nil,
 		}
 		if e.AccountID != nil {
-			m["account_status"] = statusByAcc[*e.AccountID]
-			if q, ok := quotas[*e.AccountID]; ok {
-				m["quota"] = map[string]any{
-					"at": q.At, "primary_used_pct": q.PrimaryUsedPct, "primary_reset_at": q.PrimaryResetAt,
-					"secondary_used_pct": q.SecondaryUsedPct, "secondary_reset_at": q.SecondaryResetAt,
-				}
+			withAccount++
+			if a, ok := accByID[*e.AccountID]; ok {
+				m["account_status"] = accountStatus(a)
+				m["rate_limited_until"] = a.RateLimitedUntil
 			}
 		}
 		members = append(members, m)
 	}
 	sort.SliceStable(members, func(i, j int) bool {
-		return members[i]["requests"].(int64) > members[j]["requests"].(int64)
+		return members[i]["name"].(string) < members[j]["name"].(string)
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "members": members})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"summary": summary, "members": members, "with_account": withAccount,
+	})
 }
