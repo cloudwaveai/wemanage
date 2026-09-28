@@ -21,6 +21,7 @@
 - 设计：[docs/superpowers/specs/2026-09-27-ai-seat-gateway-design.md](docs/superpowers/specs/2026-09-27-ai-seat-gateway-design.md)
 - 实施计划：[docs/superpowers/plans/2026-09-27-ai-seat-gateway-v1.md](docs/superpowers/plans/2026-09-27-ai-seat-gateway-v1.md)
 - 防 Key 外泄设计：[docs/superpowers/specs/2026-09-28-key-sharing-risk-design.md](docs/superpowers/specs/2026-09-28-key-sharing-risk-design.md)
+- 分阶段上线与跨境数据库（服务在海外、数据在国内）：[docs/rollout.md](docs/rollout.md)
 - 部署：[docs/deploy.md](docs/deploy.md)　运维：[docs/operations.md](docs/operations.md)
 - 员工指南：[docs/employee-guide.md](docs/employee-guide.md)
 - 合规与告知：[docs/compliance-note.md](docs/compliance-note.md)

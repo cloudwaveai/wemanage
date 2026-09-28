@@ -230,11 +230,12 @@ func Validate(s Settings) error {
 
 // Service reads/writes Settings with a short cache.
 type Service struct {
-	st    *store.Store
-	mu    sync.Mutex
-	cache Settings
-	at    time.Time
-	ttl   time.Duration
+	st     *store.Store
+	mu     sync.Mutex
+	cache  Settings
+	at     time.Time
+	loaded bool // cache holds a value actually read from (or written to) the DB
+	ttl    time.Duration
 }
 
 // NewService creates a settings service.
@@ -254,7 +255,18 @@ func (s *Service) Get(ctx context.Context) Settings {
 
 	cur := Defaults()
 	raw, ok, err := s.st.GetSettingRaw(ctx, settingsKey)
-	if err == nil && ok {
+	if err != nil {
+		// DB unreachable: keep serving the last good settings instead of
+		// silently reverting to defaults; retry after another ttl.
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.loaded {
+			s.at = time.Now()
+			return s.cache
+		}
+		return cur
+	}
+	if ok {
 		var stored Settings
 		if json.Unmarshal(raw, &stored) == nil {
 			cur = mergeDefaults(stored)
@@ -263,6 +275,7 @@ func (s *Service) Get(ctx context.Context) Settings {
 	s.mu.Lock()
 	s.cache = cur
 	s.at = time.Now()
+	s.loaded = true
 	s.mu.Unlock()
 	return cur
 }
@@ -288,6 +301,7 @@ func (s *Service) Put(ctx context.Context, in Settings) error {
 	s.mu.Lock()
 	s.cache = in
 	s.at = time.Now()
+	s.loaded = true
 	s.mu.Unlock()
 	return nil
 }

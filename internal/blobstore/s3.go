@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -31,6 +32,16 @@ type S3 struct {
 	bucket string
 }
 
+// bucketLookup picks the addressing style. minio-go auto-detects AWS, GCS and
+// Aliyun OSS as virtual-host style; Tencent COS also requires virtual-host
+// style for buckets created since 2020 but is not auto-detected.
+func bucketLookup(endpoint string) minio.BucketLookupType {
+	if strings.HasSuffix(strings.ToLower(endpoint), ".myqcloud.com") {
+		return minio.BucketLookupDNS
+	}
+	return minio.BucketLookupAuto
+}
+
 // NewS3 builds an S3 backend and verifies the bucket is reachable.
 func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 	if cfg.Endpoint == "" || cfg.Bucket == "" || cfg.AccessKey == "" || cfg.SecretKey == "" {
@@ -41,9 +52,10 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3, error) {
 		region = "auto"
 	}
 	cli, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
-		Region: region,
+		Creds:        credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure:       cfg.UseSSL,
+		Region:       region,
+		BucketLookup: bucketLookup(cfg.Endpoint),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("blobstore: new client: %w", err)

@@ -143,8 +143,14 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			return
 		}
 		prin, err := h.cache.Get(ctx, secure.HashAPIKey(token))
-		if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
 			oaError(w, http.StatusUnauthorized, "invalid API key", "invalid_request_error", "invalid_key")
+			return
+		}
+		if err != nil {
+			h.deps.Log.Warn("key lookup failed", "err", err)
+			w.Header().Set("Retry-After", "5")
+			oaError(w, http.StatusServiceUnavailable, "gateway database temporarily unavailable, retry shortly", "server_error", "gateway_unavailable")
 			return
 		}
 		if prin.EmployeeStatus != "active" {

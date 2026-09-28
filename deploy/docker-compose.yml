@@ -31,12 +31,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false # 数据库在别处（如国内）时不启动本地 postgres
       cpa:
         condition: service_started
     env_file: [.env]
     environment:
       LISTEN_ADDR: ":8080"
-      DATABASE_URL: "postgres://gateway:${POSTGRES_PASSWORD}@postgres:5432/gateway?sslmode=disable"
+      # 默认连本机编排里的 postgres；.env 里设置 DATABASE_URL 即改连外部数据库。
+      DATABASE_URL: "${DATABASE_URL:-postgres://gateway:${POSTGRES_PASSWORD}@postgres:5432/gateway?sslmode=disable}"
       CPA_BASE_URL: "http://cpa:8317"
       SPOOL_DIR: "/data/spool"
     volumes:
@@ -57,6 +59,8 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    # 只有 COMPOSE_PROFILES 含 localdb 时才启动（默认含，见 .env.example）。
+    profiles: [localdb]
     <<: *restart
     environment:
       POSTGRES_USER: gateway

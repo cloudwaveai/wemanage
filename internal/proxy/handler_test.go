@@ -390,3 +390,10 @@ func TestProxyOutdatedNoticeVersion(t *testing.T) {
 	}
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "notice_required")
 }
+
+func TestProxyDBDownReturns503NotInvalidKey(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	h.st.Pool.Close()
+	w := doReq(t, h.r, h.key, codexBody)
+	wantCode(t, w, http.StatusServiceUnavailable, "gateway_unavailable")
+}
