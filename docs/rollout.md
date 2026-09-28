@@ -99,6 +99,7 @@ S3_SECRET_KEY=...
 阿里云上的注意事项：
 
 - **用 RDS for PostgreSQL**，不要在 ECS 上用 Docker 自建。Docker Hub 在国内基本拉不下镜像。
+- **已经有一台 ECS 想先用着**：`sudo bash deploy/aliyun/setup-postgres.sh <海外网关IP>`。它会从阿里云的 PGDG 镜像原生安装 PostgreSQL 16，只监听本机，并通过宝塔 nginx 的 stream 四层转发对外开放 15432 端口，只放行网关 IP。SSL 在网关和数据库之间端到端加密，nginx 只转发字节。连接串写在 `~/.aiseat/database_url`。安全组要放行 TCP 15432，授权对象填网关 IP/32。注意：数据库的 SSL 握手不是普通 TLS，所以不能和网站共用 443 端口。
 - `pg_trgm` 扩展要用 RDS 的**高权限账号**创建一次。
 - 如果跨境上传原文不稳定，把 `S3_ENDPOINT` 换成 OSS 的**传输加速**地址 `oss-accelerate.aliyuncs.com`。
 - 如果入站连数据库也不理想，可以把数据库换到**香港**地域。连接质量好很多，但数据就不在境内了，要结合合规需求决定。

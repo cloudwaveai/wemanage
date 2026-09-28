@@ -11,12 +11,12 @@ import (
 // disabled in that case.
 var ErrEmptyDirectory = errors.New("feishu sync: directory returned 0 users; check the app's contact data scope (通讯录权限范围) and contact permissions")
 
-// Run mirrors the Feishu contact directory into the store: it upserts every
-// department and user, links each user to its departments, disables employees
+// Run mirrors the Feishu contact directory (the app's contact scope, whole
+// tenant or partial) into the store: it upserts every department and user, links each user to its departments, disables employees
 // whose open_id no longer appears in the feed, and writes a "feishu_sync"
 // audit record with the counts.
 func Run(ctx context.Context, st *store.Store, c *Client) (deptCount, userCount int, err error) {
-	depts, err := c.ListDepartments(ctx)
+	depts, users, err := c.Directory(ctx)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -41,14 +41,6 @@ func Run(ctx context.Context, st *store.Store, c *Client) (deptCount, userCount 
 		deptCount++
 	}
 
-	deptIDs := make([]string, 0, len(depts))
-	for _, d := range depts {
-		deptIDs = append(deptIDs, d.ID)
-	}
-	users, err := c.ListUsers(ctx, deptIDs)
-	if err != nil {
-		return 0, 0, err
-	}
 	// An empty feed almost always means the app's contact scope or
 	// permissions are not set up; never treat it as "everyone left".
 	if len(users) == 0 {

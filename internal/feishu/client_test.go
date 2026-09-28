@@ -271,6 +271,113 @@ func TestListUsersByDepartment(t *testing.T) {
 	}
 }
 
+// noDeptAuthority mimics Feishu rejecting a department outside the scope.
+func noDeptAuthority(t *testing.T, w http.ResponseWriter) {
+	w.WriteHeader(http.StatusForbidden)
+	writeJSON(t, w, map[string]any{"code": 40004, "msg": "no dept authority error"})
+}
+
+func TestDirectoryPartialScope(t *testing.T) {
+	c := newCounter()
+	mux := http.NewServeMux()
+	tokenHandler(t, mux, c)
+	mux.HandleFunc("/open-apis/contact/v3/departments/0/children",
+		func(w http.ResponseWriter, r *http.Request) { noDeptAuthority(t, w) })
+	mux.HandleFunc("/open-apis/contact/v3/scopes",
+		func(w http.ResponseWriter, r *http.Request) {
+			// Two pages: a granted department, then individual members
+			// (ou_m is also a member of the department).
+			if r.URL.Query().Get("page_token") == "" {
+				writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{
+					"department_ids": []string{"od-team"}, "user_ids": []string{"ou_m"}, "has_more": true, "page_token": "P2"}})
+				return
+			}
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{
+				"user_ids": []string{"ou_solo"}, "has_more": false}})
+		})
+	mux.HandleFunc("/open-apis/contact/v3/departments/od-team",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"department": map[string]any{
+				"open_department_id": "od-team", "parent_department_id": "od-outside", "name": "Team",
+				"leaders": []map[string]any{{"leader_type": 1, "leader_id": "ou_m"}}}}})
+		})
+	mux.HandleFunc("/open-apis/contact/v3/departments/od-team/children",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": []map[string]any{
+				{"open_department_id": "od-sub", "parent_department_id": "od-team", "name": "Sub"}}}})
+		})
+	mux.HandleFunc("/open-apis/contact/v3/users/find_by_department",
+		func(w http.ResponseWriter, r *http.Request) {
+			dept := r.URL.Query().Get("department_id")
+			c.inc("dept:" + dept)
+			var items []map[string]any
+			switch dept {
+			case "od-team":
+				items = []map[string]any{{"open_id": "ou_m", "name": "Member", "department_ids": []string{"od-team"}}}
+			case "od-sub":
+				items = []map[string]any{{"open_id": "ou_s", "name": "Sub member", "department_ids": []string{"od-sub"}}}
+			}
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": items}})
+		})
+	var batched []string
+	mux.HandleFunc("/open-apis/contact/v3/users/batch",
+		func(w http.ResponseWriter, r *http.Request) {
+			batched = append(batched, r.URL.Query()["user_ids"]...)
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": []map[string]any{
+				{"open_id": "ou_solo", "name": "Solo", "department_ids": []string{"od-elsewhere"},
+					"status": map[string]any{"is_activated": true}}}}})
+		})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cl := feishu.NewClient(srv.URL, "app", "secret", srv.Client())
+	depts, users, err := cl.Directory(context.Background())
+	if err != nil {
+		t.Fatalf("directory: %v", err)
+	}
+	if len(depts) != 2 || depts[0].ID != "od-team" || depts[0].Name != "Team" || depts[1].ID != "od-sub" {
+		t.Fatalf("depts = %+v, want the granted department then its sub-department", depts)
+	}
+	if len(depts[0].LeaderOpenIDs) != 1 || depts[0].LeaderOpenIDs[0] != "ou_m" {
+		t.Fatalf("leaders = %v", depts[0].LeaderOpenIDs)
+	}
+	var names []string
+	for _, u := range users {
+		names = append(names, u.OpenID)
+	}
+	if len(users) != 3 || names[0] != "ou_m" || names[1] != "ou_s" || names[2] != "ou_solo" || !users[2].Active {
+		t.Fatalf("users = %v, want department members then the individually granted one", names)
+	}
+	if len(batched) != 1 || batched[0] != "ou_solo" {
+		t.Fatalf("batch fetched %v, want only the member not already listed", batched)
+	}
+	if c.get("dept:0") != 0 {
+		t.Fatal("the root must not be listed when the scope is partial")
+	}
+}
+
+func TestDirectoryOtherErrorsAreNotMaskedAsPartialScope(t *testing.T) {
+	c := newCounter()
+	mux := http.NewServeMux()
+	tokenHandler(t, mux, c)
+	mux.HandleFunc("/open-apis/contact/v3/departments/0/children",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"code": 99991672, "msg": "access denied"})
+		})
+	mux.HandleFunc("/open-apis/contact/v3/scopes",
+		func(w http.ResponseWriter, r *http.Request) { c.inc("scopes") })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cl := feishu.NewClient(srv.URL, "app", "secret", srv.Client())
+	if _, _, err := cl.Directory(context.Background()); err == nil || !contains(err.Error(), "99991672") {
+		t.Fatalf("err = %v, want the original error", err)
+	}
+	if c.get("scopes") != 0 {
+		t.Fatal("only 'no dept authority' should fall back to the scope API")
+	}
+}
+
 func TestAPIErrorNonZeroCode(t *testing.T) {
 	c := newCounter()
 	mux := http.NewServeMux()

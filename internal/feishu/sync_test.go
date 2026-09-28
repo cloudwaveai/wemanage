@@ -80,6 +80,50 @@ func TestRunSyncEmptyDirectoryDisablesNobody(t *testing.T) {
 	}
 }
 
+// A pilot grants the app to a few members only: the root is off limits and
+// the members come from the scope API (the live tenant's setup).
+func TestRunSyncMembersOnlyScope(t *testing.T) {
+	pool := testutil.NewDB(t)
+	st := store.New(pool)
+	ctx := context.Background()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/open-apis/auth/v3/tenant_access_token/internal",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"code": 0, "tenant_access_token": "tok", "expire": 7200})
+		})
+	mux.HandleFunc("/open-apis/contact/v3/departments/0/children",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			writeJSON(t, w, map[string]any{"code": 40004, "msg": "no dept authority error"})
+		})
+	mux.HandleFunc("/open-apis/contact/v3/scopes",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"user_ids": []string{"ou_li"}}})
+		})
+	mux.HandleFunc("/open-apis/contact/v3/users/batch",
+		func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": []map[string]any{
+				{"open_id": "ou_li", "union_id": "on_li", "name": "李逸斌", "department_ids": []string{"od-x"},
+					"status": map[string]any{"is_activated": true}}}}})
+		})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	cl := feishu.NewClient(srv.URL, "app", "secret", srv.Client())
+
+	deptCount, userCount, err := feishu.Run(ctx, st, cl)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if deptCount != 0 || userCount != 1 {
+		t.Fatalf("counts = %d depts / %d users, want 0/1", deptCount, userCount)
+	}
+	li, err := st.GetEmployeeByOpenID(ctx, "ou_li")
+	if err != nil || li.Status != "active" || li.Name != "李逸斌" {
+		t.Fatalf("li = %+v, %v", li, err)
+	}
+}
+
 func TestRunSync(t *testing.T) {
 	pool := testutil.NewDB(t)
 	st := store.New(pool)
