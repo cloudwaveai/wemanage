@@ -7,6 +7,9 @@ import (
 	"aiseat/internal/store"
 )
 
+// blobRetentionSlack keeps blobs slightly longer than their requests' window.
+const blobRetentionSlack = 48 * time.Hour
+
 // Retention deletes conversation content (blobs + searchable text) older than
 // retentionDays, marks the affected requests as purged, and clears expired
 // web sessions and OAuth states. Request metadata, usage and reports are kept.
@@ -16,7 +19,10 @@ func Retention(ctx context.Context, st *store.Store, retentionDays int, now time
 	}
 	cutoff := now.Add(-time.Duration(retentionDays) * 24 * time.Hour)
 
-	if _, err := st.PurgeExpiredBlobs(ctx, cutoff); err != nil {
+	// Blobs get two extra days: the log recorder refreshes a blob's
+	// last_referenced_at at most once a day, so a blob still used by a request
+	// just inside the window may carry a timestamp up to a day older.
+	if _, err := st.PurgeExpiredBlobs(ctx, cutoff.Add(-blobRetentionSlack)); err != nil {
 		return err
 	}
 	if _, err := st.DeleteExpiredTexts(ctx, cutoff); err != nil {

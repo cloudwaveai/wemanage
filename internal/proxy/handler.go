@@ -51,7 +51,23 @@ type Handler struct {
 	clsMu    sync.Mutex
 	cls      *Classifier
 	clsRules []settings.ClientRule
+
+	// Per-request bookkeeping writes are coalesced (the database may be remote).
+	bkMu     sync.Mutex
+	observed map[string]*observedEntry // User-Agent -> uses not yet written
+	quotaAt  map[int64]time.Time       // account -> last quota snapshot write
 }
+
+type observedEntry struct {
+	originator, version string
+	pending             int64
+	written             time.Time
+}
+
+const (
+	observedEvery = 10 * time.Minute // a client UA is written at most this often (with its count)
+	quotaEvery    = time.Minute      // an account's quota snapshot is written at most this often
+)
 
 // NewHandler builds a data-plane handler.
 func NewHandler(deps HandlerDeps) *Handler {
@@ -61,7 +77,8 @@ func NewHandler(deps HandlerDeps) *Handler {
 	if deps.Log == nil {
 		deps.Log = slog.Default()
 	}
-	return &Handler{deps: deps, cache: newPrincipalCache(deps.Store, 3*time.Second)}
+	return &Handler{deps: deps, cache: newPrincipalCache(deps.Store, 3*time.Second),
+		observed: map[string]*observedEntry{}, quotaAt: map[int64]time.Time{}}
 }
 
 // Routes mounts the data-plane routes.
@@ -301,9 +318,11 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		defer resp.Body.Close()
 
 		// --- 5. Relay response, tee into parser ---
-		go func(hdr http.Header) {
-			_ = health.RecordQuotaFromHeaders(context.Background(), h.deps.Store, acc.ID, hdr, time.Now())
-		}(resp.Header.Clone())
+		if h.quotaDue(acc.ID, resp.StatusCode) {
+			go func(hdr http.Header) {
+				_ = health.RecordQuotaFromHeaders(context.Background(), h.deps.Store, acc.ID, hdr, time.Now())
+			}(resp.Header.Clone())
+		}
 		copyResponseHeaders(w, resp.Header)
 		w.WriteHeader(resp.StatusCode)
 
@@ -359,6 +378,8 @@ func (h *Handler) sessionSeed(kind string, hdr http.Header, body []byte, empID i
 	return strconv.FormatInt(empID, 10) + "|" + hashSeed(first)
 }
 
+// recordObserved counts a Codex client UA; each UA is written at most every
+// observedEvery, carrying the uses counted since its last write.
 func (h *Handler) recordObserved(hdr http.Header) {
 	ua := hdr.Get("User-Agent")
 	if ua == "" {
@@ -368,9 +389,44 @@ func (h *Handler) recordObserved(hdr http.Header) {
 	if p, ok := ParseCodexUA(ua); ok {
 		ver = p.Version
 	}
-	_ = h.deps.Store.UpsertObservedClient(context.Background(), store.ObservedClient{
-		UserAgent: ua, Originator: hdr.Get("Originator"), Version: ver,
-	})
+	h.bkMu.Lock()
+	e := h.observed[ua]
+	if e == nil {
+		if len(h.observed) >= 1000 {
+			h.bkMu.Unlock()
+			return
+		}
+		e = &observedEntry{}
+		h.observed[ua] = e
+	}
+	e.originator, e.version = hdr.Get("Originator"), ver
+	e.pending++
+	if time.Since(e.written) < observedEvery {
+		h.bkMu.Unlock()
+		return
+	}
+	c := store.ObservedClient{UserAgent: ua, Originator: e.originator, Version: e.version, Hits: e.pending}
+	e.pending, e.written = 0, time.Now()
+	h.bkMu.Unlock()
+
+	if err := h.deps.Store.UpsertObservedClient(context.Background(), c); err != nil {
+		h.bkMu.Lock()
+		e.pending += c.Hits
+		e.written = time.Time{}
+		h.bkMu.Unlock()
+	}
+}
+
+// quotaDue reports whether this response's quota headers should be stored:
+// at most once per quotaEvery per account, but always on a rate limit.
+func (h *Handler) quotaDue(accountID int64, status int) bool {
+	h.bkMu.Lock()
+	defer h.bkMu.Unlock()
+	if status != http.StatusTooManyRequests && time.Since(h.quotaAt[accountID]) < quotaEvery {
+		return false
+	}
+	h.quotaAt[accountID] = time.Now()
+	return true
 }
 
 func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *http.Response, model string, outcome capture.Outcome, set settings.Settings) {
@@ -378,9 +434,11 @@ func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *
 	case resp.StatusCode == http.StatusTooManyRequests:
 		until := parseRateLimitReset(resp.Header)
 		_ = h.deps.Store.SetRateLimitedUntil(ctx, acc.ID, &until)
+		h.cache.forgetAccount(acc.ID)
 		_, _ = h.deps.Store.AddSignal(ctx, acc.ID, "rate_limited", map[string]any{"until": until})
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		_ = h.deps.Store.SetNeedsLogin(ctx, acc.ID, true)
+		h.cache.forgetAccount(acc.ID)
 		_, _ = h.deps.Store.AddSignal(ctx, acc.ID, "needs_login", map[string]any{"status": resp.StatusCode})
 	}
 	// Model mismatch (silent degradation) signal.

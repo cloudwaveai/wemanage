@@ -70,7 +70,8 @@ tar czf auths-$(date +%F).tgz -C deploy/cpa auths
 
 - 对话原文（片段）超过设置里的保留天数（默认 180）自动删除，每天 03:30 执行。
 - 用量统计、日报、审计永久保留。
-- 日志写库失败会先落到 `gateway_spool` 卷，数据库恢复后自动回放；若该卷持续增长，说明数据库有问题，需排查。
+- 日志写库失败会先落到 `gateway_spool` 卷的 `pending.jsonl`，数据库恢复后自动回放；若该文件持续增长，说明数据库有问题，需排查。
+- 数据库拒收的记录（数据本身有问题，重试也没用）会放进同一个卷的 `rejected.jsonl`，每行带着拒收原因。这个文件正常应为空；出现内容时看网关日志里的 `record rejected by the database`，修复原因后可以把记录挪回 `pending.jsonl` 让它重新补录。
 
 ## 日报
 

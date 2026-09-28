@@ -93,12 +93,42 @@ func (s *Store) EnsureDevice(ctx context.Context, d Device) (dev Device, created
 	return dev, inserted, err
 }
 
-// TouchDevice records a use of the device.
-func (s *Store) TouchDevice(ctx context.Context, id int64, ip string, at time.Time) error {
-	_, err := s.Pool.Exec(ctx, `
-		UPDATE client_devices SET last_seen=GREATEST(last_seen,$3), last_ip=$2, requests=requests+1 WHERE id=$1`,
-		id, ip, at)
-	return err
+// Touch is accumulated use of a device or network since the last flush.
+type Touch struct {
+	ID int64
+	N  int64
+	At time.Time // latest use
+	IP string    // IP of the latest use
+}
+
+// ApplyTouches adds accumulated uses to devices and networks in one round trip.
+func (s *Store) ApplyTouches(ctx context.Context, devices, networks []Touch) error {
+	if len(devices) == 0 && len(networks) == 0 {
+		return nil
+	}
+	cols := func(ts []Touch) ([]int64, []int64, []time.Time, []string) {
+		ids, ns, ats, ips := make([]int64, len(ts)), make([]int64, len(ts)), make([]time.Time, len(ts)), make([]string, len(ts))
+		for i, t := range ts {
+			ids[i], ns[i], ats[i], ips[i] = t.ID, t.N, t.At, t.IP
+		}
+		return ids, ns, ats, ips
+	}
+	batch := &pgx.Batch{}
+	if len(devices) > 0 {
+		ids, ns, ats, ips := cols(devices)
+		batch.Queue(`
+			UPDATE client_devices d SET last_seen = GREATEST(d.last_seen, v.at), last_ip = v.ip, requests = d.requests + v.n
+			FROM unnest($1::bigint[], $2::bigint[], $3::timestamptz[], $4::text[]) AS v(id, n, at, ip)
+			WHERE d.id = v.id`, ids, ns, ats, ips)
+	}
+	if len(networks) > 0 {
+		ids, ns, ats, ips := cols(networks)
+		batch.Queue(`
+			UPDATE client_networks c SET last_seen = GREATEST(c.last_seen, v.at), ip_sample = v.ip, requests = c.requests + v.n
+			FROM unnest($1::bigint[], $2::bigint[], $3::timestamptz[], $4::text[]) AS v(id, n, at, ip)
+			WHERE c.id = v.id`, ids, ns, ats, ips)
+	}
+	return s.Pool.SendBatch(ctx, batch).Close()
 }
 
 // GetDevice returns one device.

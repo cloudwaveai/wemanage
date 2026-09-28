@@ -5,17 +5,21 @@ import (
 	"time"
 )
 
-// UpsertObservedClient records/updates a seen client UA.
+// UpsertObservedClient records a seen client UA, adding c.Hits uses (default 1).
 func (s *Store) UpsertObservedClient(ctx context.Context, c ObservedClient) error {
+	hits := c.Hits
+	if hits <= 0 {
+		hits = 1
+	}
 	_, err := s.Pool.Exec(ctx, `
 		INSERT INTO observed_clients (user_agent, originator, version, first_seen, last_seen, hits)
-		VALUES ($1,$2,$3,now(),now(),1)
+		VALUES ($1,$2,$3,now(),now(),$4)
 		ON CONFLICT (user_agent) DO UPDATE SET
 			originator=EXCLUDED.originator,
 			version=EXCLUDED.version,
 			last_seen=now(),
-			hits=observed_clients.hits+1`,
-		c.UserAgent, c.Originator, c.Version)
+			hits=observed_clients.hits+$4`,
+		c.UserAgent, c.Originator, c.Version, hits)
 	return err
 }
 

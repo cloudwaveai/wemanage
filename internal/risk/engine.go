@@ -85,9 +85,26 @@ type Engine struct {
 
 	seenMu sync.Mutex
 	seen   map[string]time.Time
+
+	// Uses are accumulated in memory and written every touchEvery instead of
+	// one database write per request.
+	touchMu  sync.Mutex
+	devTouch map[int64]*store.Touch
+	netTouch map[int64]*store.Touch
+	netKnown map[netKeyT]int64
 }
 
-const deviceCacheTTL = 15 * time.Second
+// deviceCacheTTL can be long: every device status change goes through
+// DeviceChanged, which drops the cached entry immediately.
+const deviceCacheTTL = 5 * time.Minute
+
+// touchEvery is how often accumulated device/network uses are written.
+const touchEvery = 30 * time.Second
+
+type netKeyT struct {
+	emp int64
+	key string
+}
 
 // engineWorkers process observations in parallel (each costs a few DB round
 // trips, which matter when the database is remote); one employee's
@@ -109,6 +126,7 @@ func NewEngine(cfg Config) *Engine {
 	return &Engine{
 		cfg: cfg, log: cfg.Log, shards: shards, win: newWindow(),
 		devs: make(map[int64]map[string]cacheEntry), seen: make(map[string]time.Time),
+		devTouch: map[int64]*store.Touch{}, netTouch: map[int64]*store.Touch{}, netKnown: map[netKeyT]int64{},
 	}
 }
 
@@ -127,10 +145,71 @@ func (e *Engine) Start(ctx context.Context) {
 			}
 		}(ch)
 	}
+	go func() {
+		t := time.NewTicker(touchEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				fctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				e.flushTouches(fctx)
+				cancel()
+				return
+			case <-t.C:
+				e.flushTouches(ctx)
+			}
+		}
+	}()
 }
 
-// Flush waits for queued observations to be processed (tests).
-func (e *Engine) Flush() { e.wg.Wait() }
+// Flush waits for queued observations to be processed and writes accumulated
+// device/network uses (tests, shutdown).
+func (e *Engine) Flush() {
+	e.wg.Wait()
+	e.flushTouches(context.Background())
+}
+
+func touch(m map[int64]*store.Touch, id int64, ip string, at time.Time) {
+	t := m[id]
+	if t == nil {
+		t = &store.Touch{ID: id}
+		m[id] = t
+	}
+	t.N++
+	if !at.Before(t.At) {
+		t.At, t.IP = at, ip
+	}
+}
+
+func (e *Engine) flushTouches(ctx context.Context) {
+	e.touchMu.Lock()
+	devs := make([]store.Touch, 0, len(e.devTouch))
+	for _, t := range e.devTouch {
+		devs = append(devs, *t)
+	}
+	nets := make([]store.Touch, 0, len(e.netTouch))
+	for _, t := range e.netTouch {
+		nets = append(nets, *t)
+	}
+	e.devTouch, e.netTouch = map[int64]*store.Touch{}, map[int64]*store.Touch{}
+	e.touchMu.Unlock()
+	if err := e.cfg.Store.ApplyTouches(ctx, devs, nets); err != nil {
+		e.log.Warn("risk: write device/network uses", "err", err)
+		// Keep the counts for the next attempt.
+		e.touchMu.Lock()
+		for _, t := range devs {
+			for i := int64(0); i < t.N; i++ {
+				touch(e.devTouch, t.ID, t.IP, t.At)
+			}
+		}
+		for _, t := range nets {
+			for i := int64(0); i < t.N; i++ {
+				touch(e.netTouch, t.ID, t.IP, t.At)
+			}
+		}
+		e.touchMu.Unlock()
+	}
+}
 
 // Observe queues an observation without blocking; it is dropped when the queue
 // is full (detection is best-effort, serving requests is not).
@@ -271,12 +350,30 @@ func (e *Engine) process(ctx context.Context, o Observation) {
 		return
 	}
 
-	_ = e.cfg.Store.TouchDevice(ctx, devID, o.IP, now)
+	e.touchMu.Lock()
+	touch(e.devTouch, devID, o.IP, now)
+	e.touchMu.Unlock()
 
 	key, coarse := NetKeys(o.IP)
 	if key == "" {
 		return
 	}
+	nk := netKeyT{o.EmployeeID, key}
+	e.touchMu.Lock()
+	netID, known := e.netKnown[nk]
+	if known {
+		touch(e.netTouch, netID, o.IP, now)
+	}
+	e.touchMu.Unlock()
+	if !known {
+		e.newNetwork(ctx, o, devID, key, nk, now)
+	}
+	e.windowCheck(ctx, o, set, devID, coarse, now)
+}
+
+// newNetwork registers a network not yet seen by this process (one write),
+// alerting on a first use from a datacenter.
+func (e *Engine) newNetwork(ctx context.Context, o Observation, devID int64, key string, nk netKeyT, now time.Time) {
 	var geo GeoInfo
 	if e.cfg.Geo != nil {
 		geo, _ = e.cfg.Geo.Lookup(o.IP)
@@ -296,7 +393,15 @@ func (e *Engine) process(ctx context.Context, o Observation) {
 		e.notifyAdmins(ctx, o.EmployeeID, msg)
 		e.markNotified(ctx, ev)
 	}
+	if err == nil {
+		e.touchMu.Lock()
+		e.netKnown[nk] = nw.ID
+		e.touchMu.Unlock()
+	}
+}
 
+// windowCheck applies the concurrency rules for this sighting.
+func (e *Engine) windowCheck(ctx context.Context, o Observation, set settings.Settings, devID int64, coarse string, now time.Time) {
 	span := time.Duration(set.ConcurrencyWindowMinutes) * time.Minute
 	grace := time.Duration(set.NewDeviceGraceMinutes) * time.Minute
 	snap := e.win.add(o.EmployeeID, sighting{

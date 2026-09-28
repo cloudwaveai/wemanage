@@ -275,3 +275,26 @@ func TestEngineDailyCheck(t *testing.T) {
 		t.Fatalf("admin summary: %q", got)
 	}
 }
+
+func TestEngineAccumulatesDeviceAndNetworkUses(t *testing.T) {
+	e := newEnv(t, settings.RiskStandard)
+	dev := e.device(t, "laptop", 48*time.Hour, store.DeviceTrusted)
+	for i, ip := range []string{"1.2.3.4", "1.2.3.5", "1.2.3.6"} {
+		o := e.obs(dev, ip)
+		o.At = time.Now().Add(time.Duration(i) * time.Second)
+		e.eng.Observe(o)
+	}
+	e.eng.Flush()
+
+	d, err := e.st.GetDevice(e.ctx, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Requests != 3 || d.LastIP != "1.2.3.6" {
+		t.Fatalf("device requests=%d last_ip=%s, want 3 / 1.2.3.6", d.Requests, d.LastIP)
+	}
+	nets, _ := e.st.ListNetworks(e.ctx, e.emp.ID, 10)
+	if len(nets) != 1 || nets[0].Requests != 3 || nets[0].IPSample != "1.2.3.6" {
+		t.Fatalf("networks = %+v, want one /24 with 3 uses", nets)
+	}
+}

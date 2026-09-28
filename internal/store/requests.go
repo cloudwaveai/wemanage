@@ -91,34 +91,6 @@ func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
 	return err
 }
 
-// SessionAdvance is the session state written after a request is stored.
-type SessionAdvance struct {
-	SessionID  int64
-	FullHashes []byte
-	ChainDepth int
-	InputCount int
-}
-
-// CommitRequest stores a request row, its searchable texts and the session
-// advance in one round trip; the batch runs as one implicit transaction, so
-// either all of it lands or none does.
-func (s *Store) CommitRequest(ctx context.Context, r RequestRow, texts []TextRow, adv SessionAdvance) error {
-	batch := &pgx.Batch{}
-	batch.Queue(insertRequestSQL, requestArgs(r)...)
-	for _, t := range texts {
-		batch.Queue(insertTextSQL, t.RequestID[:], t.EmployeeID, t.SessionID, t.StartedAt, t.Role, t.Text)
-	}
-	batch.Queue(updateSessionSQL, adv.SessionID, r.ID[:], adv.FullHashes, adv.ChainDepth, adv.InputCount, r.StartedAt)
-	br := s.Pool.SendBatch(ctx, batch)
-	for i := 0; i < batch.Len(); i++ {
-		if _, err := br.Exec(); err != nil {
-			br.Close()
-			return err
-		}
-	}
-	return br.Close()
-}
-
 // GetRequestEnc returns the request-hash encoding for reconstruction.
 func (s *Store) GetRequestEnc(ctx context.Context, id [16]byte) (RequestEnc, error) {
 	var enc RequestEnc

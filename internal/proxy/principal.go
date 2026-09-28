@@ -16,15 +16,19 @@ import (
 // requests fail with 503 rather than guessing.
 const maxStale = 10 * time.Minute
 
-// principalCache caches key->principal lookups for a short TTL to absorb bursts.
-// The TTL is deliberately short so that account status changes (rate limit,
-// needs-login) propagate quickly. On database errors (not "no such key") it
-// serves the last known principal for up to maxStale.
+// principalCache caches key->principal lookups. After ttl an entry is still
+// served immediately while it is refreshed in the background
+// (stale-while-revalidate), so requests do not wait on a possibly remote
+// database; a change such as a freeze or revocation therefore lands within
+// about ttl plus one refresh. Entries older than maxStale (the refresh keeps
+// failing) are looked up synchronously. On database errors (not "no such
+// key") the last known principal keeps serving up to maxStale.
 type principalCache struct {
-	st  *store.Store
-	ttl time.Duration
-	mu  sync.Mutex
-	m   map[string]cachedPrincipal
+	st         *store.Store
+	ttl        time.Duration
+	mu         sync.Mutex
+	m          map[string]cachedPrincipal
+	refreshing map[string]bool
 }
 
 type cachedPrincipal struct {
@@ -33,16 +37,27 @@ type cachedPrincipal struct {
 }
 
 func newPrincipalCache(st *store.Store, ttl time.Duration) *principalCache {
-	return &principalCache{st: st, ttl: ttl, m: make(map[string]cachedPrincipal)}
+	return &principalCache{st: st, ttl: ttl, m: make(map[string]cachedPrincipal), refreshing: map[string]bool{}}
 }
 
-// Get resolves a key hash to its principal, using the cache when fresh.
+// Get resolves a key hash to its principal.
 func (c *principalCache) Get(ctx context.Context, hash []byte) (store.KeyPrincipal, error) {
 	k := hex.EncodeToString(hash)
 	c.mu.Lock()
-	if e, ok := c.m[k]; ok && time.Since(e.at) < c.ttl {
-		c.mu.Unlock()
-		return e.p, nil
+	if e, ok := c.m[k]; ok {
+		age := time.Since(e.at)
+		if age < c.ttl {
+			c.mu.Unlock()
+			return e.p, nil
+		}
+		if age < maxStale {
+			if !c.refreshing[k] {
+				c.refreshing[k] = true
+				go c.refresh(k, hash)
+			}
+			c.mu.Unlock()
+			return e.p, nil
+		}
 	}
 	c.mu.Unlock()
 
@@ -62,7 +77,31 @@ func (c *principalCache) Get(ctx context.Context, hash []byte) (store.KeyPrincip
 		}
 		return store.KeyPrincipal{}, err
 	}
+	c.put(k, p)
+	return p, nil
+}
+
+func (c *principalCache) refresh(k string, hash []byte) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	p, err := c.st.LookupKey(ctx, hash)
 	c.mu.Lock()
+	delete(c.refreshing, k)
+	c.mu.Unlock()
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		c.mu.Lock()
+		delete(c.m, k)
+		c.mu.Unlock()
+	case err == nil:
+		c.put(k, p)
+	}
+	// other errors: keep serving the stale entry (up to maxStale)
+}
+
+func (c *principalCache) put(k string, p store.KeyPrincipal) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.m[k] = cachedPrincipal{p: p, at: time.Now()}
 	// opportunistic cleanup to bound memory
 	if len(c.m) > 4096 {
@@ -72,6 +111,16 @@ func (c *principalCache) Get(ctx context.Context, hash []byte) (store.KeyPrincip
 			}
 		}
 	}
-	c.mu.Unlock()
-	return p, nil
+}
+
+// forgetAccount drops entries bound to an account whose status this process
+// just changed (rate limited, needs login), so the next request sees it.
+func (c *principalCache) forgetAccount(accountID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, e := range c.m {
+		if e.p.Account != nil && e.p.Account.ID == accountID {
+			delete(c.m, k)
+		}
+	}
 }

@@ -82,33 +82,14 @@ func (s *Store) putBlobsExternal(ctx context.Context, blobs []Blob, refAt time.T
 		return err
 	}
 
-	var (
-		wg      sync.WaitGroup
-		errMu   sync.Mutex
-		firstEr error
-		sem     = make(chan struct{}, uploadConcurrency)
-	)
+	var missing []Blob
 	for _, b := range uniq {
-		if existing[b.Hash] {
-			continue
+		if !existing[b.Hash] {
+			missing = append(missing, b)
 		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(b Blob) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if err := s.blobBackend.Put(ctx, blobKey(b.Hash), zstdEnc.EncodeAll(b.Data, nil)); err != nil {
-				errMu.Lock()
-				if firstEr == nil {
-					firstEr = err
-				}
-				errMu.Unlock()
-			}
-		}(b)
 	}
-	wg.Wait()
-	if firstEr != nil {
-		return firstEr
+	if err := s.UploadBlobs(ctx, missing); err != nil {
+		return err
 	}
 
 	batch := &pgx.Batch{}
@@ -127,6 +108,41 @@ func (s *Store) putBlobsExternal(ctx context.Context, blobs []Blob, refAt time.T
 		}
 	}
 	return br.Close()
+}
+
+// ExternalBlobs reports whether blob bytes live in an external backend.
+func (s *Store) ExternalBlobs() bool { return s.blobBackend != nil }
+
+// UploadBlobs stores blob bytes in the external backend, in parallel. Keys
+// are content hashes, so uploading a blob twice is harmless. No-op without a
+// backend.
+func (s *Store) UploadBlobs(ctx context.Context, blobs []Blob) error {
+	if s.blobBackend == nil || len(blobs) == 0 {
+		return nil
+	}
+	var (
+		wg      sync.WaitGroup
+		errMu   sync.Mutex
+		firstEr error
+		sem     = make(chan struct{}, uploadConcurrency)
+	)
+	for _, b := range blobs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(b Blob) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := s.blobBackend.Put(ctx, blobKey(b.Hash), zstdEnc.EncodeAll(b.Data, nil)); err != nil {
+				errMu.Lock()
+				if firstEr == nil {
+					firstEr = err
+				}
+				errMu.Unlock()
+			}
+		}(b)
+	}
+	wg.Wait()
+	return firstEr
 }
 
 func (s *Store) putBlobsInline(ctx context.Context, blobs []Blob, refAt time.Time) error {

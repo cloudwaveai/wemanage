@@ -84,7 +84,11 @@ func runServe() error {
 	// Queue bound keeps memory predictable (each record carries its request
 	// body); overflow is spooled to disk and replayed.
 	rec := recorder.New(st, set, cfg.SpoolDir, log, 512)
-	rec.Start(ctx)
+	// The recorder outlives the HTTP server: requests still finishing during
+	// shutdown submit records, which must be written (or spooled) afterwards.
+	recCtx, recCancel := context.WithCancel(context.Background())
+	defer recCancel()
+	rec.Start(recCtx)
 
 	// Bootstrap super admins from config (idempotent).
 	for _, oid := range cfg.BootstrapSuperAdmins {
@@ -158,18 +162,25 @@ func runServe() error {
 	r.Handle("/*", webui.Handler())
 
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: r}
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(sctx)
+		_ = srv.Shutdown(sctx) // waits for in-flight requests
 	}()
 
 	log.Info("gateway listening", "addr", cfg.ListenAddr, "public", cfg.PublicBaseURL)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	rec.Flush()
+	<-shutdownDone
+	if !rec.FlushTimeout(15 * time.Second) {
+		log.Warn("recorder: flush timed out; spooling the rest to disk")
+	}
+	recCancel()
+	rec.FlushTimeout(5 * time.Second) // cancelled loops spool what is left
 	return nil
 }
 
