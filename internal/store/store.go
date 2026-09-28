@@ -85,7 +85,19 @@ type Account struct {
 	DeviceProfile    DeviceProfile
 	CPADrift         string
 	CreatedAt        time.Time
+	// Provider is the CPA auth-file type: "codex" (ChatGPT) or e.g. "kimi".
+	Provider string
 }
+
+// Provider values.
+const (
+	ProviderCodex = "codex"
+	ProviderKimi  = "kimi"
+)
+
+// IsChatGPT reports whether the account is a ChatGPT/Codex subscription (the
+// quota headers and degradation heuristics only apply to these).
+func (a Account) IsChatGPT() bool { return a.Provider == "" || a.Provider == ProviderCodex }
 
 // Prefix is the CPA model/credential prefix bound to this account.
 func (a Account) Prefix() string { return "acct-" + itoa(a.ID) }

@@ -456,3 +456,22 @@ func TestProxyContentAudit(t *testing.T) {
 	wantCode(t, doReq(t, h.r, h.key, bad), http.StatusForbidden, "content_blocked")
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "") // clean prompts still pass
 }
+
+func TestProxyNoModelMismatchSignalForKimi(t *testing.T) {
+	cpa := newFakeCPA()
+	cpa.sse = `event: response.completed
+data: {"type":"response.completed","response":{"model":"k3","usage":{"input_tokens":1,"output_tokens":1},"output":[]}}
+
+`
+	h := newRig(t, cpa, settings.RiskStandard)
+	if _, err := h.st.Pool.Exec(h.ctx, `UPDATE upstream_accounts SET provider='kimi'`); err != nil {
+		t.Fatal(err)
+	}
+	wantCode(t, doReq(t, h.r, h.key, `{"model":"kimi-k3","input":[]}`), http.StatusOK, "")
+	h.rec.Flush()
+	time.Sleep(50 * time.Millisecond)
+	accs, _ := h.st.ListAccounts(h.ctx)
+	if has, _ := h.st.HasOpenSignal(h.ctx, accs[0].ID, "model_mismatch"); has {
+		t.Fatal("Kimi accounts report their own model aliases; no degradation signal expected")
+	}
+}

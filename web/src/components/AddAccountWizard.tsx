@@ -6,7 +6,13 @@ import { Modal } from "./Modal";
 import { Button } from "./ui";
 import { useToast } from "./Toast";
 
-type Path = "oauth" | "import";
+type Path = "oauth" | "kimi" | "import";
+
+const PATH_LABELS: Record<Path, string> = {
+  oauth: "ChatGPT 登录",
+  kimi: "Kimi Code（试用）",
+  import: "导入授权",
+};
 
 export function AddAccountWizard({
   open,
@@ -28,6 +34,9 @@ export function AddAccountWizard({
   const [state, setState] = useState<string | null>(null);
   const [redirectUrl, setRedirectUrl] = useState("");
 
+  // kimi device-login state
+  const [kimi, setKimi] = useState<{ url: string; state: string; code?: string } | null>(null);
+
   // import flow state
   const [importJson, setImportJson] = useState("");
 
@@ -47,6 +56,7 @@ export function AddAccountWizard({
     setAuthUrl(null);
     setState(null);
     setRedirectUrl("");
+    setKimi(null);
     setImportJson("");
   };
 
@@ -77,6 +87,31 @@ export function AddAccountWizard({
       ),
     onSuccess: (d) => {
       toast(`账号已添加${d.email ? "：" + d.email : ""}`, "success");
+      onDone();
+      close();
+    },
+    onError: (e: unknown) =>
+      toast(e instanceof Error ? e.message : "完成失败", "error"),
+  });
+
+  const startKimi = useMutation({
+    mutationFn: () =>
+      api.post<{ auth_url: string; state: string; user_code?: string }>(
+        "/api/admin/accounts/kimi-start",
+        { ip_group_id: Number(ipGroupId), os_profile: osProfile() }
+      ),
+    onSuccess: (d) => setKimi({ url: d.auth_url, state: d.state, code: d.user_code }),
+    onError: (e: unknown) =>
+      toast(e instanceof Error ? e.message : "启动失败", "error"),
+  });
+
+  const completeKimi = useMutation({
+    mutationFn: () =>
+      api.post<{ account_id: number }>("/api/admin/accounts/kimi-complete", {
+        state: kimi?.state,
+      }),
+    onSuccess: () => {
+      toast("Kimi 账号已添加", "success");
       onDone();
       close();
     },
@@ -159,7 +194,7 @@ export function AddAccountWizard({
 
         {/* path tabs */}
         <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5">
-          {(["oauth", "import"] as Path[]).map((p) => (
+          {(["oauth", "kimi", "import"] as Path[]).map((p) => (
             <button
               key={p}
               onClick={() => setPath(p)}
@@ -170,7 +205,7 @@ export function AddAccountWizard({
                   : "text-slate-600 hover:bg-slate-100")
               }
             >
-              {p === "oauth" ? "OAuth 登录" : "导入授权"}
+              {PATH_LABELS[p]}
             </button>
           ))}
         </div>
@@ -218,6 +253,53 @@ export function AddAccountWizard({
                   disabled={!redirectUrl.trim() || completeOAuth.isPending}
                 >
                   {completeOAuth.isPending ? "处理中…" : "完成"}
+                </Button>
+              </>
+            )}
+          </div>
+        ) : path === "kimi" ? (
+          <div className="space-y-3">
+            <p className="text-xs leading-relaxed text-slate-500">
+              用于上 ChatGPT 之前的试跑：Kimi Code 订阅经 CPA 接入，员工照常用 Codex。
+              账号不会参与“疑似降智”检查，也没有 5 小时 / 每周额度显示。
+            </p>
+            {!kimi ? (
+              <Button
+                variant="primary"
+                onClick={() => startKimi.mutate()}
+                disabled={!canProceed || startKimi.isPending}
+              >
+                {startKimi.isPending ? "启动中…" : "开始 Kimi 登录"}
+              </Button>
+            ) : (
+              <>
+                <div className="rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <a
+                    href={kimi.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="break-all font-medium text-indigo-600 hover:text-indigo-500"
+                  >
+                    打开 Kimi 授权页面并确认 ↗
+                  </a>
+                  {kimi.code && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      如页面要求输入验证码：
+                      <span className="ml-1 font-mono text-sm font-semibold text-slate-800">
+                        {kimi.code}
+                      </span>
+                    </p>
+                  )}
+                  <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                    在页面里登录 Kimi 账号并点“授权”，回到这里点“我已授权，完成”。
+                  </p>
+                </div>
+                <Button
+                  variant="primary"
+                  onClick={() => completeKimi.mutate()}
+                  disabled={completeKimi.isPending}
+                >
+                  {completeKimi.isPending ? "确认中…" : "我已授权，完成"}
                 </Button>
               </>
             )}

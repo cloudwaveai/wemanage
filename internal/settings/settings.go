@@ -307,6 +307,10 @@ func Validate(s Settings) error {
 		if strings.TrimSpace(r.Name) == "" {
 			return fmt.Errorf("content audit rules need a name")
 		}
+		if strings.TrimSpace(r.Pattern) == "" {
+			// An empty pattern matches every message (in block mode: every request).
+			return fmt.Errorf("content audit rule %q has an empty pattern", r.Name)
+		}
 		if _, err := regexp.Compile("(?i)" + r.Pattern); err != nil {
 			return fmt.Errorf("content audit rule %q: %w", r.Name, err)
 		}

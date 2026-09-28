@@ -18,6 +18,8 @@ export const RULE_LABELS: Record<string, string> = {
   device_denied: "员工报告「不是我」",
   volume_spike: "用量暴增",
   sleepless: "全天候使用",
+  outside_office: "公司网络外使用",
+  content_flagged: "触发内容审核",
 };
 
 export function ruleLabel(rule: string): string {
@@ -80,10 +82,14 @@ export const DETAIL_KEY_LABELS: Record<string, string> = {
   other_network: "另一网络",
   device_id: "设备 ID",
   other_device_id: "另一设备 ID",
+  rule: "规则",
+  snippet: "内容片段",
+  blocked: "已拦截",
 };
 
 function detailValue(v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "boolean") return v ? "是" : "否";
   if (Array.isArray(v)) return v.map(detailValue).join("、");
   if (typeof v === "object") {
     try {

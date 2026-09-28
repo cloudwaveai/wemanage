@@ -84,6 +84,11 @@ export function AccountsPage() {
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">
                       {a.plan_type || "-"}
+                      {a.provider && a.provider !== "codex" && (
+                        <span className="ml-1.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+                          {a.provider === "kimi" ? "Kimi" : a.provider}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">
                       {a.owner_type || "-"}

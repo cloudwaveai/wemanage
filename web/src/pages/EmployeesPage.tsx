@@ -78,6 +78,14 @@ export function EmployeesPage() {
                             已冻结
                           </span>
                         )}
+                        {e.remote_allowed && (
+                          <span
+                            className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700"
+                            title="允许在公司网络外使用"
+                          >
+                            可远程
+                          </span>
+                        )}
                         {e.open_risk_events > 0 && (
                           <Link
                             to={`/risk/employees/${e.id}`}

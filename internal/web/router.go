@@ -91,6 +91,8 @@ func (s *Server) Mount(r chi.Router) {
 				r.Post("/admin/accounts/oauth-start", s.handleOAuthStart)
 				r.Post("/admin/accounts/oauth-complete", s.handleOAuthComplete)
 				r.Post("/admin/accounts/import", s.handleImportAccount)
+				r.Post("/admin/accounts/kimi-start", s.handleKimiStart)
+				r.Post("/admin/accounts/kimi-complete", s.handleKimiComplete)
 				r.Post("/admin/accounts/{id}/bind", s.handleBind)
 				r.Post("/admin/accounts/{id}/unbind", s.handleUnbind)
 				r.Patch("/admin/accounts/{id}", s.handlePatchAccount)

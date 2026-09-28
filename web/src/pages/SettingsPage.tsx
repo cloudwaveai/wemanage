@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { Settings } from "../lib/types";
+import type { ContentAuditMode, ContentAuditRule, Settings } from "../lib/types";
 import {
   Card,
   PageHeader,
@@ -12,6 +12,7 @@ import {
 import { useToast } from "../components/Toast";
 import { useAuth } from "../context/AuthContext";
 import { RISK_MODES, RISK_MODE_LABELS } from "../lib/risk";
+import { ActionBtn } from "../components/risk";
 
 const inputCls =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100";
@@ -21,6 +22,21 @@ const RISK_MODE_HINTS: Record<Settings["risk_mode"], string> = {
   standard: "新设备在确认时限内可先使用；高风险行为自动冻结 Key。",
   strict: "新设备必须员工确认后才能使用，每人最多确认 2 台；高风险自动冻结。",
 };
+
+const AUDIT_MODES: { v: ContentAuditMode; label: string; hint: string }[] = [
+  { v: "off", label: "关闭", hint: "不检查请求内容。" },
+  { v: "warn", label: "仅提醒（推荐）", hint: "放行请求，通知管理员。" },
+  { v: "block", label: "拦截", hint: "直接拒绝请求并通知管理员。" },
+];
+
+// Textarea → office_networks: one entry per line (commas also split), trimmed,
+// empties dropped. The server validates each CIDR / IP.
+function parseNetworks(text: string): string[] {
+  return text
+    .split(/[\n,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 function NumberField({
   label,
@@ -86,6 +102,9 @@ export function SettingsPage() {
   const { toast } = useToast();
   const { refetch: refetchMe } = useAuth();
   const [form, setForm] = useState<Settings | null>(null);
+  // Office networks are edited as free text and parsed on save, so typing a
+  // newline doesn't get eaten mid-edit.
+  const [netText, setNetText] = useState("");
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["settings"],
@@ -93,7 +112,10 @@ export function SettingsPage() {
   });
 
   useEffect(() => {
-    if (data) setForm(structuredClone(data));
+    if (data) {
+      setForm(structuredClone(data));
+      setNetText((data.office_networks ?? []).join("\n"));
+    }
   }, [data]);
 
   const save = useMutation({
@@ -111,6 +133,30 @@ export function SettingsPage() {
   const patch = (p: Partial<Settings>) =>
     setForm((f) => (f ? { ...f, ...p } : f));
 
+  const rules: ContentAuditRule[] = form?.content_audit_rules ?? [];
+  const setRules = (r: ContentAuditRule[]) => patch({ content_audit_rules: r });
+  const setRule = (i: number, p: Partial<ContentAuditRule>) =>
+    setRules(rules.map((r, j) => (j === i ? { ...r, ...p } : r)));
+
+  const onSave = () => {
+    if (!form) return;
+    // Drop rows left completely blank; an empty regex would match every
+    // message, so refuse a named rule without a pattern.
+    const auditRules = rules
+      .map((r) => ({ name: r.name.trim(), pattern: r.pattern }))
+      .filter((r) => r.name || r.pattern.trim());
+    const noPattern = auditRules.find((r) => !r.pattern.trim());
+    if (noPattern) {
+      toast(`内容审核规则「${noPattern.name}」的正则不能为空`, "error");
+      return;
+    }
+    save.mutate({
+      ...form,
+      office_networks: parseNetworks(netText),
+      content_audit_rules: auditRules,
+    });
+  };
+
   return (
     <div>
       <PageHeader
@@ -120,7 +166,7 @@ export function SettingsPage() {
           form && (
             <Button
               variant="primary"
-              onClick={() => save.mutate(form)}
+              onClick={onSave}
               disabled={save.isPending}
             >
               {save.isPending ? "保存中…" : "保存设置"}
@@ -303,6 +349,161 @@ export function SettingsPage() {
                   max={50}
                   hint="1 – 50，超过会产生警告"
                 />
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="mb-4 text-sm font-semibold text-slate-800">
+              公司网络限制
+            </h2>
+            <div className="space-y-4">
+              <ToggleField
+                label="只允许在公司网络内使用"
+                checked={form.office_only}
+                onChange={(v) => patch({ office_only: v })}
+                hint="开启后，员工的 Key 只能从下面这些公司出口 IP 使用；需要在外办公的人可以在「风险中心 → 员工详情」里单独放开。"
+              />
+              <div className="max-w-md">
+                <label className="mb-1 block text-xs font-medium text-slate-500">
+                  公司出口 IP / 网段（每行一个）
+                </label>
+                <textarea
+                  value={netText}
+                  onChange={(e) => setNetText(e.target.value)}
+                  rows={4}
+                  placeholder={"203.0.113.7\n10.0.0.0/8"}
+                  className={inputCls + " scroll-thin font-mono text-xs"}
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  支持单个 IP 或 CIDR 网段。开启限制时至少要填一个。
+                </p>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="mb-1 text-sm font-semibold text-slate-800">
+              内容审核
+            </h2>
+            <p className="mb-4 text-xs leading-5 text-slate-400">
+              在请求发给 OpenAI 之前检查员工最新一条消息。OpenAI
+              会因为恶意软件、盗号、免杀、DDoS
+              等网络滥用直接封号，这里的规则就是为了提前发现。只检查最新一条消息，不检查历史上下文和工具输出。
+            </p>
+            <div className="space-y-5">
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-slate-500">
+                  审核模式
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {AUDIT_MODES.map((m) => {
+                    const active = form.content_audit_mode === m.v;
+                    return (
+                      <label
+                        key={m.v}
+                        className={
+                          "flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2.5 transition-colors " +
+                          (active
+                            ? "border-indigo-400 bg-indigo-50"
+                            : "border-slate-300 hover:bg-slate-50")
+                        }
+                      >
+                        <input
+                          type="radio"
+                          name="content_audit_mode"
+                          value={m.v}
+                          checked={active}
+                          onChange={() => patch({ content_audit_mode: m.v })}
+                          className="mt-0.5 h-4 w-4 border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>
+                          <span
+                            className={
+                              "block text-sm font-medium " +
+                              (active ? "text-indigo-700" : "text-slate-700")
+                            }
+                          >
+                            {m.label}
+                          </span>
+                          <span className="mt-0.5 block text-xs text-slate-400">
+                            {m.hint}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-slate-500">
+                  审核规则
+                  <span className="ml-1.5 font-normal text-slate-400">
+                    正则表达式，不区分大小写
+                  </span>
+                </div>
+                {rules.length > 0 ? (
+                  <div className="overflow-hidden rounded-lg border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-400">
+                          <th className="w-1/3 px-3 py-2 font-medium">名称</th>
+                          <th className="px-3 py-2 font-medium">正则</th>
+                          <th className="w-14 px-3 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rules.map((r, i) => (
+                          <tr
+                            key={i}
+                            className="border-b border-slate-100 last:border-0"
+                          >
+                            <td className="px-3 py-1.5">
+                              <input
+                                value={r.name}
+                                onChange={(e) => setRule(i, { name: e.target.value })}
+                                placeholder="例如：恶意软件"
+                                className={inputCls + " py-1.5"}
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                value={r.pattern}
+                                onChange={(e) =>
+                                  setRule(i, { pattern: e.target.value })
+                                }
+                                placeholder="例如：ransomware|勒索软件"
+                                spellCheck={false}
+                                className={inputCls + " py-1.5 font-mono text-xs"}
+                              />
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              <ActionBtn
+                                tone="danger"
+                                onClick={() =>
+                                  setRules(rules.filter((_, j) => j !== i))
+                                }
+                              >
+                                删除
+                              </ActionBtn>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-300 px-3 py-4 text-center text-xs text-slate-400">
+                    暂无规则
+                  </div>
+                )}
+                <Button
+                  className="mt-2"
+                  onClick={() => setRules([...rules, { name: "", pattern: "" }])}
+                >
+                  添加规则
+                </Button>
               </div>
             </div>
           </Card>

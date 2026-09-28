@@ -113,6 +113,79 @@ export function Button({
   );
 }
 
+// ---- Switch -------------------------------------------------------------
+export function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className="inline-flex items-center gap-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <span
+        className={
+          "relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors " +
+          (checked ? "bg-indigo-600" : "bg-slate-300")
+        }
+      >
+        <span
+          className={
+            "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform " +
+            (checked ? "translate-x-[18px]" : "translate-x-0.5")
+          }
+        />
+      </span>
+      {label}
+    </button>
+  );
+}
+
+// ---- Usage range tabs (今天 / 7 天 / 30 天) --------------------------------
+const USAGE_RANGES = [
+  { v: 1, label: "今天" },
+  { v: 7, label: "7 天" },
+  { v: 30, label: "30 天" },
+];
+
+export function RangeTabs({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5">
+      {USAGE_RANGES.map((r) => (
+        <button
+          key={r.v}
+          onClick={() => onChange(r.v)}
+          className={
+            "rounded-md px-3 py-1.5 text-sm font-medium transition-colors " +
+            (value === r.v
+              ? "bg-indigo-600 text-white"
+              : "text-slate-600 hover:bg-slate-100")
+          }
+        >
+          {r.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ---- Status badge -------------------------------------------------------
 const STATUS_META: Record<
   string,

@@ -7,6 +7,17 @@ export function fmtNum(n: number | null | undefined): string {
   return numberFmt.format(n);
 }
 
+const compactFmt = new Intl.NumberFormat("zh-CN", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+// Short form for big counts in tight table cells: 12345 → "1.2万".
+export function fmtCompact(n: number | null | undefined): string {
+  if (n === null || n === undefined || Number.isNaN(n)) return "0";
+  return compactFmt.format(n);
+}
+
 export function fmtDateTime(v: string | number | Date | null | undefined): string {
   if (!v) return "-";
   const d = new Date(v);

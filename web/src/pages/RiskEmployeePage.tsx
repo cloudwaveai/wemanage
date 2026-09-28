@@ -3,13 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
-import type { AdminEmployeeDevicesResp, Device } from "../lib/types";
+import type { AdminEmployeeDevicesResp, Device, Settings } from "../lib/types";
 import {
   Card,
   PageHeader,
   Loading,
   ErrorBox,
   Button,
+  Switch,
 } from "../components/ui";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
@@ -44,6 +45,12 @@ export function RiskEmployeePage() {
     queryKey: ["admin-employee-devices", id],
     queryFn: () =>
       api.get<AdminEmployeeDevicesResp>(`/api/admin/employees/${id}/devices`),
+  });
+
+  // Only to tell whether the office-network restriction is on at all.
+  const settings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.get<Settings>("/api/admin/settings"),
   });
 
   const refresh = () => {
@@ -97,6 +104,34 @@ export function RiskEmployeePage() {
       toast(e instanceof Error ? e.message : "解冻失败", "error"),
   });
 
+  const remote = useMutation({
+    mutationFn: (allowed: boolean) =>
+      api.post<{ ok: boolean; remote_allowed: boolean }>(
+        `/api/admin/employees/${id}/remote`,
+        { allowed }
+      ),
+    onSuccess: (d) => {
+      // Write the new value straight into the cache so the switch doesn't
+      // flip back while the refetch is in flight.
+      qc.setQueryData<AdminEmployeeDevicesResp>(
+        ["admin-employee-devices", id],
+        (old) =>
+          old
+            ? { ...old, employee: { ...old.employee, remote_allowed: d.remote_allowed } }
+            : old
+      );
+      toast(
+        d.remote_allowed
+          ? "已允许该员工在公司网络外使用"
+          : "已取消，该员工只能在公司网络内使用",
+        "success"
+      );
+      refresh();
+    },
+    onError: (e: unknown) =>
+      toast(e instanceof Error ? e.message : "操作失败", "error"),
+  });
+
   const resolve = useResolveRiskEvent();
 
   const data = q.data;
@@ -146,6 +181,20 @@ export function RiskEmployeePage() {
               )
             }
           />
+
+          <div className="-mt-2 mb-5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Switch
+              label="允许在公司网络外使用"
+              checked={remote.isPending ? !!remote.variables : emp.remote_allowed}
+              disabled={remote.isPending}
+              onChange={(v) => remote.mutate(v)}
+            />
+            {settings.data && !settings.data.office_only && (
+              <span className="text-xs text-slate-400">
+                当前未开启公司网络限制
+              </span>
+            )}
+          </div>
 
           <div className="space-y-5">
             {emp.frozen && (

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/tidwall/gjson"
 )
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +79,7 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 			"id": a.ID, "email": a.Email, "plan_type": a.PlanType, "owner_type": a.OwnerType,
 			"employee_id": a.EmployeeID, "employee_name": a.EmployeeName,
 			"ip_group_id": a.IPGroupID, "ip_group_name": a.IPGroupName,
-			"status": accountStatus(a.Account), "needs_login": a.NeedsLogin,
+			"status": accountStatus(a.Account), "needs_login": a.NeedsLogin, "provider": a.Provider,
 			"rate_limited_until": a.RateLimitedUntil, "max_concurrency": a.MaxConcurrency,
 			"device_profile": a.DeviceProfile, "cpa_drift": a.CPADrift,
 		})
@@ -171,7 +172,7 @@ func (s *Server) handleOAuthComplete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "no new codex account detected; check the pasted URL")
 		return
 	}
-	acc, err := s.finishAccount(r, ob, newFile.Name, newFile.Email)
+	acc, err := s.finishAccount(r, ob, newFile.Name, newFile.Email, store.ProviderCodex)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -195,13 +196,17 @@ func (s *Server) handleImportAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "ip_group_id and content required")
 		return
 	}
-	name := "codex-" + secure.RandomToken(8) + ".json"
+	provider := gjson.GetBytes(body.Content, "type").String()
+	if provider == "" {
+		provider = store.ProviderCodex
+	}
+	name := provider + "-" + secure.RandomToken(8) + ".json"
 	if err := s.deps.CPA.UploadAuthFile(r.Context(), name, body.Content); err != nil {
 		writeErr(w, http.StatusBadGateway, "upload failed: "+err.Error())
 		return
 	}
 	ob := store.Onboarding{IPGroupID: body.IPGroupID, OSProfile: body.OS}
-	acc, err := s.finishAccount(r, ob, name, "")
+	acc, err := s.finishAccount(r, ob, name, "", provider)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -212,7 +217,7 @@ func (s *Server) handleImportAccount(w http.ResponseWriter, r *http.Request) {
 
 // finishAccount creates the account row, applies device profile and pushes
 // prefix+proxy to CPA.
-func (s *Server) finishAccount(r *http.Request, ob store.Onboarding, cpaName, email string) (store.Account, error) {
+func (s *Server) finishAccount(r *http.Request, ob store.Onboarding, cpaName, email, provider string) (store.Account, error) {
 	set := s.deps.Settings.Get(r.Context())
 	dp := ob.OSProfile
 	if dp.OS == "" {
@@ -220,7 +225,7 @@ func (s *Server) finishAccount(r *http.Request, ob store.Onboarding, cpaName, em
 	}
 	dp.InstallationID = uuid.NewString()
 	acc, err := s.deps.Store.CreateAccount(r.Context(), store.Account{
-		CPAAuthName: cpaName, Email: email, IPGroupID: ob.IPGroupID, DeviceProfile: dp,
+		CPAAuthName: cpaName, Email: email, IPGroupID: ob.IPGroupID, DeviceProfile: dp, Provider: provider,
 	})
 	if err != nil {
 		return store.Account{}, fmt.Errorf("create account: %w", err)

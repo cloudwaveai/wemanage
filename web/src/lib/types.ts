@@ -20,6 +20,10 @@ export interface Me {
   frozen_at: string | null;
   risk_mode: RiskMode;
   pending_devices: number;
+  // Office-network restriction: when office_only is on and remote_allowed is
+  // off, the key only works from the company's egress IPs.
+  office_only: boolean;
+  remote_allowed: boolean;
   key_prefix?: string;
   key_created_at?: string;
   account?: {
@@ -171,6 +175,7 @@ export interface EmployeeRow {
   frozen: boolean;
   frozen_reason: string;
   open_risk_events: number;
+  remote_allowed: boolean;
 }
 
 // --- accounts (snake_case) ---
@@ -184,6 +189,7 @@ export interface AccountRow {
   email: string;
   plan_type: string;
   owner_type: string;
+  provider?: string; // "codex" (ChatGPT) | "kimi" | …
   employee_id: number | null;
   employee_name: string;
   ip_group_id: number;
@@ -237,6 +243,11 @@ export interface RedactionRule {
   name: string;
   pattern: string;
 }
+export type ContentAuditMode = "off" | "warn" | "block";
+export interface ContentAuditRule {
+  name: string;
+  pattern: string; // case-insensitive regex
+}
 export interface Settings {
   default_max_concurrency: number;
   queue_timeout_seconds: number;
@@ -259,6 +270,12 @@ export interface Settings {
   new_device_grace_minutes: number;
   max_active_devices: number;
   require_codex_installation_id: boolean;
+  // Office networks (CIDRs or single IPs).
+  office_only: boolean;
+  office_networks: string[] | null;
+  // Content audit of the newest user message.
+  content_audit_mode: ContentAuditMode;
+  content_audit_rules: ContentAuditRule[] | null;
 }
 
 // --- devices / networks / risk (snake_case) ---
@@ -331,8 +348,35 @@ export interface AdminEmployeeDevicesResp {
     frozen: boolean;
     frozen_at: string | null;
     frozen_reason: string;
+    remote_allowed: boolean;
   };
   devices: Device[];
   networks: Network[];
   events: RiskEvent[];
+}
+
+// --- team usage (snake_case) ---
+export interface TeamMemberQuota {
+  at: string;
+  primary_used_pct: number | null; // 5-hour window, 0–100
+  primary_reset_at: string | null;
+  secondary_used_pct: number | null; // weekly window, 0–100
+  secondary_reset_at: string | null;
+}
+export interface TeamMember {
+  employee_id: number;
+  name: string;
+  department_names: string[] | null;
+  requests: number;
+  tokens_input: number;
+  tokens_output: number;
+  last_active: string | null;
+  frozen: boolean;
+  has_account: boolean;
+  account_status?: AccountStatus;
+  quota?: TeamMemberQuota;
+}
+export interface TeamUsageResp {
+  summary: UsageSummary;
+  members: TeamMember[] | null; // sorted by requests desc
 }

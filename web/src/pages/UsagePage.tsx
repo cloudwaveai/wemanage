@@ -20,14 +20,9 @@ import {
   BarList,
   StatusBadge,
   Meter,
+  RangeTabs,
 } from "../components/ui";
 import { fmtNum, fmtDayShort, fmtDateTime } from "../lib/format";
-
-const RANGES = [
-  { v: 1, label: "今天" },
-  { v: 7, label: "7 天" },
-  { v: 30, label: "30 天" },
-];
 
 export function UsagePage() {
   const [range, setRange] = useState(7);
@@ -66,24 +61,7 @@ export function UsagePage() {
       <PageHeader
         title="我的用量"
         desc="你的请求量与 token 消耗统计。"
-        right={
-          <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5">
-            {RANGES.map((r) => (
-              <button
-                key={r.v}
-                onClick={() => setRange(r.v)}
-                className={
-                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors " +
-                  (range === r.v
-                    ? "bg-indigo-600 text-white"
-                    : "text-slate-600 hover:bg-slate-100")
-                }
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        }
+        right={<RangeTabs value={range} onChange={setRange} />}
       />
 
       {usage.isLoading && <Loading />}

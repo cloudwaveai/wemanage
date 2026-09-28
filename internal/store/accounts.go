@@ -9,13 +9,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const accountCols = `id, cpa_auth_name, email, plan_type, owner_type, employee_id, ip_group_id, status, needs_login, rate_limited_until, max_concurrency, device_profile, cpa_drift, created_at`
+const accountCols = `id, cpa_auth_name, email, plan_type, owner_type, employee_id, ip_group_id, status, needs_login, rate_limited_until, max_concurrency, device_profile, cpa_drift, created_at, provider`
 
 func scanAccount(r pgx.Row) (Account, error) {
 	var a Account
 	var dp []byte
 	err := r.Scan(&a.ID, &a.CPAAuthName, &a.Email, &a.PlanType, &a.OwnerType, &a.EmployeeID,
-		&a.IPGroupID, &a.Status, &a.NeedsLogin, &a.RateLimitedUntil, &a.MaxConcurrency, &dp, &a.CPADrift, &a.CreatedAt)
+		&a.IPGroupID, &a.Status, &a.NeedsLogin, &a.RateLimitedUntil, &a.MaxConcurrency, &dp, &a.CPADrift, &a.CreatedAt, &a.Provider)
 	if err != nil {
 		return Account{}, err
 	}
@@ -41,11 +41,14 @@ func (s *Store) CreateAccount(ctx context.Context, a Account) (Account, error) {
 	if a.Status == "" {
 		a.Status = "active"
 	}
+	if a.Provider == "" {
+		a.Provider = ProviderCodex
+	}
 	row := s.Pool.QueryRow(ctx, `
-		INSERT INTO upstream_accounts (cpa_auth_name, email, plan_type, owner_type, ip_group_id, status, device_profile)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO upstream_accounts (cpa_auth_name, email, plan_type, owner_type, ip_group_id, status, device_profile, provider)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING `+accountCols,
-		a.CPAAuthName, a.Email, a.PlanType, a.OwnerType, a.IPGroupID, a.Status, dp)
+		a.CPAAuthName, a.Email, a.PlanType, a.OwnerType, a.IPGroupID, a.Status, dp, a.Provider)
 	return scanAccount(row)
 }
 
@@ -87,7 +90,7 @@ func (s *Store) ListAccounts(ctx context.Context) ([]AccountRow, error) {
 		var ar AccountRow
 		var dp []byte
 		err := rows.Scan(&ar.ID, &ar.CPAAuthName, &ar.Email, &ar.PlanType, &ar.OwnerType, &ar.EmployeeID,
-			&ar.IPGroupID, &ar.Status, &ar.NeedsLogin, &ar.RateLimitedUntil, &ar.MaxConcurrency, &dp, &ar.CPADrift, &ar.CreatedAt,
+			&ar.IPGroupID, &ar.Status, &ar.NeedsLogin, &ar.RateLimitedUntil, &ar.MaxConcurrency, &dp, &ar.CPADrift, &ar.CreatedAt, &ar.Provider,
 			&ar.EmployeeName, &ar.IPGroupName)
 		if err != nil {
 			return nil, err

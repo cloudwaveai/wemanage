@@ -18,16 +18,17 @@ model = "gpt-5.1-codex"
 name = "Company Gateway"
 base_url = "https://ai.example.com/v1"
 wire_api = "responses"
+env_key = "AISEAT_API_KEY"
 requires_openai_auth = false
 supports_websockets = false
 ```
 
 最后一行告诉 Codex 直接用普通 HTTP 连网关。不写也能用：Codex 对自定义服务默认就走 HTTP，网关也会让它自动退回 HTTP。
 
-然后设置环境变量 `OPENAI_API_KEY`（或 Codex 读取的对应变量）为你的 `sk-emp-...` Key：
+然后设置环境变量 `AISEAT_API_KEY` 为你的 `sk-emp-...` Key（配置里的 `env_key` 就是告诉 Codex 从这个变量读 Key；没有它 Codex 不会带上 Key，网关会返回 401）。建议写进 `~/.zshrc` 或 `~/.bashrc`：
 
 ```bash
-export OPENAI_API_KEY="sk-emp-你的key"
+export AISEAT_API_KEY="sk-emp-你的key"
 ```
 
 之后照常使用 `codex` 即可。请求会经公司网关转发到你的专属账号。

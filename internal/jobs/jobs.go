@@ -62,8 +62,12 @@ func Register(c *cron.Cron, d Deps) {
 	// Degradation sweep — every 15 minutes.
 	_, _ = c.AddFunc("@every 15m", func() {
 		set := d.Settings.Get(ctx)
-		ids, _ := d.Store.AllAccountIDs(ctx)
-		for _, id := range ids {
+		accs, _ := d.Store.ListAccounts(ctx)
+		for _, a := range accs {
+			if !a.IsChatGPT() {
+				continue // the degradation heuristics are ChatGPT-specific
+			}
+			id := a.ID
 			reasoning, _ := d.Store.RecentReasoning(ctx, id, 20)
 			if err := health.CheckDegradation(ctx, d.Store, id, set.ModelMismatchThreshold, reasoning, time.Now()); err != nil {
 				log.Warn("degradation check", "account", id, "err", err)

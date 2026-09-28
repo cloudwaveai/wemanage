@@ -171,6 +171,25 @@ func (c *Client) PatchFields(ctx context.Context, name string, fields map[string
 }
 
 // RequestCodexAuthURL requests a Codex OAuth authorization URL and its state.
+// RequestKimiAuthURL starts a Kimi Code device-code login. The operator opens
+// url (and, if given, enters userCode); CPA polls in the background and saves
+// the credential, after which AuthStatus(state) reports "ok".
+func (c *Client) RequestKimiAuthURL(ctx context.Context) (url, state, userCode string, err error) {
+	req, reqErr := c.newRequest(ctx, http.MethodGet, managementBase+"/kimi-auth-url", nil, nil)
+	if reqErr != nil {
+		return "", "", "", reqErr
+	}
+	var out struct {
+		URL      string `json:"url"`
+		State    string `json:"state"`
+		UserCode string `json:"user_code"`
+	}
+	if err := c.do(req, &out); err != nil {
+		return "", "", "", err
+	}
+	return out.URL, out.State, out.UserCode, nil
+}
+
 func (c *Client) RequestCodexAuthURL(ctx context.Context) (url, state string, err error) {
 	req, reqErr := c.newRequest(ctx, http.MethodGet, managementBase+"/codex-auth-url", nil, nil)
 	if reqErr != nil {

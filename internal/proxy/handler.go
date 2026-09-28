@@ -460,8 +460,9 @@ func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *
 		h.cache.forgetAccount(acc.ID)
 		_, _ = h.deps.Store.AddSignal(ctx, acc.ID, "needs_login", map[string]any{"status": resp.StatusCode})
 	}
-	// Model mismatch (silent degradation) signal.
-	if outcome.Model != "" && model != "" && stripPrefix(outcome.Model) != model {
+	// Model mismatch (silent degradation) signal — ChatGPT accounts only; other
+	// providers (e.g. Kimi during trials) report their own model aliases.
+	if acc.IsChatGPT() && outcome.Model != "" && model != "" && stripPrefix(outcome.Model) != model {
 		_, _ = h.deps.Store.AddSignal(ctx, acc.ID, "model_mismatch",
 			map[string]any{"requested": model, "responded": outcome.Model})
 	}

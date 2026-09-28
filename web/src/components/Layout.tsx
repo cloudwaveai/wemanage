@@ -69,6 +69,12 @@ const OVERSIGHT: NavItem[] = [
     roles: ["leader", "super_admin"],
     icon: I("M21 21l-4.3-4.3M11 18a7 7 0 100-14 7 7 0 000 14z"),
   },
+  {
+    to: "/team",
+    label: "团队用量",
+    roles: ["leader", "super_admin"],
+    icon: I("M9 11a3 3 0 100-6 3 3 0 000 6zM16 11a3 3 0 100-6M3 20v-1a4 4 0 014-4h4a4 4 0 014 4v1M17 15h1a4 4 0 014 4v1"),
+  },
 ];
 
 const ADMIN: NavItem[] = [
@@ -174,7 +180,7 @@ function NavSection({
 }
 
 // Account-level warnings shown above every page: a frozen key wins over
-// devices awaiting confirmation.
+// devices awaiting confirmation, which win over the office-network notice.
 function RiskBanner() {
   const { me } = useAuth();
   const { pathname } = useLocation();
@@ -202,6 +208,14 @@ function RiskBanner() {
             去确认
           </Link>
         )}
+      </div>
+    );
+  }
+
+  if (me.office_only && !me.remote_allowed) {
+    return (
+      <div className="mb-5 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+        你的 Key 只能在公司网络内使用。
       </div>
     );
   }

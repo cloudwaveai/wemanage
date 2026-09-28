@@ -103,3 +103,11 @@ func TestLegacyNoticeTextUpgraded(t *testing.T) {
 		t.Fatalf("risk defaults not applied to a V1 row: %+v", s)
 	}
 }
+
+func TestEmptyAuditPatternRejected(t *testing.T) {
+	s := settings.Defaults()
+	s.ContentAuditRules = append(s.ContentAuditRules, settings.ContentRule{Name: "oops", Pattern: "  "})
+	if err := settings.Validate(s); err == nil {
+		t.Fatal("an empty pattern would match every message and must be rejected")
+	}
+}

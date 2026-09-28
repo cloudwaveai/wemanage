@@ -133,16 +133,27 @@ func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	base := s.deps.PublicBaseURL + "/v1"
+	modelLine := `model = "gpt-5.1-codex"`
+	if acc, err := s.boundAccount(r.Context(), currentEmployee(r).ID); err == nil && !acc.IsChatGPT() {
+		// Non-ChatGPT accounts (e.g. Kimi Code during trials) expose their own model IDs.
+		modelLine = fmt.Sprintf(`# 你的账号不是 ChatGPT（%s）。查看可用模型：
+#   curl -s %s/models -H "Authorization: Bearer $AISEAT_API_KEY"
+# 然后把下面改成其中一个 id
+model = "填入模型 id"`, acc.Provider, base)
+	}
 	codex := fmt.Sprintf(`model_provider = "company"
-model = "gpt-5.1-codex"
+%s
 
 [model_providers.company]
 name = "Company Gateway"
 base_url = "%s"
 wire_api = "responses"
+# Codex 从这个环境变量读取你的 sk-emp- Key，并作为 Bearer 发给网关
+env_key = "AISEAT_API_KEY"
+env_key_instructions = "在门户「我的 Key」生成后：export AISEAT_API_KEY=sk-emp-..."
 requires_openai_auth = false
 # 网关走普通 HTTP（不支持 WebSocket）；显式写明，Codex 就不会先尝试 WebSocket
-supports_websockets = false`, base)
+supports_websockets = false`, modelLine, base)
 
 	note := "在 Cursor / Cherry Studio 等工具中把 Base URL 设为上面地址，API Key 填你的 sk-emp- key。第三方客户端风险较高，建议优先使用 Codex。"
 	allowed := s.deps.Settings.Get(r.Context()).AllowNonCodex
@@ -152,7 +163,7 @@ supports_websockets = false`, base)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"base_url":   base,
 		"codex_toml": codex,
-		"codex_env":  "export OPENAI_API_KEY=\"你的 sk-emp-... key\"",
+		"codex_env":  "export AISEAT_API_KEY=\"你的 sk-emp-... key\"",
 		"third_party": map[string]any{
 			"base_url": base,
 			"allowed":  allowed,
