@@ -141,12 +141,50 @@ func TestQuotaProberProbesOnlyStaleAccounts(t *testing.T) {
 		t.Fatalf("plan type not updated: %q", a.PlanType)
 	}
 
-	// A manual refresh right after is rate limited; another account is not.
+	// A fresh snapshot whose window has since reset is probed again; one taken
+	// after its (past) reset time is not.
+	past, before := time.Now().Add(-time.Minute), time.Now().Add(-2*time.Minute)
+	if err := st.InsertQuota(ctx, store.QuotaSnapshot{AccountID: busy.ID, At: before, PrimaryUsedPct: &pct, PrimaryResetAt: &past}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
+	if err := p.RunStale(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	n := len(f.calls)
+	f.mu.Unlock()
+	if n != 0 {
+		// busy's newest snapshot is still the fresh one without a reset time.
+		t.Fatalf("probed %d accounts, want 0", n)
+	}
+	later := time.Now().Add(-30 * time.Second)
+	if err := st.InsertQuota(ctx, store.QuotaSnapshot{AccountID: busy.ID, At: later.Add(-time.Minute), PrimaryUsedPct: &pct, PrimaryResetAt: &later}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = st.Pool.Exec(ctx, `DELETE FROM quota_snapshots WHERE account_id=$1 AND primary_reset_at IS NULL`, busy.ID)
+	if err := p.RunStale(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	var probedBusy bool
+	for _, c := range f.calls {
+		probedBusy = probedBusy || c.AuthIndex == "idx-busy"
+	}
+	f.mu.Unlock()
+	if !probedBusy {
+		t.Fatal("a snapshot taken before its window reset must be re-probed")
+	}
+
+	// A manual refresh right after a probe is rate limited per prober.
 	if _, err := p.Refresh(ctx, idle.ID); !errors.Is(err, health.ErrRefreshTooSoon) {
 		t.Fatalf("refresh err = %v, want ErrRefreshTooSoon", err)
 	}
-	if _, err := p.Refresh(ctx, busy.ID); err != nil {
-		t.Fatalf("refresh busy: %v", err)
+	fresh := &health.QuotaProber{Store: st, CPA: p.CPA, Settings: p.Settings}
+	if _, err := fresh.Refresh(ctx, busy.ID); err != nil {
+		t.Fatalf("refresh with no recent probe: %v", err)
 	}
 }
 

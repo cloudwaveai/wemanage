@@ -44,7 +44,8 @@ type QuotaProber struct {
 }
 
 // RunStale probes every active, logged-in account with a quota endpoint whose
-// newest snapshot is older than MaxAge. One failure does not stop the others.
+// newest snapshot is older than MaxAge or predates a window reset. One
+// failure does not stop the others.
 func (p *QuotaProber) RunStale(ctx context.Context) error {
 	maxAge := p.MaxAge
 	if maxAge <= 0 {
@@ -73,7 +74,7 @@ func (p *QuotaProber) RunStale(ctx context.Context) error {
 	}
 	for _, a := range rows {
 		q, seen := latest[a.ID]
-		if !probeable(a.Account) || (seen && time.Since(q.At) < maxAge) {
+		if !probeable(a.Account) || (seen && time.Since(q.At) < maxAge && !resetSince(q, time.Now())) {
 			continue
 		}
 		if _, err := p.probe(ctx, a.Account, files); err != nil {
@@ -110,6 +111,19 @@ func (p *QuotaProber) Refresh(ctx context.Context, accountID int64) (store.Quota
 		return store.QuotaSnapshot{}, err
 	}
 	return p.probe(ctx, acc, files)
+}
+
+// resetSince reports whether a window in q has reset since q was taken, so
+// the snapshot no longer describes the current window. A snapshot taken after
+// its own reset time does not count, so an upstream that keeps reporting a
+// past reset cannot cause a probe every round.
+func resetSince(q store.QuotaSnapshot, now time.Time) bool {
+	for _, r := range []*time.Time{q.PrimaryResetAt, q.SecondaryResetAt} {
+		if r != nil && r.Before(now) && q.At.Before(*r) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasQuotaEndpoint reports whether the account's upstream exposes its quota.

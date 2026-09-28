@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { UpdateBanner } from "./UpdateBanner";
 import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "./Toast";
@@ -291,6 +292,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <UpdateBanner />
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur">
           <div className="flex items-center gap-2">
             <button
