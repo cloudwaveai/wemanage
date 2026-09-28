@@ -52,32 +52,71 @@ type RequestEnc struct {
 	Hashes     []byte
 }
 
-// InsertRequest stores a request row.
-func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
+const insertRequestSQL = `
+	INSERT INTO requests (
+		id, started_at, employee_id, account_id, api_key_id, session_id,
+		client_kind, user_agent, endpoint, stream, model_requested, model_responded,
+		reasoning_effort, status_code, error_type, error_body, queued_ms, ttft_ms, duration_ms,
+		tokens_input, tokens_cached, tokens_output, tokens_reasoning,
+		req_prefix_of, req_prefix_len, req_chain_depth, req_hashes, req_input_start, resp_hashes,
+		client_ip, device_id
+	) VALUES (
+		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+		$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
+	)`
+
+func requestArgs(r RequestRow) []any {
 	var prefixOf *[]byte
 	if r.ReqPrefixOf != nil {
 		b := r.ReqPrefixOf[:]
 		prefixOf = &b
 	}
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO requests (
-			id, started_at, employee_id, account_id, api_key_id, session_id,
-			client_kind, user_agent, endpoint, stream, model_requested, model_responded,
-			reasoning_effort, status_code, error_type, error_body, queued_ms, ttft_ms, duration_ms,
-			tokens_input, tokens_cached, tokens_output, tokens_reasoning,
-			req_prefix_of, req_prefix_len, req_chain_depth, req_hashes, req_input_start, resp_hashes,
-			client_ip, device_id
-		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-			$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
-		)`,
+	return []any{
 		r.ID[:], r.StartedAt, r.EmployeeID, r.AccountID, r.APIKeyID, r.SessionID,
 		r.ClientKind, r.UserAgent, r.Endpoint, r.Stream, r.ModelRequested, r.ModelResponded,
 		r.ReasoningEffort, r.StatusCode, r.ErrorType, r.ErrorBody, r.QueuedMS, r.TTFTMs, r.DurationMS,
 		r.TokensInput, r.TokensCached, r.TokensOutput, r.TokensReasoning,
 		prefixOf, r.ReqPrefixLen, r.ReqChainDepth, r.ReqHashes, r.ReqInputStart, r.RespHashes,
-		r.ClientIP, r.DeviceID)
+		r.ClientIP, r.DeviceID,
+	}
+}
+
+const insertTextSQL = `
+	INSERT INTO request_texts (request_id, employee_id, session_id, started_at, role, text)
+	VALUES ($1,$2,$3,$4,$5,$6)`
+
+// InsertRequest stores a request row.
+func (s *Store) InsertRequest(ctx context.Context, r RequestRow) error {
+	_, err := s.Pool.Exec(ctx, insertRequestSQL, requestArgs(r)...)
 	return err
+}
+
+// SessionAdvance is the session state written after a request is stored.
+type SessionAdvance struct {
+	SessionID  int64
+	FullHashes []byte
+	ChainDepth int
+	InputCount int
+}
+
+// CommitRequest stores a request row, its searchable texts and the session
+// advance in one round trip; the batch runs as one implicit transaction, so
+// either all of it lands or none does.
+func (s *Store) CommitRequest(ctx context.Context, r RequestRow, texts []TextRow, adv SessionAdvance) error {
+	batch := &pgx.Batch{}
+	batch.Queue(insertRequestSQL, requestArgs(r)...)
+	for _, t := range texts {
+		batch.Queue(insertTextSQL, t.RequestID[:], t.EmployeeID, t.SessionID, t.StartedAt, t.Role, t.Text)
+	}
+	batch.Queue(updateSessionSQL, adv.SessionID, r.ID[:], adv.FullHashes, adv.ChainDepth, adv.InputCount, r.StartedAt)
+	br := s.Pool.SendBatch(ctx, batch)
+	for i := 0; i < batch.Len(); i++ {
+		if _, err := br.Exec(); err != nil {
+			br.Close()
+			return err
+		}
+	}
+	return br.Close()
 }
 
 // GetRequestEnc returns the request-hash encoding for reconstruction.
@@ -109,10 +148,7 @@ func (s *Store) InsertTexts(ctx context.Context, rows []TextRow) error {
 	}
 	batch := &pgx.Batch{}
 	for _, t := range rows {
-		batch.Queue(`
-			INSERT INTO request_texts (request_id, employee_id, session_id, started_at, role, text)
-			VALUES ($1,$2,$3,$4,$5,$6)`,
-			t.RequestID[:], t.EmployeeID, t.SessionID, t.StartedAt, t.Role, t.Text)
+		batch.Queue(insertTextSQL, t.RequestID[:], t.EmployeeID, t.SessionID, t.StartedAt, t.Role, t.Text)
 	}
 	br := s.Pool.SendBatch(ctx, batch)
 	defer br.Close()

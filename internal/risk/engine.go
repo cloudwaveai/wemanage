@@ -74,11 +74,11 @@ type cacheEntry struct {
 // Engine registers devices for the data-plane gate and evaluates risk rules
 // asynchronously so requests are never slowed by detection work.
 type Engine struct {
-	cfg Config
-	log *slog.Logger
-	ch  chan Observation
-	wg  sync.WaitGroup
-	win *window
+	cfg    Config
+	log    *slog.Logger
+	shards []chan Observation
+	wg     sync.WaitGroup
+	win    *window
 
 	devMu sync.Mutex
 	devs  map[int64]map[string]cacheEntry
@@ -89,6 +89,11 @@ type Engine struct {
 
 const deviceCacheTTL = 15 * time.Second
 
+// engineWorkers process observations in parallel (each costs a few DB round
+// trips, which matter when the database is remote); one employee's
+// observations always go to the same worker, in order.
+const engineWorkers = 4
+
 // NewEngine builds an Engine. Call Start to run the worker.
 func NewEngine(cfg Config) *Engine {
 	if cfg.Log == nil {
@@ -97,25 +102,31 @@ func NewEngine(cfg Config) *Engine {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	shards := make([]chan Observation, engineWorkers)
+	for i := range shards {
+		shards[i] = make(chan Observation, 4096/engineWorkers)
+	}
 	return &Engine{
-		cfg: cfg, log: cfg.Log, ch: make(chan Observation, 4096), win: newWindow(),
+		cfg: cfg, log: cfg.Log, shards: shards, win: newWindow(),
 		devs: make(map[int64]map[string]cacheEntry), seen: make(map[string]time.Time),
 	}
 }
 
-// Start runs the observation worker until ctx is done.
+// Start runs the observation workers until ctx is done.
 func (e *Engine) Start(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case o := <-e.ch:
-				e.process(ctx, o)
-				e.wg.Done()
+	for _, ch := range e.shards {
+		go func(ch chan Observation) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case o := <-ch:
+					e.process(ctx, o)
+					e.wg.Done()
+				}
 			}
-		}
-	}()
+		}(ch)
+	}
 }
 
 // Flush waits for queued observations to be processed (tests).
@@ -126,7 +137,7 @@ func (e *Engine) Flush() { e.wg.Wait() }
 func (e *Engine) Observe(o Observation) {
 	e.wg.Add(1)
 	select {
-	case e.ch <- o:
+	case e.shards[uint64(o.EmployeeID)%uint64(len(e.shards))] <- o:
 	default:
 		e.wg.Done()
 		e.log.Warn("risk: observation queue full, dropping", "employee", o.EmployeeID)

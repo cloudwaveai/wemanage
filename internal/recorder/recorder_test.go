@@ -143,9 +143,9 @@ func TestRecorderSpoolReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec.Start(ctx) // replays spool at startup
+	rec.Start(ctx) // queues the spooled record at startup
+	rec.Flush()
 
-	// Give the replay a moment (Start replays synchronously before the worker loop).
 	var n int
 	if err := st.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM requests WHERE id=$1`, r.RequestID[:]).Scan(&n); err != nil {
 		t.Fatal(err)

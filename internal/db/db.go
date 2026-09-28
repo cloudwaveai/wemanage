@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,6 +28,12 @@ func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 		cfg.ConnConfig.ConnectTimeout = 10 * time.Second
 	}
 	cfg.HealthCheckPeriod = 30 * time.Second
+	// Several background writers (log recorder, risk engine) each hold a
+	// connection for a full round trip; the default (4 or #CPU) is too small
+	// when each round trip is ~200ms. Override with pool_max_conns in the URL.
+	if !strings.Contains(url, "pool_max_conns") {
+		cfg.MaxConns = 16
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: connect: %w", err)

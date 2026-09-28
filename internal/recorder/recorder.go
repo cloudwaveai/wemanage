@@ -7,9 +7,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -43,20 +45,26 @@ type Record struct {
 	DeviceID        *int64
 }
 
-// Recorder buffers Records and persists them on a background worker.
+// workers is the number of parallel persistence workers. Each record costs a
+// few database round trips, which dominate when the database is remote
+// (e.g. across a border), so records are written concurrently. Records of the
+// same session always go to the same worker to keep their order.
+const workers = 8
+
+// Recorder buffers Records and persists them on background workers.
 type Recorder struct {
 	st       *store.Store
 	set      *settings.Service
 	spoolDir string
 	log      *slog.Logger
 
-	ch      chan Record
-	wg      sync.WaitGroup // tracks in-flight records for Flush (NOT the worker goroutine)
+	shards  []chan Record
+	wg      sync.WaitGroup // tracks in-flight records for Flush (NOT the worker goroutines)
 	mu      sync.Mutex     // guards spool file writes
 	started bool
 }
 
-// New creates a Recorder with the given queue capacity.
+// New creates a Recorder whose queues hold `queue` records in total.
 func New(st *store.Store, set *settings.Service, spoolDir string, log *slog.Logger, queue int) *Recorder {
 	if queue <= 0 {
 		queue = 1024
@@ -64,13 +72,43 @@ func New(st *store.Store, set *settings.Service, spoolDir string, log *slog.Logg
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Recorder{st: st, set: set, spoolDir: spoolDir, log: log, ch: make(chan Record, queue)}
+	per := queue / workers
+	if per < 1 {
+		per = 1
+	}
+	shards := make([]chan Record, workers)
+	for i := range shards {
+		shards[i] = make(chan Record, per)
+	}
+	return &Recorder{st: st, set: set, spoolDir: spoolDir, log: log, shards: shards}
 }
 
-// Start replays any spooled records and launches the worker loop.
+// shardFor keeps every record of one session on one worker.
+func (r *Recorder) shardFor(rec Record) chan Record {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strconv.FormatInt(rec.EmployeeID, 10) + "|" + rec.SessionKey))
+	return r.shards[h.Sum32()%uint32(len(r.shards))]
+}
+
+// Start replays any spooled records and launches the workers.
 func (r *Recorder) Start(ctx context.Context) {
 	r.started = true
 	_ = os.MkdirAll(r.spoolDir, 0o700)
+	for _, ch := range r.shards {
+		go func(ch chan Record) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case rec := <-ch:
+					r.handle(ctx, rec)
+					r.wg.Done()
+				}
+			}
+		}(ch)
+	}
+	// Records spooled before a restart are queued now (written asynchronously;
+	// Flush waits for them).
 	r.replaySpool(ctx)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -79,9 +117,6 @@ func (r *Recorder) Start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case rec := <-r.ch:
-				r.handle(ctx, rec)
-				r.wg.Done()
 			case <-ticker.C:
 				r.replaySpool(ctx)
 			}
@@ -93,7 +128,7 @@ func (r *Recorder) Start(ctx context.Context) {
 func (r *Recorder) Submit(rec Record) {
 	r.wg.Add(1)
 	select {
-	case r.ch <- rec:
+	case r.shardFor(rec) <- rec:
 	default:
 		r.wg.Done()
 		r.spool(rec)
@@ -204,10 +239,6 @@ func (r *Recorder) process(ctx context.Context, rec Record) error {
 		copy(u[:], enc.PrefixOf[:])
 		row.ReqPrefixOf = &u
 	}
-	if err := r.st.InsertRequest(ctx, row); err != nil {
-		return err
-	}
-
 	texts := capture.ExtractTexts(rec.Endpoint, reqSegs, inputStart, prev.PrevInputCount, rec.Outcome)
 	trows := make([]store.TextRow, 0, len(texts))
 	for _, t := range texts {
@@ -223,12 +254,10 @@ func (r *Recorder) process(ctx context.Context, rec Record) error {
 			Text:       t.Text,
 		})
 	}
-	if err := r.st.InsertTexts(ctx, trows); err != nil {
-		return err
-	}
-
-	return r.st.UpdateSessionAfterRequest(ctx, prev.ID, rec.RequestID,
-		store.JoinHashes(reqHashes), enc.ChainDepth, inputCount, rec.StartedAt)
+	return r.st.CommitRequest(ctx, row, trows, store.SessionAdvance{
+		SessionID: prev.ID, FullHashes: store.JoinHashes(reqHashes),
+		ChainDepth: enc.ChainDepth, InputCount: inputCount,
+	})
 }
 
 func (r *Recorder) spoolPath() string { return filepath.Join(r.spoolDir, "pending.jsonl") }
@@ -282,8 +311,14 @@ func (r *Recorder) replaySpool(ctx context.Context) {
 	f.Close()
 	_ = os.Remove(replaying)
 
+	// Feed replayed records through the workers (blocking is fine here) so a
+	// session's records are still written one at a time.
 	for _, rec := range records {
-		if err := r.process(ctx, rec); err != nil {
+		r.wg.Add(1)
+		select {
+		case r.shardFor(rec) <- rec:
+		case <-ctx.Done():
+			r.wg.Done()
 			r.spool(rec)
 		}
 	}

@@ -42,14 +42,15 @@ func (s *Store) BeginSession(ctx context.Context, employeeID int64, accountID *i
 
 // UpdateSessionAfterRequest stores the new full hash list and bumps counters.
 func (s *Store) UpdateSessionAfterRequest(ctx context.Context, sessionID int64, reqID [16]byte, fullHashes []byte, chainDepth, inputCount int, at time.Time) error {
-	_, err := s.Pool.Exec(ctx, `
-		UPDATE sessions SET
-			last_request_id=$2, last_req_hashes=$3, last_req_chain_depth=$4,
-			last_input_count=$5, last_at=$6, request_count=request_count+1
-		WHERE id=$1`,
-		sessionID, reqID[:], fullHashes, chainDepth, inputCount, at)
+	_, err := s.Pool.Exec(ctx, updateSessionSQL, sessionID, reqID[:], fullHashes, chainDepth, inputCount, at)
 	return err
 }
+
+const updateSessionSQL = `
+	UPDATE sessions SET
+		last_request_id=$2, last_req_hashes=$3, last_req_chain_depth=$4,
+		last_input_count=$5, last_at=$6, request_count=request_count+1
+	WHERE id=$1`
 
 // splitHashes turns concatenated 32-byte hashes into a slice.
 func splitHashes(b []byte) [][32]byte {

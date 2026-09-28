@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -26,8 +27,9 @@ var (
 func blobKey(hash [32]byte) string { return "blobs/" + hex.EncodeToString(hash[:]) }
 
 // PutBlobs upserts blobs (dedup by hash) and bumps last_referenced_at. With an
-// external backend, the compressed bytes go to the backend (only for newly
-// inserted rows, preserving dedup's write savings) and data_zstd stays NULL.
+// external backend, the compressed bytes go to the backend and data_zstd stays
+// NULL. Round trips are kept constant (not per blob) because the database may
+// be across a high-latency link.
 func (s *Store) PutBlobs(ctx context.Context, blobs []Blob, refAt time.Time) error {
 	if len(blobs) == 0 {
 		return nil
@@ -35,27 +37,96 @@ func (s *Store) PutBlobs(ctx context.Context, blobs []Blob, refAt time.Time) err
 	if s.blobBackend == nil {
 		return s.putBlobsInline(ctx, blobs, refAt)
 	}
+	return s.putBlobsExternal(ctx, blobs, refAt)
+}
+
+// uploadConcurrency bounds parallel object-store uploads per PutBlobs call.
+const uploadConcurrency = 8
+
+// putBlobsExternal: (1) one query finds which hashes already have a row;
+// (2) the missing bytes are uploaded in parallel; (3) one batch upserts every
+// row. A row is only ever written after its bytes are stored, and keys are
+// content hashes, so concurrent writers uploading the same blob are harmless.
+// If any upload fails nothing is written and the caller retries.
+func (s *Store) putBlobsExternal(ctx context.Context, blobs []Blob, refAt time.Time) error {
+	uniq := make([]Blob, 0, len(blobs))
+	seen := make(map[[32]byte]bool, len(blobs))
+	hashes := make([][]byte, 0, len(blobs))
 	for _, b := range blobs {
-		comp := zstdEnc.EncodeAll(b.Data, nil)
-		var inserted bool
-		err := s.Pool.QueryRow(ctx, `
-			INSERT INTO blobs (hash, kind, data_zstd, raw_size, last_referenced_at)
-			VALUES ($1,$2,NULL,$3,$4)
-			ON CONFLICT (hash) DO UPDATE SET last_referenced_at = GREATEST(blobs.last_referenced_at, EXCLUDED.last_referenced_at)
-			RETURNING (xmax = 0)`,
-			b.Hash[:], b.Kind, len(b.Data), refAt).Scan(&inserted)
-		if err != nil {
+		if seen[b.Hash] {
+			continue
+		}
+		seen[b.Hash] = true
+		uniq = append(uniq, b)
+		h := b.Hash
+		hashes = append(hashes, h[:])
+	}
+
+	existing := make(map[[32]byte]bool, len(uniq))
+	rows, err := s.Pool.Query(ctx, `SELECT hash FROM blobs WHERE hash = ANY($1)`, hashes)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var h []byte
+		if err := rows.Scan(&h); err != nil {
+			rows.Close()
 			return err
 		}
-		if inserted {
-			if err := s.blobBackend.Put(ctx, blobKey(b.Hash), comp); err != nil {
-				// roll back the metadata row so a retry re-uploads the bytes.
-				_, _ = s.Pool.Exec(ctx, `DELETE FROM blobs WHERE hash=$1 AND data_zstd IS NULL`, b.Hash[:])
-				return err
+		var k [32]byte
+		copy(k[:], h)
+		existing[k] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	var (
+		wg      sync.WaitGroup
+		errMu   sync.Mutex
+		firstEr error
+		sem     = make(chan struct{}, uploadConcurrency)
+	)
+	for _, b := range uniq {
+		if existing[b.Hash] {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(b Blob) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := s.blobBackend.Put(ctx, blobKey(b.Hash), zstdEnc.EncodeAll(b.Data, nil)); err != nil {
+				errMu.Lock()
+				if firstEr == nil {
+					firstEr = err
+				}
+				errMu.Unlock()
 			}
+		}(b)
+	}
+	wg.Wait()
+	if firstEr != nil {
+		return firstEr
+	}
+
+	batch := &pgx.Batch{}
+	for _, b := range uniq {
+		batch.Queue(`
+			INSERT INTO blobs (hash, kind, data_zstd, raw_size, last_referenced_at)
+			VALUES ($1,$2,NULL,$3,$4)
+			ON CONFLICT (hash) DO UPDATE SET last_referenced_at = GREATEST(blobs.last_referenced_at, EXCLUDED.last_referenced_at)`,
+			b.Hash[:], b.Kind, len(b.Data), refAt)
+	}
+	br := s.Pool.SendBatch(ctx, batch)
+	for range uniq {
+		if _, err := br.Exec(); err != nil {
+			br.Close()
+			return err
 		}
 	}
-	return nil
+	return br.Close()
 }
 
 func (s *Store) putBlobsInline(ctx context.Context, blobs []Blob, refAt time.Time) error {

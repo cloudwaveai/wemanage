@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -110,5 +111,45 @@ func TestBlobsExternalBackend(t *testing.T) {
 	}
 	if _, _, err := st.GetBlob(ctx, b1.Hash); err != store.ErrNotFound {
 		t.Fatalf("expected ErrNotFound after purge, got %v", err)
+	}
+}
+
+// failBackend rejects every upload.
+type failBackend struct{ memBackend }
+
+func (f *failBackend) Put(context.Context, string, []byte) error { return errUpload }
+
+var errUpload = errors.New("upload failed")
+
+func TestBlobsExternalUploadFailureWritesNoRows(t *testing.T) {
+	pool := testutil.NewDB(t)
+	st := store.New(pool)
+	st.SetBlobBackend(&failBackend{memBackend: *newMemBackend()})
+	ctx := context.Background()
+
+	err := st.PutBlobs(ctx, []store.Blob{{Hash: hash32(9), Kind: "input", Data: []byte("x")}}, time.Now())
+	if !errors.Is(err, errUpload) {
+		t.Fatalf("err = %v, want upload error", err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM blobs`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("rows = %d, want 0 (no row without stored bytes)", n)
+	}
+}
+
+func TestBlobsExternalDuplicateHashesInOneCall(t *testing.T) {
+	pool := testutil.NewDB(t)
+	st := store.New(pool)
+	be := newMemBackend()
+	st.SetBlobBackend(be)
+	b := store.Blob{Hash: hash32(7), Kind: "tools", Data: []byte("same tools segment")}
+	if err := st.PutBlobs(context.Background(), []store.Blob{b, b, b}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if be.puts != 1 {
+		t.Fatalf("uploads = %d, want 1", be.puts)
 	}
 }

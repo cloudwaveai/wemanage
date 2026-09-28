@@ -81,7 +81,9 @@ func runServe() error {
 		fs = feishu.NewClient(cfg.FeishuBaseURL, cfg.FeishuAppID, cfg.FeishuAppSecret, &http.Client{Timeout: 20 * time.Second})
 	}
 
-	rec := recorder.New(st, set, cfg.SpoolDir, log, 2048)
+	// Queue bound keeps memory predictable (each record carries its request
+	// body); overflow is spooled to disk and replayed.
+	rec := recorder.New(st, set, cfg.SpoolDir, log, 512)
 	rec.Start(ctx)
 
 	// Bootstrap super admins from config (idempotent).
