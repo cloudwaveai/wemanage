@@ -13,6 +13,9 @@ services:
     image: caddy:2-alpine
     <<: *restart
     depends_on: [gateway]
+    environment:
+      # Caddyfile 的站点地址 {$GATEWAY_DOMAIN}；不传进来就是空的，Caddy 不会签证书
+      GATEWAY_DOMAIN: ${GATEWAY_DOMAIN:?set GATEWAY_DOMAIN in .env}
     ports:
       - "80:80"
       - "443:443"
