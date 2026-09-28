@@ -8,7 +8,7 @@
 - 一个解析到该服务器的域名（Caddy 自动签发 TLS）。
 - 若干海外静态出口代理（分组固定 IP，每组 5–10 个账号），格式如 `http://user:pass@host:port` 或 `socks5://user:pass@host:port`。
 - 一个飞书自建应用（App ID / App Secret），开通：网页登录、通讯录只读、发消息。
-- 一个用于 AI 日报的 OpenAI 兼容端点与 **独立** API Key（勿用员工订阅）。
+- 一个用于 AI 周报的 OpenAI 兼容端点与 **独立** API Key（勿用员工订阅）。
 - 每位员工一个 ChatGPT 订阅账号（用于后续在后台逐个添加）。
 
 ## 一次性部署
