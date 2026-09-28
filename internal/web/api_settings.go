@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"aiseat/internal/health"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
 
@@ -58,6 +60,11 @@ func (s *Server) handleCreateIPGroup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name and proxy_url required")
 		return
 	}
+	if err := health.ValidateProxy(body.ProxyURL); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body.ProxyURL = strings.TrimSpace(body.ProxyURL)
 	g, err := s.deps.Store.CreateIPGroup(r.Context(), s.deps.Box, body.Name, body.ProxyURL, body.Capacity)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "create failed")
@@ -76,6 +83,12 @@ func (s *Server) handleUpdateIPGroup(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad body")
 		return
+	}
+	if body.ProxyURL = strings.TrimSpace(body.ProxyURL); body.ProxyURL != "" {
+		if err := health.ValidateProxy(body.ProxyURL); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if err := s.deps.Store.UpdateIPGroup(r.Context(), s.deps.Box, id, body.Capacity, body.ProxyURL); err != nil {
 		writeErr(w, http.StatusInternalServerError, "update failed")
@@ -96,6 +109,9 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func maskProxy(u string) string {
+	if health.ProxyIsDirect(u) {
+		return "direct"
+	}
 	if len(u) <= 12 {
 		return "***"
 	}

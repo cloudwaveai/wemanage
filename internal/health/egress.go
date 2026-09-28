@@ -2,6 +2,8 @@ package health
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,17 +14,42 @@ import (
 	"aiseat/internal/store"
 )
 
+// ProxyIsDirect reports whether an IP group's proxy setting means "no proxy":
+// its accounts go out through the gateway server's own IP. CPA reads
+// "direct"/"none" the same way (sdk/proxyutil).
+func ProxyIsDirect(raw string) bool {
+	t := strings.TrimSpace(raw)
+	return strings.EqualFold(t, "direct") || strings.EqualFold(t, "none")
+}
+
+// ValidateProxy accepts what CPA accepts as an account's proxy_url:
+// "direct"/"none", or a socks5/socks5h/http/https URL with a host.
+func ValidateProxy(raw string) error {
+	if ProxyIsDirect(raw) {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return errors.New("proxy_url must be \"direct\" or scheme://[user:pass@]host:port")
+	}
+	switch u.Scheme {
+	case "socks5", "socks5h", "http", "https":
+		return nil
+	}
+	return fmt.Errorf("proxy scheme %q not supported: use socks5, socks5h, http, https or \"direct\"", u.Scheme)
+}
+
 // CheckGroup fetches the egress IP as seen through the group's proxy by GETting
 // echoURL through that proxy and returning the trimmed response body.
 //
 // The proxy is applied via http.Transport.Proxy=http.ProxyURL(parsed), which
 // handles http/https proxies. socks5 egress verification is best-effort: the
 // stdlib http transport does not tunnel arbitrary TCP over socks5, so such a
-// check may not be meaningfully exercised. An empty ProxyURL means a direct
-// request (no proxy).
+// check may not be meaningfully exercised. An empty or "direct" ProxyURL
+// means a direct request (no proxy).
 func CheckGroup(ctx context.Context, group store.IPGroup, echoURL string, timeout time.Duration) (ip string, err error) {
 	tr := &http.Transport{}
-	if strings.TrimSpace(group.ProxyURL) != "" {
+	if strings.TrimSpace(group.ProxyURL) != "" && !ProxyIsDirect(group.ProxyURL) {
 		u, perr := url.Parse(group.ProxyURL)
 		if perr != nil {
 			return "", perr

@@ -77,6 +77,8 @@
 
 到"IP 组"改代理地址。注意：**更换出口 IP 本身是风控信号**，非必要不换；每次更换都记审计。系统每 30 分钟自检各组实际出口 IP，代理商偷偷换 IP 会告警。
 
+代理地址支持 `socks5://`、`socks5h://`、`http://`、`https://`，也可以填 `direct`：不走代理，直接用网关服务器自己的 IP 出去。`direct` 适合 Kimi 试跑；正式的 ChatGPT 账号建议每 5～10 个配一个固定的住宅或静态 IP 代理。
+
 ## 备份与恢复
 
 **要备份的**：PostgreSQL 数据卷（`pgdata`）与 CPA 凭证目录（`deploy/cpa/auths`，含各账号 OAuth token）。

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { IPGroupRow } from "../lib/types";
 import { Modal } from "./Modal";
@@ -166,6 +167,22 @@ export function AddAccountWizard({
               </option>
             ))}
           </select>
+          <p className="mt-1 text-xs text-slate-500">
+            账号访问上游时使用的出口 IP。
+            {groups.data && groups.data.ip_groups.length === 0 && (
+              <>
+                还没有 IP 组，请先到{" "}
+                <Link
+                  to="/ip-groups"
+                  onClick={close}
+                  className="text-indigo-600 hover:underline"
+                >
+                  IP 组
+                </Link>{" "}
+                页新建一个（试跑时代理地址可以填 direct）。
+              </>
+            )}
+          </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>

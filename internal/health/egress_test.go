@@ -18,13 +18,28 @@ func TestCheckGroupDirect(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Empty ProxyURL -> direct request; body is returned trimmed.
-	ip, err := health.CheckGroup(context.Background(), store.IPGroup{ProxyURL: ""}, srv.URL, 5*time.Second)
-	if err != nil {
-		t.Fatalf("check group: %v", err)
+	// Empty or "direct" ProxyURL -> direct request; body is returned trimmed.
+	for _, proxy := range []string{"", "direct", " DIRECT ", "none"} {
+		ip, err := health.CheckGroup(context.Background(), store.IPGroup{ProxyURL: proxy}, srv.URL, 5*time.Second)
+		if err != nil {
+			t.Fatalf("check group %q: %v", proxy, err)
+		}
+		if ip != egress {
+			t.Fatalf("proxy %q: ip = %q, want %q", proxy, ip, egress)
+		}
 	}
-	if ip != egress {
-		t.Fatalf("ip = %q, want %q", ip, egress)
+}
+
+func TestValidateProxyMatchesCPA(t *testing.T) {
+	for _, ok := range []string{"direct", "None", "socks5://u:p@1.2.3.4:1080", "socks5h://h:1", "http://h:8080", "https://u:p@h:443"} {
+		if err := health.ValidateProxy(ok); err != nil {
+			t.Errorf("ValidateProxy(%q) = %v, want ok", ok, err)
+		}
+	}
+	for _, bad := range []string{"1.2.3.4:1080", "ftp://h:21", "socks5://", "direct-ish"} {
+		if err := health.ValidateProxy(bad); err == nil {
+			t.Errorf("ValidateProxy(%q) accepted, want error", bad)
+		}
 	}
 }
 

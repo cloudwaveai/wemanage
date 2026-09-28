@@ -31,7 +31,7 @@ export function IPGroupsPage() {
     <div>
       <PageHeader
         title="IP 组"
-        desc="共享固定出口代理的账号分组。"
+        desc="账号访问上游时使用的出口。同一组的账号共用一个固定出口 IP，上游每次看到的都是同一个地址。代理地址可以填 socks5 或 http 代理；填 direct 则不走代理，直接用网关服务器自己的 IP（适合试跑）。"
         right={
           <Button variant="primary" onClick={() => setCreateOpen(true)}>
             新建 IP 组
@@ -237,7 +237,7 @@ function IPGroupForm({
           <input
             value={proxy}
             onChange={(e) => setProxy(e.target.value)}
-            placeholder="http://user:pass@host:port"
+            placeholder="socks5://user:pass@host:port，或 direct"
             className={inputCls + " font-mono text-xs"}
           />
         </div>
@@ -253,6 +253,10 @@ function IPGroupForm({
             className={inputCls}
           />
         </div>
+        <p className="text-xs text-slate-500">
+          推荐每 5～10 个账号配一个固定的住宅或静态 IP 代理。填 direct 表示直接用网关服务器的
+          IP 出去：试跑 Kimi 没问题，正式给 ChatGPT 账号用时最好换成固定代理。
+        </p>
         <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
           修改代理会改变出口 IP，这本身就是一个风险信号，请谨慎操作。
         </div>
