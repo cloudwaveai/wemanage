@@ -95,6 +95,10 @@ export interface DailyReport {
 // --- config snippets ---
 export interface ConfigSnippets {
   base_url: string;
+  provider: string; // bound account's provider, "" when none
+  models: string[]; // model ids the bound account can use
+  default_model: string;
+  ccswitch: { name: string; endpoint: string; homepage: string };
   codex_toml: string;
   codex_env: string;
   third_party: {
@@ -201,6 +205,26 @@ export interface AccountRow {
   max_concurrency: number | null;
   device_profile: DeviceProfile;
   cpa_drift: string;
+  quota?: AccountQuota; // latest snapshot; absent until first seen
+  usage: AccountUsage;
+}
+export interface AccountQuota {
+  at: string;
+  primary_used_pct: number | null; // 5-hour window, 0–100
+  primary_window_minutes: number | null;
+  primary_reset_at: string | null;
+  secondary_used_pct: number | null; // weekly window, 0–100
+  secondary_window_minutes: number | null;
+  secondary_reset_at: string | null;
+}
+export interface AccountUsage {
+  requests_24h: number;
+  tokens_24h: number;
+  requests_7d: number;
+  tokens_7d: number;
+  requests_all: number;
+  tokens_all: number;
+  last_active: string | null;
 }
 
 // --- ip groups (snake_case) ---

@@ -113,5 +113,10 @@ tar czf auths-$(date +%F).tgz -C deploy/cpa auths
 
 - **员工报 502**：CPA 不可达，`docker compose logs cpa`。
 - **员工报 503 account_needs_login**：该账号 token 失效，重新登录。
-- **额度不显示**：确认 CPA `passthrough-headers: true`，且上游确实返回了额度头（见验证清单 B2）。
+- **额度不显示**：「账号」页的 5 小时 / 每周额度有两个来源。
+  - 有请求时：从响应头和 WebSocket 的 `codex.rate_limits` 事件里记录，需要 CPA 开着 `passthrough-headers: true`。
+  - 闲置时：网关每 5 分钟检查一次，对超过 30 分钟没更新的 ChatGPT / Kimi 账号，经 CPA 的 `api-call` 用该账号自己的令牌和出口查一次官方接口：ChatGPT 查 `chatgpt.com/backend-api/wham/usage`（和 Codex `/status` 同一个接口），Kimi 查 `api.kimi.com/coding/v1/usages`（和 kimi-cli `/usage` 同一个接口）。
+  - 也可以点账号行里的「刷新额度」手动查一次，每个账号每分钟最多一次。
+  - 查询失败会记在网关日志里，搜 `quota probe` / `quota refresh`。
+  - 5 小时和每周按窗口长度区分，不按上游字段的先后位置。Pro 账号有时只报一个每周窗口。
 - **看 CPA 明细**：临时把 `cpa/config.yaml` 的 `request-log` 设为 true 并重启 cpa（排障后记得关掉，避免重复留存明文）。

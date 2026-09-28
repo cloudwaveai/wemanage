@@ -29,7 +29,8 @@ type Deps struct {
 	EgressEchoURL string
 	Loc           *time.Location
 	GitHub        health.GitHub
-	Risk          *risk.Engine // optional
+	Risk          *risk.Engine        // optional
+	Quota         *health.QuotaProber // optional
 	Log           *slog.Logger
 }
 
@@ -40,6 +41,15 @@ func Register(c *cron.Cron, d Deps) {
 		log = slog.Default()
 	}
 	ctx := context.Background()
+
+	// ChatGPT quota for idle accounts — every 5 minutes (only stale ones are probed).
+	if d.Quota != nil {
+		_, _ = c.AddFunc("@every 5m", func() {
+			if err := d.Quota.RunStale(ctx); err != nil {
+				log.Warn("quota probe", "err", err)
+			}
+		})
+	}
 
 	// Egress IP check — every 30 minutes.
 	_, _ = c.AddFunc("@every 30m", func() {

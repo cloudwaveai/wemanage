@@ -82,7 +82,7 @@ func RecordQuotaFromHeaders(ctx context.Context, st *store.Store, accountID int6
 		return nil
 	}
 
-	return st.InsertQuota(ctx, store.QuotaSnapshot{
+	return st.InsertQuota(ctx, NormalizeQuotaWindows(store.QuotaSnapshot{
 		AccountID:              accountID,
 		At:                     now,
 		PrimaryUsedPct:         pUsed,
@@ -91,7 +91,7 @@ func RecordQuotaFromHeaders(ctx context.Context, st *store.Store, accountID int6
 		SecondaryUsedPct:       sUsed,
 		SecondaryWindowMinutes: sWin,
 		SecondaryResetAt:       sReset,
-	})
+	}))
 }
 
 // HasQuotaHeaders reports whether a response carries any quota header.

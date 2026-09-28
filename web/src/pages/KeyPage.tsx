@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 import { Card, PageHeader, Button } from "../components/ui";
@@ -7,6 +7,8 @@ import { CopyButton } from "../components/CopyButton";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { fmtDateTime } from "../lib/format";
+import type { ConfigSnippets } from "../lib/types";
+import { CCSWITCH_DOWNLOAD, ccSwitchLink } from "../lib/ccswitch";
 
 export function KeyPage() {
   const { me, refetch } = useAuth();
@@ -15,6 +17,12 @@ export function KeyPage() {
   const [plainKey, setPlainKey] = useState<string | null>(null);
 
   const hasKey = !!me?.key_prefix;
+  // Needed only to offer the CC Switch import next to a freshly issued key.
+  const snippets = useQuery({
+    queryKey: ["config-snippets"],
+    queryFn: () => api.get<ConfigSnippets>("/api/me/config-snippets"),
+    enabled: !!plainKey,
+  });
 
   const issue = useMutation({
     mutationFn: () => api.post<{ key: string; prefix: string }>("/api/me/key"),
@@ -119,6 +127,33 @@ export function KeyPage() {
           </code>
           {plainKey && <CopyButton text={plainKey} />}
         </div>
+        {plainKey && snippets.data && (
+          <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <a
+                href={ccSwitchLink(
+                  snippets.data.ccswitch,
+                  plainKey,
+                  snippets.data.default_model,
+                )}
+                className="inline-flex items-center rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+              >
+                一键导入 CC Switch
+              </a>
+              <a
+                href={CCSWITCH_DOWNLOAD}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-indigo-600 hover:underline"
+              >
+                还没装？下载 CC Switch
+              </a>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              使用模型 {snippets.data.default_model}，导入后 Codex 会切换到公司网关。要换模型，到「一键配置」页选择后重新导入。
+            </p>
+          </div>
+        )}
       </Modal>
     </div>
   );

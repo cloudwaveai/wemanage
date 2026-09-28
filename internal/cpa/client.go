@@ -47,6 +47,32 @@ type AuthFile struct {
 	Email    string `json:"email"`
 	Provider string `json:"provider"`
 	Status   string `json:"status"`
+	// AuthIndex identifies the credential in api-call requests.
+	AuthIndex string `json:"auth_index"`
+	// IDToken holds claims CPA parses from a Codex id_token.
+	IDToken struct {
+		ChatGPTAccountID string `json:"chatgpt_account_id"`
+		PlanType         string `json:"plan_type"`
+	} `json:"id_token"`
+}
+
+// APICallRequest is a request CPA makes upstream on a credential's behalf
+// (POST /v0/management/api-call). "$TOKEN$" in a header value is replaced
+// with the credential's access token, and the credential's proxy_url is used,
+// so the call leaves through the account's own egress.
+type APICallRequest struct {
+	AuthIndex string            `json:"auth_index"`
+	Method    string            `json:"method"`
+	URL       string            `json:"url"`
+	Header    map[string]string `json:"header,omitempty"`
+	Data      string            `json:"data,omitempty"`
+}
+
+// APICallResponse is the upstream response relayed by api-call.
+type APICallResponse struct {
+	StatusCode int                 `json:"status_code"`
+	Header     map[string][]string `json:"header"`
+	Body       string              `json:"body"`
 }
 
 // newRequest builds an authenticated management request. If body is a []byte it
@@ -122,6 +148,19 @@ func (c *Client) ListAuthFiles(ctx context.Context) ([]AuthFile, error) {
 		return nil, err
 	}
 	return out.Files, nil
+}
+
+// APICall asks CPA to make an upstream request with a credential.
+func (c *Client) APICall(ctx context.Context, call APICallRequest) (APICallResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodPost, managementBase+"/api-call", nil, call)
+	if err != nil {
+		return APICallResponse{}, err
+	}
+	var out APICallResponse
+	if err := c.do(req, &out); err != nil {
+		return APICallResponse{}, err
+	}
+	return out, nil
 }
 
 // UploadAuthFile uploads a new auth file.

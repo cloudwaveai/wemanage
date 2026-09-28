@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // UpsertObservedClient records a seen client UA, adding c.Hits uses (default 1).
@@ -45,4 +48,18 @@ func (s *Store) TopObservedClients(ctx context.Context, since time.Time, limit i
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// LatestCodexUA returns the User-Agent of the account's most recent request
+// from an official Codex client, or "" when there is none.
+func (s *Store) LatestCodexUA(ctx context.Context, accountID int64) (string, error) {
+	var ua string
+	err := s.Pool.QueryRow(ctx, `
+		SELECT user_agent FROM requests
+		WHERE account_id=$1 AND client_kind='codex' AND user_agent <> ''
+		ORDER BY started_at DESC LIMIT 1`, accountID).Scan(&ua)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return ua, err
 }

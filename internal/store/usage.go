@@ -146,3 +146,41 @@ func (s *Store) UsageByEmployee(ctx context.Context, from, to time.Time, employe
 	}
 	return out, rows.Err()
 }
+
+// AccountUsage is one upstream account's traffic through the gateway.
+type AccountUsage struct {
+	AccountID              int64
+	Requests24h, Tokens24h int64
+	Requests7d, Tokens7d   int64
+	RequestsAll, TokensAll int64
+	LastActive             *time.Time
+}
+
+// UsageByAccount returns every account's requests and tokens (input+output)
+// over the last 24 hours, the last 7 days and all time. Accounts without
+// requests are omitted.
+func (s *Store) UsageByAccount(ctx context.Context) (map[int64]AccountUsage, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT account_id,
+			COUNT(*) FILTER (WHERE started_at >= now() - interval '24 hours'),
+			COALESCE(SUM(tokens_input + tokens_output) FILTER (WHERE started_at >= now() - interval '24 hours'), 0),
+			COUNT(*) FILTER (WHERE started_at >= now() - interval '7 days'),
+			COALESCE(SUM(tokens_input + tokens_output) FILTER (WHERE started_at >= now() - interval '7 days'), 0),
+			COUNT(*), COALESCE(SUM(tokens_input + tokens_output), 0), MAX(started_at)
+		FROM requests WHERE account_id IS NOT NULL
+		GROUP BY account_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]AccountUsage{}
+	for rows.Next() {
+		var u AccountUsage
+		if err := rows.Scan(&u.AccountID, &u.Requests24h, &u.Tokens24h, &u.Requests7d, &u.Tokens7d,
+			&u.RequestsAll, &u.TokensAll, &u.LastActive); err != nil {
+			return nil, err
+		}
+		out[u.AccountID] = u
+	}
+	return out, rows.Err()
+}

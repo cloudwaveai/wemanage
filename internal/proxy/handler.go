@@ -511,37 +511,47 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		oaError(w, http.StatusForbidden, "this key is suspended; contact the administrator", "invalid_request_error", "account_frozen")
 		return
 	}
-	acc := *prin.Account
-	prefix := acc.Prefix() + "/"
-
-	reqCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	upReq, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, h.deps.CPABaseURL+"/v1/models", nil)
-	upReq.Header.Set("Authorization", "Bearer "+h.deps.CPAAPIKey)
-
-	resp, err := h.deps.Upstream.Do(upReq)
-	if err != nil {
+	ids, err := h.AccountModels(ctx, *prin.Account)
+	if err != nil || len(ids) == 0 {
 		writeStaticModels(w)
 		return
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-
-	var out []map[string]any
-	gjson.GetBytes(raw, "data").ForEach(func(_, v gjson.Result) bool {
-		id := v.Get("id").String()
-		if strings.HasPrefix(id, prefix) {
-			m := map[string]any{"id": strings.TrimPrefix(id, prefix), "object": "model", "owned_by": "company"}
-			out = append(out, m)
-		}
-		return true
-	})
-	if len(out) == 0 {
-		writeStaticModels(w)
-		return
+	out := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, map[string]any{"id": id, "object": "model", "owned_by": "company"})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": out})
+}
+
+// AccountModels lists the model ids CPA serves for an account, without the
+// account's routing prefix.
+func (h *Handler) AccountModels(ctx context.Context, acc store.Account) ([]string, error) {
+	prefix := acc.Prefix() + "/"
+	reqCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	upReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, h.deps.CPABaseURL+"/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	upReq.Header.Set("Authorization", "Bearer "+h.deps.CPAAPIKey)
+	resp, err := h.deps.Upstream.Do(upReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	gjson.GetBytes(raw, "data").ForEach(func(_, v gjson.Result) bool {
+		if id := v.Get("id").String(); strings.HasPrefix(id, prefix) {
+			ids = append(ids, strings.TrimPrefix(id, prefix))
+		}
+		return true
+	})
+	return ids, nil
 }
 
 func writeStaticModels(w http.ResponseWriter) {

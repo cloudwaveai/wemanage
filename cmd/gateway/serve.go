@@ -75,6 +75,7 @@ func runServe() error {
 
 	upstream := &http.Client{} // no client timeout; per-request contexts bound it
 	cpaClient := cpa.NewClient(cfg.CPABaseURL, cfg.CPAManagementKey, &http.Client{Timeout: 30 * time.Second})
+	quota := &health.QuotaProber{Store: st, CPA: cpaClient, Settings: set, Log: log}
 
 	var fs *feishu.Client
 	if cfg.FeishuAppID != "" && cfg.FeishuAppSecret != "" {
@@ -127,6 +128,8 @@ func runServe() error {
 	notifier := notify.NewNotifier(st, notifySender(fs), superAdmins)
 
 	webSrv := web.NewServer(web.Deps{
+		Models:               dp.AccountModels,
+		Quota:                quota,
 		BootstrapSuperAdmins: cfg.BootstrapSuperAdmins,
 		Store:                st, Settings: set, Box: box, CPA: cpaClient, Feishu: fs,
 		FeishuLoginScope: cfg.FeishuLoginScope,
@@ -149,7 +152,7 @@ func runServe() error {
 			Sender: reportSender(fs), Loc: cfg.Timezone, Enabled: set.Get(ctx).ReportEnabled && cfg.ReportLLMAPIKey != "",
 		},
 		EgressEchoURL: cfg.EgressEchoURL, Loc: cfg.Timezone,
-		GitHub: health.GitHub{}, Risk: riskEngine, Log: log,
+		GitHub: health.GitHub{}, Risk: riskEngine, Quota: quota, Log: log,
 	})
 	c.Start()
 	defer c.Stop()

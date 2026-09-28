@@ -7,6 +7,7 @@ import (
 
 	"aiseat/internal/cpa"
 	"aiseat/internal/feishu"
+	"aiseat/internal/health"
 	"aiseat/internal/risk"
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
@@ -26,6 +27,10 @@ type Deps struct {
 	PublicBaseURL    string
 	SecureCookies    bool
 	DevLogin         bool
+	// Models lists the model ids an account can use (optional).
+	Models func(ctx context.Context, acc store.Account) ([]string, error)
+	// Quota refreshes a ChatGPT account's 5-hour / weekly quota on demand.
+	Quota *health.QuotaProber
 	// BootstrapSuperAdmins are the open_ids pinned as super admin by config;
 	// they are re-granted at every start, so the UI cannot revoke them.
 	BootstrapSuperAdmins []string
@@ -98,6 +103,7 @@ func (s *Server) Mount(r chi.Router) {
 				r.Post("/admin/accounts/kimi-complete", s.handleKimiComplete)
 				r.Post("/admin/accounts/{id}/bind", s.handleBind)
 				r.Post("/admin/accounts/{id}/unbind", s.handleUnbind)
+				r.Post("/admin/accounts/{id}/quota/refresh", s.handleRefreshQuota)
 				r.Patch("/admin/accounts/{id}", s.handlePatchAccount)
 				r.Get("/admin/ip-groups", s.handleListIPGroups)
 				r.Post("/admin/ip-groups", s.handleCreateIPGroup)

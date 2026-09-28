@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"aiseat/internal/cpa"
+	"aiseat/internal/health"
 	"aiseat/internal/secure"
 	"aiseat/internal/store"
 
@@ -125,19 +127,85 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	// Enrich with computed status.
+	// Enrich with computed status, the latest quota snapshot and gateway usage.
+	// Both extras are best effort: the list still renders without them.
+	ctx := r.Context()
+	ids := make([]int64, len(rows))
+	for i, a := range rows {
+		ids[i] = a.ID
+	}
+	quotas, err := s.deps.Store.LatestQuotas(ctx, ids)
+	if err != nil {
+		s.deps.Log.Warn("account list: quotas", "err", err)
+	}
+	usage, err := s.deps.Store.UsageByAccount(ctx)
+	if err != nil {
+		s.deps.Log.Warn("account list: usage", "err", err)
+	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, a := range rows {
-		out = append(out, map[string]any{
+		m := map[string]any{
 			"id": a.ID, "email": a.Email, "plan_type": a.PlanType, "owner_type": a.OwnerType,
 			"employee_id": a.EmployeeID, "employee_name": a.EmployeeName,
 			"ip_group_id": a.IPGroupID, "ip_group_name": a.IPGroupName,
 			"status": accountStatus(a.Account), "needs_login": a.NeedsLogin, "provider": a.Provider,
 			"rate_limited_until": a.RateLimitedUntil, "max_concurrency": a.MaxConcurrency,
 			"device_profile": a.DeviceProfile, "cpa_drift": a.CPADrift,
-		})
+		}
+		if q, ok := quotas[a.ID]; ok {
+			m["quota"] = quotaJSON(q)
+		}
+		u := usage[a.ID]
+		m["usage"] = map[string]any{
+			"requests_24h": u.Requests24h, "tokens_24h": u.Tokens24h,
+			"requests_7d": u.Requests7d, "tokens_7d": u.Tokens7d,
+			"requests_all": u.RequestsAll, "tokens_all": u.TokensAll,
+			"last_active": u.LastActive,
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": out})
+}
+
+// handleRefreshQuota asks ChatGPT for one account's current quota now.
+func (s *Server) handleRefreshQuota(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if s.deps.Quota == nil {
+		writeErr(w, http.StatusServiceUnavailable, "quota refresh not configured")
+		return
+	}
+	q, err := s.deps.Quota.Refresh(r.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, http.StatusNotFound, "account not found")
+		return
+	case errors.Is(err, health.ErrRefreshTooSoon):
+		writeErr(w, http.StatusTooManyRequests, "刚刷新过，请一分钟后再试")
+		return
+	case err != nil:
+		s.deps.Log.Warn("quota refresh", "account", id, "err", err)
+		writeErr(w, http.StatusBadGateway, "查询额度失败："+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"quota": quotaJSON(q)})
+}
+
+// quotaJSON renders a quota snapshot: primary is the 5-hour window, secondary
+// the weekly one (as reported by ChatGPT).
+func quotaJSON(q store.QuotaSnapshot) map[string]any {
+	return map[string]any{
+		"at":                       q.At,
+		"primary_used_pct":         q.PrimaryUsedPct,
+		"primary_window_minutes":   q.PrimaryWindowMinutes,
+		"primary_reset_at":         q.PrimaryResetAt,
+		"secondary_used_pct":       q.SecondaryUsedPct,
+		"secondary_window_minutes": q.SecondaryWindowMinutes,
+		"secondary_reset_at":       q.SecondaryResetAt,
+	}
 }
 
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {

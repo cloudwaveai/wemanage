@@ -1,5 +1,6 @@
 import React from "react";
 import type { AccountStatus } from "../lib/types";
+import { fmtDateTime } from "../lib/format";
 
 // ---- Card ---------------------------------------------------------------
 export function Card({
@@ -282,6 +283,35 @@ export function Meter({
         />
       </div>
       {hint && <div className="mt-1 text-xs text-slate-400">{hint}</div>}
+    </div>
+  );
+}
+
+// ---- Quota window cell -------------------------------------------------
+// One quota window as a small meter; reset / snapshot times on hover.
+export function QuotaCell({
+  pct,
+  resetAt,
+  at,
+}: {
+  pct: number | null | undefined;
+  resetAt: string | null | undefined;
+  at: string | undefined;
+}) {
+  if (pct === null || pct === undefined)
+    return <span className="text-slate-300">—</span>;
+  // The snapshot predates the window reset, so the real usage is likely lower.
+  const stale = !!resetAt && new Date(resetAt).getTime() < Date.now();
+  const title = [
+    resetAt ? `重置于 ${fmtDateTime(resetAt)}` : "",
+    at ? `更新于 ${fmtDateTime(at)}` : "",
+    stale ? "已过重置时间，实际用量可能已清零" : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <div className={"w-[88px]" + (stale ? " opacity-50" : "")} title={title}>
+      <Meter label="" pct={pct} />
     </div>
   );
 }

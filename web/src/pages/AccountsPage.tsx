@@ -10,10 +10,17 @@ import {
   Empty,
   Button,
   StatusBadge,
+  QuotaCell,
 } from "../components/ui";
+import { fmtCompact, fmtDateTime, fmtNum } from "../lib/format";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { AddAccountWizard } from "../components/AddAccountWizard";
+
+// ChatGPT and Kimi Code expose 5-hour / weekly quota; other providers do not.
+function hasQuota(a: AccountRow): boolean {
+  return !a.provider || a.provider === "codex" || a.provider === "kimi";
+}
 
 export function AccountsPage() {
   const qc = useQueryClient();
@@ -39,13 +46,24 @@ export function AccountsPage() {
       toast(e instanceof Error ? e.message : "解绑失败", "error"),
   });
 
+  const refreshQuota = useMutation({
+    mutationFn: (id: number) =>
+      api.post(`/api/admin/accounts/${id}/quota/refresh`),
+    onSuccess: () => {
+      toast("额度已刷新", "success");
+      refetch();
+    },
+    onError: (e: unknown) =>
+      toast(e instanceof Error ? e.message : "刷新失败", "error"),
+  });
+
   const rows = accounts.data?.accounts ?? [];
 
   return (
     <div>
       <PageHeader
         title="账号"
-        desc="上游 ChatGPT 账号及其绑定与并发配置。"
+        desc="上游账号的绑定、额度与用量。5 小时 / 每周额度来自 ChatGPT / Kimi 官方接口：有请求时随请求更新，闲置时网关每 30 分钟查询一次；Token 为经过网关的用量。"
         right={
           <Button variant="primary" onClick={() => setWizardOpen(true)}>
             添加账号
@@ -59,7 +77,7 @@ export function AccountsPage() {
       {accounts.data && (
         <Card className="overflow-hidden">
           <div className="scroll-thin overflow-x-auto">
-            <table className="w-full min-w-[960px] text-sm">
+            <table className="w-full min-w-[1240px] text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-4 py-2.5 font-medium">邮箱</th>
@@ -68,6 +86,11 @@ export function AccountsPage() {
                   <th className="px-4 py-2.5 font-medium">绑定员工</th>
                   <th className="px-4 py-2.5 font-medium">IP 组</th>
                   <th className="px-4 py-2.5 font-medium">状态</th>
+                  <th className="px-4 py-2.5 font-medium">5 小时</th>
+                  <th className="px-4 py-2.5 font-medium">每周</th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Token（24h / 7 天 / 累计）
+                  </th>
                   <th className="px-4 py-2.5 text-right font-medium">并发</th>
                   <th className="px-4 py-2.5 font-medium">漂移</th>
                   <th className="px-4 py-2.5 text-right font-medium">操作</th>
@@ -111,6 +134,47 @@ export function AccountsPage() {
                         )}
                       </div>
                     </td>
+                    {!hasQuota(a) ? (
+                      <td
+                        colSpan={2}
+                        className="px-4 py-2.5 text-xs text-slate-400"
+                        title="这类账号没有可查询的 5 小时 / 每周额度"
+                      >
+                        无额度窗口
+                      </td>
+                    ) : (
+                      <>
+                        <td className="px-4 py-2.5">
+                          <QuotaCell
+                            pct={a.quota?.primary_used_pct}
+                            resetAt={a.quota?.primary_reset_at}
+                            at={a.quota?.at}
+                          />
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <QuotaCell
+                            pct={a.quota?.secondary_used_pct}
+                            resetAt={a.quota?.secondary_reset_at}
+                            at={a.quota?.at}
+                          />
+                        </td>
+                      </>
+                    )}
+                    <td
+                      className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-600"
+                      title={[
+                        `请求：24h ${fmtNum(a.usage.requests_24h)} / 7 天 ${fmtNum(a.usage.requests_7d)} / 累计 ${fmtNum(a.usage.requests_all)}`,
+                        a.usage.last_active
+                          ? `最近使用 ${fmtDateTime(a.usage.last_active)}`
+                          : "还没有经过网关的请求",
+                      ].join("\n")}
+                    >
+                      {fmtCompact(a.usage.tokens_24h)}
+                      <span className="text-slate-300"> / </span>
+                      {fmtCompact(a.usage.tokens_7d)}
+                      <span className="text-slate-300"> / </span>
+                      {fmtCompact(a.usage.tokens_all)}
+                    </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-slate-600">
                       {a.max_concurrency ?? (
                         <span className="text-slate-400">默认</span>
@@ -130,6 +194,16 @@ export function AccountsPage() {
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right">
                       <div className="flex justify-end gap-1">
+                        {hasQuota(a) && (
+                          <button
+                            onClick={() => refreshQuota.mutate(a.id)}
+                            disabled={refreshQuota.isPending}
+                            className="rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+                            title="向上游查询一次当前的 5 小时 / 每周额度"
+                          >
+                            刷新额度
+                          </button>
+                        )}
                         {a.employee_id ? (
                           <button
                             onClick={() => unbind.mutate(a.id)}

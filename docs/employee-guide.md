@@ -8,6 +8,18 @@
 
 ## 二、配置 Codex（推荐）
 
+### 用 CC Switch 一键导入（最简单）
+
+1. 装好 [CC Switch](https://github.com/farion1231/cc-switch/releases/latest)。
+2. 两种导入方式：
+   - 在「我的 Key」生成 Key 后，直接点弹窗里的「一键导入 CC Switch」；
+   - 或者到「一键配置」页，粘贴 Key、选好模型，点「导入到 CC Switch」。
+3. CC Switch 会弹窗确认，点「导入」后 Codex 立即切到公司网关。之后直接运行 `codex` 即可。
+
+Key 只写进你电脑上的 CC Switch，不会再发回服务器。CC Switch 导入的配置走普通 HTTP，使用上没有区别。ChatGPT 账号想和官方客户端一样走 WebSocket，可以在 CC Switch 里编辑这个供应商，在 `[model_providers.custom]` 下加一行 `supports_websockets = true`。
+
+### 手动配置
+
 在"一键配置"里复制 Codex 配置片段，写入 `~/.codex/config.toml`：
 
 ```toml
