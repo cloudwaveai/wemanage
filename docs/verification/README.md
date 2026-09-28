@@ -27,6 +27,15 @@ go test -tags e2e ./test/e2e/ -v
 
 CPA 无法构建时该测试会 `t.Skip`，此时 A 类必须在预发用真实 CPA 镜像手工核实。
 
+## K 类：Kimi 试跑（上 ChatGPT 之前）
+
+用 Kimi Code 订阅走一遍除 ChatGPT 本身以外的全部链路，不拿 ChatGPT 账号冒险。
+
+- [ ] **K1 添加 Kimi 账号**：后台「添加账号 → Kimi Code（试用）」，打开授权页确认后点完成，账号列表出现带 Kimi 标记的账号。
+- [ ] **K2 员工侧**：飞书登录 → 确认告知 → 领 Key → 按「一键配置」写好 `~/.codex/config.toml`，`export AISEAT_API_KEY=...`；用 `curl <网关>/v1/models -H "Authorization: Bearer $AISEAT_API_KEY"` 查模型 id 填进配置。
+- [ ] **K3 对话**：`codex` 正常多轮对话、调用工具；日志检索能看到原文，新设备提醒、团队用量正常。
+- [ ] **K4 已知差异**：Kimi 账号没有 5 小时/每周额度显示，也不参与"疑似降智"检查，属正常。
+
 ## B 类：预发人工核实（需真实账号）
 
 逐条执行并把结果记到本目录下 `results-YYYYMMDD.md`：
