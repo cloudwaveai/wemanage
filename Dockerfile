@@ -4,15 +4,20 @@
 FROM node:24-alpine AS web
 WORKDIR /web
 RUN corepack enable
-COPY web/package.json web/pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile || pnpm install
+# pnpm-workspace.yaml carries allowBuilds (esbuild's install script); the
+# pnpm version is pinned by package.json "packageManager".
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
 # ---- stage 2: build the Go gateway ----
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-ENV GOPROXY=https://goproxy.cn,direct
+# goproxy.cn suits builds inside mainland China; overseas hosts can pass
+# --build-arg GOPROXY=https://proxy.golang.org,direct
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
