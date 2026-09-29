@@ -61,19 +61,14 @@
 5. **权限管理 → 数据权限 → 通讯录权限范围**：设为**全部成员**。同步是从根部门往下递归列的，范围不是全员就拿不到根部门，同步会失败或漏人。
 6. **版本管理与发布 → 可用范围**：设为**全部成员**（至少覆盖所有要用网关的人）。不在可用范围里的人收不到机器人消息，通常也无法授权登录。
 7. **添加应用能力 → 网页应用**（推荐）：桌面端主页和移动端主页都填 `https://<你的网关域名>/`。发布后员工在飞书「工作台」里点开就是门户，不用记网址。企业管理员还可以在飞书管理后台「工作台 → 工作台设置」把它加进常用应用，全员可见。
-8. **事件与回调 → 回调配置**（推荐）：订阅方式选"将回调发送至开发者服务器"，请求地址填 `https://<你的网关域名>/api/feishu/card`，保存（飞书会立即校验这个地址），再点"添加回调"，勾选**卡片回传交互**（`card.action.trigger`）。这样员工收到的新设备提醒是带"是我 / 不是我"按钮的卡片，点一下就处理完，不用再打开门户。网关收到飞书的地址校验后自动改发卡片；没配之前照旧发带链接的文字消息。
-   - 同一页的 **Verification Token** 可以填进 `.env` 的 `FEISHU_VERIFICATION_TOKEN`，网关会据此核对回调来自飞书（可选：按钮本身带网关签发的加密令牌，别人伪造不了）。
-   - 如果在"加密策略"里设了 **Encrypt Key**，必须同时填进 `.env` 的 `FEISHU_ENCRYPT_KEY`，否则网关解不开回调；不设则不用填。
-9. **创建版本并发布**，由企业管理员审批通过后，上面的能力和权限才生效。以后改权限、改可用范围、加应用能力，都要重新发版本。
-10. 把凭证填进网关 `.env`：
+8. **创建版本并发布**，由企业管理员审批通过后，上面的能力和权限才生效。以后改权限、改可用范围、加应用能力，都要重新发版本。
+9. 把凭证填进网关 `.env`：
    ```
    FEISHU_APP_ID=cli_xxx
    FEISHU_APP_SECRET=xxx
    FEISHU_BASE_URL=https://open.feishu.cn
    PUBLIC_BASE_URL=https://<你的网关域名>     # 决定回调地址，必须和重定向 URL 一致
    BOOTSTRAP_SUPER_ADMINS=ou_xxx             # 你自己的 open_id，见第三节
-   FEISHU_VERIFICATION_TOKEN=                # 可选，见第 8 步
-   FEISHU_ENCRYPT_KEY=                       # 只在飞书后台设了 Encrypt Key 时填
    ```
 
 **同步用到的接口**（便于排查权限报错）：`GET /open-apis/contact/v3/departments/0/children?fetch_child=true` 递归列部门；对根部门和每个部门调 `GET /open-apis/contact/v3/users/find_by_department` 列直属成员并去重；ID 一律用 `open_department_id` 和 `open_id`。**如果一个人都没同步到，网关会直接报错、不会停用任何员工**，这种情况几乎都是通讯录权限范围或权限没开。
@@ -129,7 +124,6 @@
 ## 六、涉及的代码位置
 
 - 授权跳转与回调：[internal/web/api_auth.go](../internal/web/api_auth.go)
-- 新设备卡片与按钮回调：[internal/devicecard/devicecard.go](../internal/devicecard/devicecard.go)、[internal/web/feishu_card.go](../internal/web/feishu_card.go)
 - 飞书 OAuth 客户端（authorize / v2 token / user_info）：[internal/feishu/client.go](../internal/feishu/client.go)
 - 通讯录同步（部门/员工/离职停用）：[internal/feishu/sync.go](../internal/feishu/sync.go)
 - 会话 Cookie 与 CSRF：[internal/web/session.go](../internal/web/session.go)

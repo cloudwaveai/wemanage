@@ -87,3 +87,16 @@ func (s *Store) TouchKey(ctx context.Context, keyID int64) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at=now() WHERE id=$1`, keyID)
 	return err
 }
+
+// RevokedKeyOwner finds whose key a revoked key hash was, so a request still
+// using an old key can be explained to (and logged for) its owner.
+func (s *Store) RevokedKeyOwner(ctx context.Context, hash []byte) (keyID, employeeID int64, err error) {
+	err = s.Pool.QueryRow(ctx, `
+		SELECT k.id, k.employee_id FROM api_keys k
+		WHERE k.key_hash=$1 AND k.revoked_at IS NOT NULL
+		ORDER BY k.revoked_at DESC LIMIT 1`, hash).Scan(&keyID, &employeeID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, ErrNotFound
+	}
+	return keyID, employeeID, err
+}

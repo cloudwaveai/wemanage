@@ -27,18 +27,3 @@ func (s *Store) PutSettingRaw(ctx context.Context, key string, value json.RawMes
 		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`, key, []byte(value))
 	return err
 }
-
-// cardCallbackKey records that Feishu has verified the gateway's card
-// callback URL, i.e. that buttons on the gateway's cards will reach it.
-const cardCallbackKey = "feishu_card_callback"
-
-// CardCallbackReady reports whether Feishu has verified the card callback URL.
-func (s *Store) CardCallbackReady(ctx context.Context) bool {
-	_, ok, err := s.GetSettingRaw(ctx, cardCallbackKey)
-	return err == nil && ok
-}
-
-// MarkCardCallbackReady records Feishu's verification of the card callback URL.
-func (s *Store) MarkCardCallbackReady(ctx context.Context) error {
-	return s.PutSettingRaw(ctx, cardCallbackKey, json.RawMessage(`{"verified":true}`))
-}

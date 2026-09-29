@@ -108,3 +108,17 @@ func TestEmptyAuditPatternRejected(t *testing.T) {
 		t.Fatal("an empty pattern would match every message and must be rejected")
 	}
 }
+
+func TestOldClientRulesAreUpgraded(t *testing.T) {
+	svc, st, ctx := newSvc(t)
+	// A copy saved with the earlier, case-sensitive defaults.
+	raw := `{"client_rules":[{"kind":"codex","header":"User-Agent","pattern":"^(codex[-_ ]|codex_cli_rs|codex-tui|codex_vscode|codex_exec)"},{"kind":"codex","header":"Originator","pattern":"^codex"}]}`
+	if err := st.PutSettingRaw(ctx, "gateway", []byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	got := svc.Get(ctx).ClientRules
+	want := settings.Defaults().ClientRules
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("rules = %+v, want the current defaults", got)
+	}
+}

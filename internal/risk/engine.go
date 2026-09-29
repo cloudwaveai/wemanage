@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"aiseat/internal/devicecard"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
 )
@@ -35,11 +34,6 @@ type Messenger interface {
 	SendText(ctx context.Context, openID, text string) error
 }
 
-// CardMessenger also delivers interactive cards.
-type CardMessenger interface {
-	SendCard(ctx context.Context, openID string, card any) error
-}
-
 // Config wires an Engine.
 type Config struct {
 	Store     *store.Store
@@ -47,12 +41,8 @@ type Config struct {
 	Geo       GeoLookup // optional
 	Messenger Messenger // optional; nil disables notifications
 	PortalURL string    // public base URL of the portal
-	// Cards signs the buttons of the new-device card. With it, and once Feishu
-	// has verified the card callback URL, a new device is asked about with
-	// 是我 / 不是我 buttons instead of a text message.
-	Cards *devicecard.Signer
-	Log   *slog.Logger
-	Now   func() time.Time // for tests
+	Log       *slog.Logger
+	Now       func() time.Time // for tests
 }
 
 // CachedDevice is the gate-relevant view of a device.
@@ -370,11 +360,9 @@ func (e *Engine) process(ctx context.Context, o Observation) {
 		} else if set.RiskMode == settings.RiskLax {
 			hint = "请及时确认。"
 		}
-		if !e.askWithCard(ctx, o, devID, hint) {
-			e.notifyEmployee(ctx, o.OpenID, fmt.Sprintf(
-				"【AI 网关】你的 Key 在一台新设备上被使用。\n设备：%s\nIP：%s %s\n如果是你本人，请到门户确认；如果不是你，请点「不是我」，Key 会立即作废。%s\n%s",
-				o.Device.Label, o.IP, e.location(o.IP), hint, e.PortalDevicesURL()))
-		}
+		e.notifyEmployee(ctx, o.OpenID, fmt.Sprintf(
+			"【AI 网关】你的 Key 在一台新设备上被使用。\n设备：%s\nIP：%s %s\n如果是你本人，请到门户确认；如果不是你，请点「不是我」，Key 会立即作废。%s\n%s",
+			o.Device.Label, o.IP, e.location(o.IP), hint, e.PortalDevicesURL()))
 		_ = e.cfg.Store.MarkDeviceNotified(ctx, devID)
 		e.markNotified(ctx, ev)
 		e.checkDeviceCount(ctx, o, set)
@@ -583,24 +571,6 @@ func (e *Engine) markNotified(ctx context.Context, ev store.RiskEvent) {
 	if ev.ID != 0 && e.cfg.Messenger != nil {
 		_ = e.cfg.Store.MarkRiskEventNotified(ctx, ev.ID)
 	}
-}
-
-// askWithCard asks about a new device with a Feishu card, when cards can be
-// used. It reports whether the card went out.
-func (e *Engine) askWithCard(ctx context.Context, o Observation, deviceID int64, hint string) bool {
-	cm, ok := e.cfg.Messenger.(CardMessenger)
-	if !ok || e.cfg.Cards == nil || o.OpenID == "" || !e.cfg.Store.CardCallbackReady(ctx) {
-		return false
-	}
-	now := e.cfg.Now()
-	d := devicecard.Device{Label: o.Device.Label, IP: o.IP, Location: e.location(o.IP), Hint: hint, DevicesURL: e.PortalDevicesURL()}
-	card := devicecard.Ask(d, e.cfg.Cards.Token(devicecard.Confirm, o.EmployeeID, deviceID, now),
-		e.cfg.Cards.Token(devicecard.Deny, o.EmployeeID, deviceID, now))
-	if err := cm.SendCard(ctx, o.OpenID, card); err != nil {
-		e.log.Warn("risk: new-device card", "err", err)
-		return false
-	}
-	return true
 }
 
 func (e *Engine) notifyEmployee(ctx context.Context, openID, text string) {

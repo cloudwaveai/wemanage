@@ -137,9 +137,10 @@ func Defaults() Settings {
 			UATemplate: "codex-tui/{version} ({os}) {terminal} (codex-tui; {version})",
 			Originator: "codex-tui",
 		},
+		// Case-insensitive: the Codex desktop app says "Codex Desktop/…".
 		ClientRules: []ClientRule{
-			{Kind: "codex", Header: "User-Agent", Pattern: `^(codex[-_ ]|codex_cli_rs|codex-tui|codex_vscode|codex_exec)`},
-			{Kind: "codex", Header: "Originator", Pattern: `^codex`},
+			{Kind: "codex", Header: "User-Agent", Pattern: `(?i)^(codex[-_ ]|codex_cli_rs|codex-tui|codex_vscode|codex_exec)`},
+			{Kind: "codex", Header: "Originator", Pattern: `(?i)^codex`},
 		},
 		RedactionRules:         DefaultRedactionRules(),
 		ModelMismatchThreshold: 3,
@@ -186,7 +187,7 @@ func mergeDefaults(s Settings) Settings {
 	if s.CodexProfile.Originator == "" {
 		s.CodexProfile.Originator = d.CodexProfile.Originator
 	}
-	if len(s.ClientRules) == 0 {
+	if len(s.ClientRules) == 0 || isOldDefaultClientRules(s.ClientRules) {
 		s.ClientRules = d.ClientRules
 	}
 	if len(s.RedactionRules) == 0 {
@@ -395,4 +396,22 @@ func (s *Service) Put(ctx context.Context, in Settings) error {
 	s.loaded = true
 	s.mu.Unlock()
 	return nil
+}
+
+// isOldDefaultClientRules reports whether rules are the earlier, case-sensitive
+// defaults, which turned away the Codex desktop app; saved copies are upgraded.
+func isOldDefaultClientRules(rules []ClientRule) bool {
+	old := []ClientRule{
+		{Kind: "codex", Header: "User-Agent", Pattern: `^(codex[-_ ]|codex_cli_rs|codex-tui|codex_vscode|codex_exec)`},
+		{Kind: "codex", Header: "Originator", Pattern: `^codex`},
+	}
+	if len(rules) != len(old) {
+		return false
+	}
+	for i := range old {
+		if rules[i] != old[i] {
+			return false
+		}
+	}
+	return true
 }

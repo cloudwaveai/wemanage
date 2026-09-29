@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"aiseat/internal/cpa"
-	"aiseat/internal/devicecard"
 	"aiseat/internal/feishu"
 	"aiseat/internal/health"
 	"aiseat/internal/risk"
@@ -47,12 +46,7 @@ type Deps struct {
 	// Risk is the key-sharing engine (optional); used to refresh gate caches
 	// and notify on device/freeze changes.
 	Risk *risk.Engine
-	// Cards reads the tokens on new-device card buttons; FeishuVerifyToken and
-	// FeishuEncryptKey (both optional) check Feishu's card callbacks.
-	Cards             *devicecard.Signer
-	FeishuVerifyToken string
-	FeishuEncryptKey  string
-	Log               *slog.Logger
+	Log  *slog.Logger
 }
 
 // Server holds web dependencies.
@@ -80,8 +74,6 @@ func (s *Server) Mount(r chi.Router) {
 		if s.deps.DevLogin {
 			r.Post("/auth/dev", s.handleDevLogin)
 		}
-		// Feishu card button callbacks: public, checked by the sealed button token.
-		r.Post("/feishu/card", s.handleFeishuCard)
 		r.Get("/auth/options", func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"dev_login": s.deps.DevLogin})
 		})
@@ -157,15 +149,9 @@ func (s *Server) audit(r *http.Request, action, targetType, targetID string, det
 	if emp != nil {
 		actor = &emp.ID
 	}
-	s.auditAs(r.Context(), actor, clientIP(r), action, targetType, targetID, detail)
-}
-
-// auditAs records an action taken outside a portal session (e.g. from a
-// Feishu card), on behalf of actor.
-func (s *Server) auditAs(ctx context.Context, actor *int64, ip, action, targetType, targetID string, detail map[string]any) {
-	_ = s.deps.Store.Audit(ctx, store.AuditEntry{
+	_ = s.deps.Store.Audit(r.Context(), store.AuditEntry{
 		ActorID: actor, Action: action, TargetType: targetType, TargetID: targetID,
-		Detail: detail, IP: ip,
+		Detail: detail, IP: clientIP(r),
 	})
 }
 

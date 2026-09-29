@@ -27,10 +27,12 @@
 
 | 错误码 | 含义 | 谁来处理 |
 |---|---|---|
-| `client_not_allowed` | 不是官方 Codex 客户端（或开启了"要求安装 ID"而请求没带） | 员工改用 Codex；确需第三方工具时，管理员打开"允许非 Codex 客户端" |
+| `client_not_allowed` | 不是官方 Codex 客户端（或开启了"要求安装 ID"而请求没带）。命令行、VS Code 插件和 Codex 桌面版都算官方客户端（按 User-Agent / Originator 以 codex 开头识别，不分大小写） | 员工改用 Codex；确需第三方工具时，管理员打开"允许非 Codex 客户端" |
 | `device_unconfirmed` | 设备待确认且已过确认期限，或严格模式下的新设备 | 员工到"我的设备"确认 |
 | `device_blocked` | 设备被拉黑 | 管理员核实后"解除拉黑"，员工再确认 |
 | `account_frozen` | 员工被冻结 | 管理员核实后解冻 |
+| `key_revoked` | 用的是已经重置掉的旧 Key（记在原主人名下，所以使用日志里能看到） | 员工用新 Key 重新配置 |
+| `invalid_key` | Key 不存在（不知道是谁的，不记日志） | 员工检查配置 |
 | `no_account_bound` | 员工有 Key 但没绑定账号 | 管理员绑定账号。网关每人每天最多提醒一次超级管理员；绑定后员工会收到飞书通知 |
 | `account_needs_login` | 账号登录失效 | 管理员重新登录该账号 |
 | `account_rate_limited` | 账号额度用完（5 小时或每周窗口） | 等恢复；返回里带恢复时间 |
@@ -40,8 +42,6 @@
 **给 Codex 的返回形状（有意为之）：** Codex 对一般的 4xx 会先重试 5 次（WebSocket 失败后还会改走 HTTP 再试 5 次），十几秒后才显示错误；只有 `invalid_prompt` 错误会直接显示 message、不重试。所以对 Codex 客户端，上表中"需要人处理"的拒绝一律以 HTTP 400、`code: invalid_prompt` 返回，网关自己的错误码放在 `reason` 字段里，日志记的也是这个错误码。其它客户端照常收到原状态码（401/403 等）和原错误码。
 
 额度用完时按 Codex 自己的 `usage_limit_reached` 格式返回（429，带 `resets_at`）：Codex 会立即停下并显示"Try again at …"。上游的 429 如果是额度用完（或要等一分钟以上），网关也会改写成这个格式，并去掉上游返回里的 `plan_type`，否则 Codex 会提示员工"升级 Pro / 购买额度"。只等几秒的短暂 429 原样返回，让 Codex 自动重试。
-
-**新设备确认卡片：** 在飞书后台配好卡片回调（[feishu-login.md](feishu-login.md) 第 8 步）后，员工收到的新设备提醒是带"是我 / 不是我"按钮的卡片，点完卡片会变成处理结果，审计里记为 `device_confirm` / `device_deny`（`via: feishu_card`）。按钮令牌 7 天内有效，过期后员工到"我的设备"处理。没配回调时照旧发文字消息。
 
 **一条命令安装：** 员工在门户生成的安装命令只带一个 10 分钟内有效、只能用一次的安装码（存在网关内存里，重启后作废，重新生成即可），脚本从 `/i/<码>` 下载。脚本备份并改写员工电脑上的 `~/.codex/config.toml`，Key 写在 `experimental_bearer_token` 里，文件权限设为 600。
 

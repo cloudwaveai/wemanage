@@ -29,7 +29,7 @@ const typeUsageLimit = "usage_limit_reached"
 // needsPerson lists refusals no retry can fix: someone has to confirm a
 // device, bind an account, log in again or change a setting first.
 var needsPerson = map[string]bool{
-	"missing_key": true, "invalid_key": true, "employee_disabled": true, "account_frozen": true,
+	"missing_key": true, "invalid_key": true, "key_revoked": true, "employee_disabled": true, "account_frozen": true,
 	"no_account_bound": true, "account_disabled": true, "account_needs_login": true,
 	"network_not_allowed": true, "client_not_allowed": true, "device_blocked": true,
 	"device_unconfirmed": true, "content_blocked": true, "images_unsupported": true,

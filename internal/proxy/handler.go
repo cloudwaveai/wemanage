@@ -389,10 +389,16 @@ func (h *Handler) authorize(ctx context.Context, token string, set settings.Sett
 		return store.KeyPrincipal{}, store.Account{}, no(http.StatusUnauthorized, "missing_key",
 			"没有带上 Key。请打开 "+h.portal("/config")+" 按「一键配置」重新配置。")
 	}
-	prin, err := h.cache.Get(ctx, secure.HashAPIKey(token))
+	hash := secure.HashAPIKey(token)
+	prin, err := h.cache.Get(ctx, hash)
 	if errors.Is(err, store.ErrNotFound) {
+		// A reset key is the usual cause: say so, and log it for its owner.
+		if keyID, empID, err := h.deps.Store.RevokedKeyOwner(ctx, hash); err == nil {
+			return store.KeyPrincipal{KeyID: keyID, EmployeeID: empID}, store.Account{}, no(http.StatusUnauthorized, "key_revoked",
+				"这个 Key 已经重置过，旧 Key 不能再用了。请到 "+h.portal("/key")+" 用新 Key 重新配置（弹窗里有一条命令配好的方式）。")
+		}
 		return store.KeyPrincipal{}, store.Account{}, no(http.StatusUnauthorized, "invalid_key",
-			"Key 无效，可能已经重置过。请到 "+h.portal("/key")+" 重新生成并导入。")
+			"Key 无效。请到 "+h.portal("/key")+" 生成新 Key 并按「一键配置」配置。")
 	}
 	if err != nil {
 		h.deps.Log.Warn("key lookup failed", "err", err)

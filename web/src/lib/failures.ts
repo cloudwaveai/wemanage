@@ -12,6 +12,7 @@ const REASONS: Record<string, string> = {
   no_account_bound: "还没分配 AI 账号",
   account_disabled: "AI 账号已停用",
   invalid_key: "Key 无效",
+  key_revoked: "用的是已重置的旧 Key",
   missing_key: "没带 Key",
   network_not_allowed: "不在公司网络",
   client_not_allowed: "客户端不被允许",

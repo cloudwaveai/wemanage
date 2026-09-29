@@ -228,6 +228,24 @@ func TestProxyInvalidKey(t *testing.T) {
 	}
 }
 
+func TestProxyOldKeyIsExplainedAndLogged(t *testing.T) {
+	h := newRig(t, newFakeCPA(), settings.RiskStandard)
+	if _, _, err := h.st.IssueKey(h.ctx, h.empID); err != nil { // resets: h.key is now the old key
+		t.Fatal(err)
+	}
+	w := doReq(t, h.r, h.key, codexBody)
+	wantRefusal(t, w, "key_revoked")
+	if !strings.Contains(w.Body.String(), "已经重置过") {
+		t.Fatalf("message: %s", w.Body.String())
+	}
+	h.rec.Flush()
+	var n int
+	_ = h.st.Pool.QueryRow(h.ctx, `SELECT COUNT(*) FROM requests WHERE employee_id=$1 AND error_type='key_revoked'`, h.empID).Scan(&n)
+	if n != 1 {
+		t.Fatalf("old-key requests logged for the owner = %d, want 1", n)
+	}
+}
+
 func TestProxyUpstreamRateLimitSetsAccount(t *testing.T) {
 	cpa := newFakeCPA()
 	reset := time.Now().Add(2 * time.Hour).Unix()

@@ -8,10 +8,7 @@ import (
 )
 
 func defaultClientRules() []settings.ClientRule {
-	return []settings.ClientRule{
-		{Kind: "codex", Header: "User-Agent", Pattern: `^(codex[-_ ]|codex_cli_rs|codex-tui|codex_vscode|codex_exec)`},
-		{Kind: "codex", Header: "Originator", Pattern: `^codex`},
-	}
+	return settings.Defaults().ClientRules
 }
 
 func TestNewClassifierInvalidPattern(t *testing.T) {
@@ -41,6 +38,13 @@ func TestClassifyDefaultRules(t *testing.T) {
 	h.Set("Originator", "codex_vscode")
 	if got := c.Classify(h); got != KindCodex {
 		t.Errorf("codex_vscode originator: got %q, want %q", got, KindCodex)
+	}
+
+	// The Codex desktop app.
+	h = http.Header{}
+	h.Set("User-Agent", "Codex Desktop/0.155.0-alpha.2.6 (Mac OS 15.7.3; arm64) unknown (Codex Desktop; 26.911.61220)")
+	if got := c.Classify(h); got != KindCodex {
+		t.Errorf("Codex Desktop UA: got %q, want %q", got, KindCodex)
 	}
 
 	// Neither header matches -> other.

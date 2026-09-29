@@ -7,9 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"aiseat/internal/devicecard"
 	"aiseat/internal/risk"
-	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
 	"aiseat/internal/testutil"
@@ -284,48 +282,5 @@ func TestEngineTellsAdminsAboutKeyWithoutAccount(t *testing.T) {
 	}
 	if n := len(e.msg.to("ou_emp")); n != 0 {
 		t.Fatalf("employee got %d messages; Codex already tells them", n)
-	}
-}
-
-type fakeCardMsg struct {
-	fakeMsg
-	cards map[string][]any
-}
-
-func (f *fakeCardMsg) SendCard(_ context.Context, openID string, card any) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.cards == nil {
-		f.cards = map[string][]any{}
-	}
-	f.cards[openID] = append(f.cards[openID], card)
-	return nil
-}
-
-func TestEngineAsksWithCardOnceCallbacksWork(t *testing.T) {
-	e := newEnv(t, settings.RiskStandard)
-	box, _ := secure.NewBox(make([]byte, 32))
-	msg := &fakeCardMsg{}
-	eng := risk.NewEngine(risk.Config{Store: e.st, Settings: e.set, Messenger: msg, PortalURL: "https://portal",
-		Cards: &devicecard.Signer{Box: box}})
-	eng.Start(e.ctx)
-
-	newDevice := func(key string) {
-		o := e.obs(e.device(t, key, 0, store.DevicePending), "1.2.3.4")
-		o.NewDevice = true
-		eng.Observe(o)
-		eng.Flush()
-	}
-	// Until Feishu has checked the callback URL, buttons would not work: text.
-	newDevice("laptop-a")
-	if len(msg.to("ou_emp")) != 1 || len(msg.cards["ou_emp"]) != 0 {
-		t.Fatalf("before callbacks: texts %d cards %d", len(msg.to("ou_emp")), len(msg.cards["ou_emp"]))
-	}
-	if err := e.st.MarkCardCallbackReady(e.ctx); err != nil {
-		t.Fatal(err)
-	}
-	newDevice("laptop-b")
-	if len(msg.to("ou_emp")) != 1 || len(msg.cards["ou_emp"]) != 1 {
-		t.Fatalf("after callbacks: texts %d cards %d", len(msg.to("ou_emp")), len(msg.cards["ou_emp"]))
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"aiseat/internal/config"
 	"aiseat/internal/cpa"
 	"aiseat/internal/db"
-	"aiseat/internal/devicecard"
 	"aiseat/internal/feishu"
 	"aiseat/internal/health"
 	"aiseat/internal/jobs"
@@ -110,10 +109,9 @@ func runServe() error {
 			log.Info("geoip enabled", "db", cfg.GeoIPDB)
 		}
 	}
-	cards := &devicecard.Signer{Box: box}
 	riskEngine := risk.NewEngine(risk.Config{
 		Store: st, Settings: set, Geo: geo, Messenger: riskMessenger(fs),
-		PortalURL: cfg.PublicBaseURL, Cards: cards, Log: log,
+		PortalURL: cfg.PublicBaseURL, Log: log,
 	})
 	riskEngine.Start(ctx)
 
@@ -139,7 +137,6 @@ func runServe() error {
 		FeishuLoginScope: cfg.FeishuLoginScope,
 		PublicBaseURL:    cfg.PublicBaseURL, SecureCookies: isHTTPS(cfg.PublicBaseURL),
 		DevLogin: cfg.DevLogin, Log: log, Risk: riskEngine,
-		Cards: cards, FeishuVerifyToken: cfg.FeishuVerificationToken, FeishuEncryptKey: cfg.FeishuEncryptKey,
 		SyncFeishu: func(ctx context.Context) (int, int, error) {
 			if fs == nil {
 				return 0, 0, errors.New("feishu not configured")
