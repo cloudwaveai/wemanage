@@ -41,6 +41,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"office_only":    set.OfficeOnly,
 		"remote_allowed": emp.RemoteAllowed,
 		"weekly_report":  !emp.WeeklyReportOff,
+		"quota_alert":    emp.QuotaAlert,
 	}
 	// Devices awaiting the employee's confirmation.
 	pending := 0
@@ -175,6 +176,80 @@ func (s *Server) handleWeeklyReportPref(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"weekly_report": body.Enabled})
+}
+
+// handleQuotaAlertPref turns the employee's 80% quota reminder on or off.
+func (s *Server) handleQuotaAlertPref(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	emp := currentEmployee(r)
+	if err := s.deps.Store.SetQuotaAlert(r.Context(), emp.ID, body.Enabled); err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot update")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"quota_alert": body.Enabled})
+}
+
+// handleMyStatus answers "can I use it right now, and if not, why": key,
+// account, quota, devices waiting for confirmation, and the latest success
+// and failure. It is the employee's own view; nothing here goes to anyone else.
+func (s *Server) handleMyStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	emp := currentEmployee(r)
+	resp := map[string]any{"frozen": emp.FrozenAt != nil, "frozen_reason": emp.FrozenReason, "quota_alert": emp.QuotaAlert}
+
+	_, err := s.deps.Store.ActiveKey(ctx, emp.ID)
+	resp["has_key"] = err == nil
+
+	account := map[string]any{"bound": false}
+	if acc, err := s.boundAccount(ctx, emp.ID); err == nil {
+		account = map[string]any{"bound": true, "provider": acc.Provider, "status": accountStatus(acc),
+			"rate_limited_until": acc.RateLimitedUntil}
+		if q, err := s.deps.Store.LatestQuota(ctx, acc.ID); err == nil {
+			resp["quota"] = q
+		}
+	}
+	resp["account"] = account
+
+	pending := []map[string]any{}
+	if devs, err := s.deps.Store.ListDevices(ctx, emp.ID); err == nil {
+		for _, d := range devs {
+			if d.Status == store.DevicePending || d.Status == store.DeviceExpired {
+				pending = append(pending, map[string]any{"id": d.ID, "label": d.Label, "last_ip": d.LastIP,
+					"first_seen": d.FirstSeen, "status": d.Status})
+			}
+		}
+	}
+	resp["pending_devices"] = pending
+
+	brief := func(b *store.RequestBrief) any {
+		if b == nil {
+			return nil
+		}
+		return map[string]any{"at": b.At, "client_kind": b.ClientKind, "model": b.Model,
+			"status_code": b.StatusCode, "error_type": b.ErrorType}
+	}
+	ok, failed, _ := s.deps.Store.LastRequests(ctx, emp.ID)
+	resp["last_ok"] = brief(ok)
+	// A failure only matters until something works again.
+	if failed != nil && (ok == nil || failed.At.After(ok.At)) {
+		resp["last_failure"] = brief(failed)
+	} else {
+		resp["last_failure"] = nil
+	}
+	loc := s.deps.Loc
+	if loc == nil {
+		loc = time.Local
+	}
+	now := time.Now().In(loc)
+	today, _ := s.deps.Store.RequestsSince(ctx, emp.ID, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc))
+	resp["today_requests"] = today
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {

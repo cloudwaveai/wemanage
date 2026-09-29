@@ -69,6 +69,8 @@ type Employee struct {
 	RemoteAllowed bool
 	// WeeklyReportOff: the employee turned their weekly AI recap off.
 	WeeklyReportOff bool
+	// QuotaAlert: the employee asked to be told when their quota reaches 80%.
+	QuotaAlert bool
 }
 
 // Account is an upstream ChatGPT subscription account.

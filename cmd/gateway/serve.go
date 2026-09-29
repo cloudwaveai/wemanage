@@ -157,7 +157,7 @@ func runServe() error {
 			Sender: reportSender(fs), Loc: cfg.Timezone, Enabled: set.Get(ctx).ReportEnabled && cfg.ReportLLMAPIKey != "",
 		},
 		EgressEchoURL: cfg.EgressEchoURL, Loc: cfg.Timezone,
-		GitHub: health.GitHub{}, Risk: riskEngine, Quota: quota, Log: log,
+		GitHub: health.GitHub{}, Risk: riskEngine, Quota: quota, QuotaAlerts: quotaAlerter(st, fs, cfg), Log: log,
 	})
 	c.Start()
 	defer c.Stop()
@@ -210,6 +210,14 @@ func notifySender(fs *feishu.Client) notify.Sender {
 		return nil
 	}
 	return fs
+}
+
+// quotaAlerter is nil without Feishu: the reminders have no way to go out.
+func quotaAlerter(st *store.Store, fs *feishu.Client, cfg *config.Config) *jobs.QuotaAlerter {
+	if fs == nil {
+		return nil
+	}
+	return &jobs.QuotaAlerter{Store: st, Sender: fs, Loc: cfg.Timezone, PortalURL: cfg.PublicBaseURL}
 }
 
 func riskMessenger(fs *feishu.Client) risk.Messenger {

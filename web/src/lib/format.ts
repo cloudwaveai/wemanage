@@ -61,3 +61,29 @@ export function fmtDuration(ms: number | null | undefined): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
 }
+
+// "刚刚", "5 分钟前", "3 小时前", "2 天前".
+export function fmtAgo(v: string | number | Date | null | undefined): string {
+  if (!v) return "-";
+  const ms = Date.now() - new Date(v).getTime();
+  if (Number.isNaN(ms)) return "-";
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "刚刚";
+  if (min < 60) return `${min} 分钟前`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} 小时前`;
+  return `${Math.floor(h / 24)} 天前`;
+}
+
+// A future time the way people say it: "15:20", "明天 09:10", "10月3日 09:10".
+export function fmtWhen(v: string | number | Date | null | undefined): string {
+  if (!v) return "-";
+  const t = new Date(v);
+  if (Number.isNaN(t.getTime())) return "-";
+  const hm = t.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((day(t) - day(new Date())) / 86_400_000);
+  if (diff === 0) return hm;
+  if (diff === 1) return `明天 ${hm}`;
+  return `${t.getMonth() + 1}月${t.getDate()}日 ${hm}`;
+}

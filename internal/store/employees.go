@@ -30,14 +30,14 @@ func scanEmployee(r pgx.Row) (Employee, error) {
 	var openID *string
 	err := r.Scan(&e.ID, &openID, &e.FeishuUnionID, &e.FeishuUserID, &e.Name,
 		&e.Email, &e.AvatarURL, &e.Status, &e.IsSuperAdmin, &e.NoticeAckAt, &e.CreatedAt,
-		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason, &e.RemoteAllowed, &e.WeeklyReportOff)
+		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason, &e.RemoteAllowed, &e.WeeklyReportOff, &e.QuotaAlert)
 	if openID != nil {
 		e.FeishuOpenID = *openID
 	}
 	return e, err
 }
 
-const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason, remote_allowed, weekly_report_off`
+const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason, remote_allowed, weekly_report_off, quota_alert`
 
 // GetEmployee returns one employee by id.
 func (s *Store) GetEmployee(ctx context.Context, id int64) (Employee, error) {
@@ -116,6 +116,12 @@ func (s *Store) FreezeEmployee(ctx context.Context, id int64, reason string) (bo
 // SetWeeklyReportOff turns the employee's weekly AI recap off or back on.
 func (s *Store) SetWeeklyReportOff(ctx context.Context, id int64, off bool) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE employees SET weekly_report_off=$2, updated_at=now() WHERE id=$1`, id, off)
+	return err
+}
+
+// SetQuotaAlert turns the employee's 80% quota reminder on or off.
+func (s *Store) SetQuotaAlert(ctx context.Context, id int64, on bool) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE employees SET quota_alert=$2, updated_at=now() WHERE id=$1`, id, on)
 	return err
 }
 

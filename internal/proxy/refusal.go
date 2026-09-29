@@ -9,6 +9,7 @@ import (
 
 	"aiseat/internal/recorder"
 	"aiseat/internal/risk"
+	"aiseat/internal/timefmt"
 
 	"github.com/tidwall/gjson"
 )
@@ -118,19 +119,7 @@ func (h *Handler) usageLimited(until time.Time) *refusal {
 // fmtReset renders a reset time the way people say it: "15:20",
 // "明天 09:10" or "10月3日 09:10".
 func (h *Handler) fmtReset(t time.Time) string {
-	loc := h.deps.Loc
-	if loc == nil {
-		loc = time.Local
-	}
-	t, now := t.In(loc), time.Now().In(loc)
-	day := func(x time.Time) time.Time { return time.Date(x.Year(), x.Month(), x.Day(), 0, 0, 0, 0, loc) }
-	switch day(t).Sub(day(now)) {
-	case 0:
-		return t.Format("15:04")
-	case 24 * time.Hour:
-		return "明天 " + t.Format("15:04")
-	}
-	return fmt.Sprintf("%d月%d日 %s", t.Month(), t.Day(), t.Format("15:04"))
+	return timefmt.Relative(t, time.Now(), h.deps.Loc)
 }
 
 func contentBlocked(rule string) risk.Decision {

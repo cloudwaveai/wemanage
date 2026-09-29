@@ -31,6 +31,7 @@ type Deps struct {
 	GitHub        health.GitHub
 	Risk          *risk.Engine        // optional
 	Quota         *health.QuotaProber // optional
+	QuotaAlerts   *QuotaAlerter       // optional
 	Log           *slog.Logger
 }
 
@@ -47,6 +48,15 @@ func Register(c *cron.Cron, d Deps) {
 		_, _ = c.AddFunc("@every 5m", func() {
 			if err := d.Quota.RunStale(ctx); err != nil {
 				log.Warn("quota probe", "err", err)
+			}
+		})
+	}
+
+	// Quota reminders employees asked for — every 2 minutes.
+	if d.QuotaAlerts != nil {
+		_, _ = c.AddFunc("@every 2m", func() {
+			if err := d.QuotaAlerts.Run(ctx); err != nil {
+				log.Warn("quota alerts", "err", err)
 			}
 		})
 	}
