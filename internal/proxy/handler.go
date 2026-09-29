@@ -47,6 +47,9 @@ type HandlerDeps struct {
 	// messages; Loc is the time zone those messages give times in.
 	PortalURL string
 	Loc       *time.Location
+	// CPA is CPA's management API, for calls CPA does not proxy itself
+	// (Codex's standalone web search); nil turns web search off.
+	CPA SearchBackend
 }
 
 // Handler implements the OpenAI-compatible data plane.
@@ -68,6 +71,8 @@ type Handler struct {
 	bkMu     sync.Mutex
 	observed map[string]*observedEntry // User-Agent -> uses not yet written
 	quotaAt  map[int64]time.Time       // account -> last quota snapshot write
+
+	authFiles authFileCache
 }
 
 type observedEntry struct {
@@ -102,6 +107,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/models", h.handleModels)
 	r.Post("/v1/images/generations", h.handleImages("generations"))
 	r.Post("/v1/images/edits", h.handleImages("edits"))
+	r.Post("/v1/alpha/search", h.handleSearch)
 }
 
 func (h *Handler) classifier(set settings.Settings) *Classifier {

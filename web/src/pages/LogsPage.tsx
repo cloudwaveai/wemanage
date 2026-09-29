@@ -39,6 +39,7 @@ const ENDPOINT_LABELS: Record<string, string> = {
   responses: "对话",
   chat: "对话（Chat）",
   images: "生图",
+  search: "联网搜索",
 };
 
 function statusTone(code: number): string {

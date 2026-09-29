@@ -308,9 +308,12 @@ func (s *Server) codexSetup(ctx context.Context, employeeID int64) codexSetup {
 	// Codex only offers its image generation and web search tools for OpenAI
 	// providers; a custom provider qualifies when it sends this header and
 	// does not use OpenAI login. The gateway strips it before going upstream.
+	// luna-class models search with Codex's standalone web.run tool, which
+	// calls {base_url}/alpha/search; the gateway serves that for ChatGPT accounts.
 	if cs.chatgpt {
 		cs.toolsLine = "\n# 开启 Codex 的生图和联网搜索（这个请求头只给 Codex 看，网关会去掉，不会发给上游）\n" +
-			`http_headers = { "x-openai-actor-authorization" = "aiseat" }`
+			`http_headers = { "x-openai-actor-authorization" = "aiseat" }` + "\n" +
+			"supports_standalone_web_search = true"
 	}
 	return cs
 }

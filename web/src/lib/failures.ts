@@ -20,6 +20,7 @@ const REASONS: Record<string, string> = {
   gateway_busy: "同时请求太多",
   gateway_unavailable: "网关暂时不可用",
   images_unsupported: "账号不支持生图",
+  search_unsupported: "账号不支持联网搜索",
   upstream_unreachable: "上游连不上",
   websocket_closed: "连接中断",
   client_closed: "Codex 中途断开（多为按了 Esc 或打断）",

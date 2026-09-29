@@ -32,7 +32,7 @@ var needsPerson = map[string]bool{
 	"missing_key": true, "invalid_key": true, "key_revoked": true, "employee_disabled": true, "account_frozen": true,
 	"no_account_bound": true, "account_disabled": true, "account_needs_login": true,
 	"network_not_allowed": true, "client_not_allowed": true, "device_blocked": true,
-	"device_unconfirmed": true, "content_blocked": true, "images_unsupported": true,
+	"device_unconfirmed": true, "content_blocked": true, "images_unsupported": true, "search_unsupported": true,
 }
 
 // wire shapes a refusal for the client. Codex retries other 4xx responses

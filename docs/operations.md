@@ -43,6 +43,8 @@
 
 额度用完时按 Codex 自己的 `usage_limit_reached` 格式返回（429，带 `resets_at`）：Codex 会立即停下并显示"Try again at …"。上游的 429 如果是额度用完（或要等一分钟以上），网关也会改写成这个格式，并去掉上游返回里的 `plan_type`，否则 Codex 会提示员工"升级 Pro / 购买额度"。只等几秒的短暂 429 原样返回，让 Codex 自动重试。
 
+**联网搜索：** luna 这类模型用 Codex 的独立搜索工具（web.run），它请求 `{base_url}/alpha/search`。CPA 不转发这个接口，由网关代为调用：用员工绑定账号的凭证，经 CPA 管理接口 `api-call` 请求 `chatgpt.com/backend-api/codex/alpha/search`（走该账号的出口代理）。日志里类型记为"联网搜索"，内容只记搜索词和结果条数、来源网址。员工的 Codex 配置里要有 `supports_standalone_web_search = true` 和那个请求头（一键配置生成的都有）；用 CC Switch 原样导入的配置没有，模型只能在终端里 curl。
+
 **一条命令安装：** 员工在门户生成的安装命令只带一个 10 分钟内有效、只能用一次的安装码（存在网关内存里，重启后作废，重新生成即可），脚本从 `/i/<码>` 下载。脚本备份并改写员工电脑上的 `~/.codex/config.toml`，Key 写在 `experimental_bearer_token` 里，文件权限设为 600。
 
 **状态 499（没回答完就断了）：** WebSocket 对话里，一轮回答还没结束连接就断了，这一条记为 499，`error_type` 写明是谁先断的：`client_closed`（Codex 断开，常见于员工按 Esc、打断或关掉 Codex）、`upstream_closed`（上游断开）、`gateway_restart`（网关重启，Codex 会自动重连）。更早的记录只写 `websocket_closed`，分不出是谁。

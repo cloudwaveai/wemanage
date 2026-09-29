@@ -121,6 +121,8 @@ func runServe() error {
 		CPABaseURL: cfg.CPABaseURL, CPAAPIKey: cfg.CPAAPIKey, Upstream: upstream, Log: log,
 		Risk: riskEngine, TrustProxy: cfg.TrustProxyHeaders,
 		PortalURL: cfg.PublicBaseURL, Loc: cfg.Timezone,
+		// Web search goes through CPA's api-call; searches can take a while.
+		CPA: cpa.NewClient(cfg.CPABaseURL, cfg.CPAManagementKey, &http.Client{Timeout: 100 * time.Second}),
 	})
 
 	// Web / management plane.

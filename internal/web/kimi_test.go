@@ -100,7 +100,7 @@ func TestKimiAccountOnboarding(t *testing.T) {
 	_ = json.Unmarshal(body, &snip)
 	if !strings.Contains(snip.CodexToml, `experimental_bearer_token = "{{KEY}}"`) || strings.Contains(snip.CodexToml, "env_key") ||
 		strings.Contains(snip.CodexToml, "gpt-6-luna") ||
-		strings.Contains(snip.CodexToml, "x-openai-actor-authorization") ||
+		strings.Contains(snip.CodexToml, "x-openai-actor-authorization") || strings.Contains(snip.CodexToml, "supports_standalone_web_search") ||
 		!strings.Contains(snip.CodexToml, "supports_websockets = false") {
 		t.Fatalf("snippet for a Kimi account:\n%s", snip.CodexToml)
 	}
@@ -111,7 +111,8 @@ func TestKimiAccountOnboarding(t *testing.T) {
 	_ = json.Unmarshal(body, &snip)
 	// With no model list it recommends the configured default model.
 	if !strings.Contains(snip.CodexToml, "supports_websockets = true") || !strings.Contains(snip.CodexToml, `model = "{{MODEL}}"`) ||
-		!strings.Contains(snip.CodexToml, `"x-openai-actor-authorization"`) {
+		!strings.Contains(snip.CodexToml, `"x-openai-actor-authorization"`) ||
+		!strings.Contains(snip.CodexToml, "supports_standalone_web_search = true") {
 		t.Fatalf("snippet for a ChatGPT account:\n%s", snip.CodexToml)
 	}
 }

@@ -120,7 +120,7 @@ func harness(t *testing.T, cpa *fakeCPA) (*chi.Mux, *store.Store, string, *recor
 	return h.r, h.st, h.key, h.rec, h.ctx
 }
 
-func newRig(t *testing.T, cpa *fakeCPA, mode string) *rig {
+func newRig(t *testing.T, cpa *fakeCPA, mode string, opts ...func(*proxy.HandlerDeps)) *rig {
 	t.Helper()
 	pool := testutil.NewDB(t)
 	st := store.New(pool)
@@ -145,11 +145,15 @@ func newRig(t *testing.T, cpa *fakeCPA, mode string) *rig {
 	eng := risk.NewEngine(risk.Config{Store: st, Settings: set, PortalURL: "https://portal"})
 	eng.Start(ctx)
 
-	h := proxy.NewHandler(proxy.HandlerDeps{
+	deps := proxy.HandlerDeps{
 		Store: st, Settings: set, Limiter: proxy.NewLimiter(), Recorder: rec,
 		CPABaseURL: cpa.srv.URL, CPAAPIKey: "sk-internal", Upstream: cpa.srv.Client(),
 		Risk: eng, TrustProxy: true,
-	})
+	}
+	for _, o := range opts {
+		o(&deps)
+	}
+	h := proxy.NewHandler(deps)
 	r := chi.NewRouter()
 	h.Routes(r)
 	t.Cleanup(func() { cpa.srv.Close() })
