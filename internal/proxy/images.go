@@ -45,6 +45,7 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 		kind := h.classifier(set).Classify(r.Header)
 		prin, acc, refused := h.authorize(ctx, bearer(r), set)
 		if refused != nil && prin.EmployeeID == 0 {
+			h.logAnonymous(r, kind, refused)
 			refused.write(w, kind)
 			return
 		}

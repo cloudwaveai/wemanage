@@ -86,6 +86,20 @@ func (h *Handler) refuse(w http.ResponseWriter, f *refusal, kind string, rec *re
 	h.logRefusal(rec, f.write(w, kind), f.code)
 }
 
+// logAnonymous notes a refusal that cannot be tied to an employee (no key,
+// unknown key) in the gateway log, so "my requests don't show up" can be
+// traced: from where, which client, what kind of token. Only the token's
+// first characters are logged (for a gateway key, the prefix the portal shows).
+func (h *Handler) logAnonymous(r *http.Request, kind string, f *refusal) {
+	tok := bearer(r)
+	shape := "none"
+	if tok != "" {
+		shape = fmt.Sprintf("%s…(%d chars)", tok[:min(len(tok), 10)], len(tok))
+	}
+	h.deps.Log.Info("refused unknown key", "code", f.code, "path", r.URL.Path, "ip", risk.ClientIP(r, h.deps.TrustProxy),
+		"client", kind, "user_agent", r.Header.Get("User-Agent"), "token", shape)
+}
+
 func (h *Handler) logRefusal(rec *recorder.Record, status int, code string) {
 	if rec == nil || rec.EmployeeID == 0 {
 		return

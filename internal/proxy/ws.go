@@ -101,6 +101,9 @@ func (h *Handler) handleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	base := risk.Observation{EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP,
 		ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), At: time.Now()}
 	if refused != nil {
+		if prin.EmployeeID == 0 {
+			h.logAnonymous(r, kind, refused)
+		}
 		h.observeRefusal(base, refused)
 		h.refuse(w, refused, kind, rec)
 		return

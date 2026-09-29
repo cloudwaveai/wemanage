@@ -173,6 +173,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		// --- 1. Authenticate ---
 		prin, acc, refused := h.authorize(ctx, bearer(r), set)
 		if refused != nil && prin.EmployeeID == 0 {
+			h.logAnonymous(r, kind, refused)
 			refused.write(w, kind)
 			return
 		}
@@ -539,11 +540,16 @@ func (h *Handler) markRateLimited(ctx context.Context, accountID int64, until ti
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := bearer(r)
+	kind := h.classifier(h.deps.Settings.Get(ctx)).Classify(r.Header)
 	if token == "" {
+		h.logAnonymous(r, kind, &refusal{code: "missing_key"})
 		oaError(w, http.StatusUnauthorized, "没有带上 Key。", "invalid_request_error", "missing_key")
 		return
 	}
 	prin, err := h.cache.Get(ctx, secure.HashAPIKey(token))
+	if err != nil && errors.Is(err, store.ErrNotFound) {
+		h.logAnonymous(r, kind, &refusal{code: "invalid_key"})
+	}
 	if err != nil || prin.Account == nil {
 		oaError(w, http.StatusForbidden, "Key 无效，或还没有分配 AI 账号。", "invalid_request_error", "no_account_bound")
 		return
