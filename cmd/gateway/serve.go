@@ -128,6 +128,7 @@ func runServe() error {
 	notifier := notify.NewNotifier(st, notifySender(fs), superAdmins)
 
 	webSrv := web.NewServer(web.Deps{
+		Loc:                  cfg.Timezone,
 		Models:               dp.AccountModels,
 		Quota:                quota,
 		BootstrapSuperAdmins: cfg.BootstrapSuperAdmins,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"aiseat/internal/cpa"
 	"aiseat/internal/feishu"
@@ -27,6 +28,8 @@ type Deps struct {
 	PublicBaseURL    string
 	SecureCookies    bool
 	DevLogin         bool
+	// Loc is the company time zone: charts bucket by its hours and days.
+	Loc *time.Location
 	// Models lists the models an account can use (optional).
 	Models func(ctx context.Context, acc store.Account) ([]store.ModelInfo, error)
 	// ModelCatalog lists a provider channel's models when no account is

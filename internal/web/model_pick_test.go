@@ -2,6 +2,7 @@ package web
 
 import (
 	"testing"
+	"time"
 
 	"aiseat/internal/store"
 )
@@ -40,6 +41,22 @@ func TestPickDefaultModel(t *testing.T) {
 	} {
 		if got := pickDefaultModel(c.models, c.chatgpt, c.preferred); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSeriesBucket(t *testing.T) {
+	for _, c := range []struct {
+		span time.Duration
+		want time.Duration
+	}{
+		{30 * time.Minute, 5 * time.Minute},
+		{3 * time.Hour, 15 * time.Minute},
+		{20 * time.Hour, time.Hour},
+		{6 * 24 * time.Hour, 24 * time.Hour},
+	} {
+		if got := seriesBucket(c.span); got != c.want {
+			t.Errorf("seriesBucket(%v) = %v, want %v", c.span, got, c.want)
 		}
 	}
 }

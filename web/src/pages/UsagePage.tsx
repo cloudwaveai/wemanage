@@ -1,14 +1,5 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts";
 import { api, ApiError } from "../lib/api";
 import type { UsageSummary, QuotaResp } from "../lib/types";
 import {
@@ -22,7 +13,8 @@ import {
   Meter,
   RangeTabs,
 } from "../components/ui";
-import { fmtNum, fmtDayShort, fmtDateTime } from "../lib/format";
+import { fmtNum, fmtDateTime } from "../lib/format";
+import { UsageTrend } from "../components/UsageTrend";
 
 export function UsagePage() {
   const [range, setRange] = useState(7);
@@ -51,10 +43,6 @@ export function UsagePage() {
     ? u.tokens_input + u.tokens_output + u.tokens_reasoning
     : 0;
 
-  const daily = (u?.daily ?? []).map((p) => ({
-    day: fmtDayShort(p.day),
-    requests: p.requests,
-  }));
 
   return (
     <div>
@@ -110,55 +98,9 @@ export function UsagePage() {
             </Card>
           )}
 
-          {/* daily line chart */}
           <Card className="p-5">
-            <h2 className="mb-3 text-sm font-semibold text-slate-800">
-              每日请求趋势
-            </h2>
-            {daily.length ? (
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={daily}
-                    margin={{ top: 8, right: 12, bottom: 4, left: -12 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eef1f6" />
-                    <XAxis
-                      dataKey="day"
-                      tick={{ fontSize: 12, fill: "#94a3b8" }}
-                      tickLine={false}
-                      axisLine={{ stroke: "#e2e8f0" }}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 12, fill: "#94a3b8" }}
-                      tickLine={false}
-                      axisLine={false}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      formatter={(v: number) => [fmtNum(v), "请求数"]}
-                      contentStyle={{
-                        borderRadius: 8,
-                        border: "1px solid #e2e8f0",
-                        fontSize: 12,
-                      }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="requests"
-                      stroke="#4f46e5"
-                      strokeWidth={2}
-                      dot={{ r: 2.5 }}
-                      activeDot={{ r: 4 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <p className="py-8 text-center text-sm text-slate-400">
-                该时间范围内暂无请求。
-              </p>
-            )}
+            <h2 className="mb-1 text-sm font-semibold text-slate-800">请求趋势</h2>
+            <UsageTrend series={u.series} />
           </Card>
 
           {/* breakdowns */}

@@ -34,6 +34,12 @@ const EMPTY: Filters = {
   model: "",
 };
 
+const ENDPOINT_LABELS: Record<string, string> = {
+  responses: "对话",
+  chat: "对话（Chat）",
+  images: "生图",
+};
+
 function statusTone(code: number): string {
   if (code >= 200 && code < 300) return "bg-emerald-100 text-emerald-700";
   if (code >= 400 && code < 500) return "bg-amber-100 text-amber-700";
@@ -100,11 +106,11 @@ export function LogsPage() {
   return (
     <div>
       <PageHeader
-        title="对话记录"
+        title={isAdmin ? "对话记录" : "使用日志"}
         desc={
           isAdmin
-            ? "全部员工经过网关的请求。查看原文会写入审计。"
-            : "你经过网关的请求记录。"
+            ? "全部员工经过网关的请求。点开一条可看原文，查看会写入审计。"
+            : "你经过网关的每次调用：时间、模型、状态、Token 和耗时。"
         }
       />
 
@@ -151,17 +157,19 @@ export function LogsPage() {
               className={inputCls}
             />
           </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-500">
-              关键词
-            </label>
-            <input
-              value={draft.q}
-              onChange={(e) => set("q", e.target.value)}
-              placeholder="端点 / 模型…"
-              className={inputCls}
-            />
-          </div>
+          {isAdmin && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                关键词
+              </label>
+              <input
+                value={draft.q}
+                onChange={(e) => set("q", e.target.value)}
+                placeholder="原文 / 端点 / 模型…"
+                className={inputCls}
+              />
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-500">
               客户端
@@ -180,7 +188,7 @@ export function LogsPage() {
             <input
               value={draft.model}
               onChange={(e) => set("model", e.target.value)}
-              placeholder="如 gpt-5.1-codex"
+              placeholder="如 gpt-6-luna"
               className={inputCls}
             />
           </div>
@@ -203,12 +211,13 @@ export function LogsPage() {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-4 py-2.5 font-medium">时间</th>
-                  <th className="px-4 py-2.5 font-medium">员工</th>
+                  {isAdmin && <th className="px-4 py-2.5 font-medium">员工</th>}
                   <th className="px-4 py-2.5 font-medium">客户端</th>
-                  <th className="px-4 py-2.5 font-medium">端点</th>
+                  <th className="px-4 py-2.5 font-medium">类型</th>
                   <th className="px-4 py-2.5 font-medium">模型</th>
                   <th className="px-4 py-2.5 font-medium">状态</th>
-                  <th className="px-4 py-2.5 text-right font-medium">Token</th>
+                  <th className="px-4 py-2.5 text-right font-medium">输入</th>
+                  <th className="px-4 py-2.5 text-right font-medium">输出</th>
                   <th className="px-4 py-2.5 text-right font-medium">耗时</th>
                 </tr>
               </thead>
@@ -216,20 +225,25 @@ export function LogsPage() {
                 {rows.map((r) => (
                   <tr
                     key={r.id}
-                    onClick={() => navigate(`/logs/${r.id}`)}
-                    className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-indigo-50/40"
+                    onClick={isAdmin ? () => navigate(`/logs/${r.id}`) : undefined}
+                    className={
+                      "border-b border-slate-100 last:border-0 " +
+                      (isAdmin ? "cursor-pointer hover:bg-indigo-50/40" : "hover:bg-slate-50")
+                    }
                   >
                     <td className="whitespace-nowrap px-4 py-2.5 text-slate-600">
                       {fmtDateTime(r.started_at)}
                     </td>
-                    <td className="px-4 py-2.5 text-slate-700">
-                      {r.employee_name || r.employee_id}
-                    </td>
+                    {isAdmin && (
+                      <td className="px-4 py-2.5 text-slate-700">
+                        {r.employee_name || r.employee_id}
+                      </td>
+                    )}
                     <td className="px-4 py-2.5 text-slate-600">
                       {r.client_kind || "-"}
                     </td>
-                    <td className="max-w-[180px] truncate px-4 py-2.5 font-mono text-xs text-slate-500">
-                      {r.endpoint}
+                    <td className="whitespace-nowrap px-4 py-2.5 text-xs text-slate-500">
+                      {ENDPOINT_LABELS[r.endpoint] ?? r.endpoint}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-slate-600">
                       <span className="font-mono">{r.model_requested || "-"}</span>
@@ -252,7 +266,10 @@ export function LogsPage() {
                       </span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-600">
-                      {fmtNum(r.tokens_input + r.tokens_output)}
+                      {fmtNum(r.tokens_input)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-600">
+                      {fmtNum(r.tokens_output)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-500">
                       {fmtDuration(r.duration_ms)}
@@ -262,7 +279,7 @@ export function LogsPage() {
               </tbody>
             </table>
           </div>
-          {rows.length === 0 && <Empty label="没有匹配的日志" />}
+          {rows.length === 0 && <Empty label="没有匹配的记录" />}
           <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-sm text-slate-500">
             <span>
               共 {fmtNum(total)} 条 · 第 {page + 1} / {maxPage + 1} 页

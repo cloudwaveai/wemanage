@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -183,4 +184,62 @@ func (s *Store) UsageByAccount(ctx context.Context) (map[int64]AccountUsage, err
 		out[u.AccountID] = u
 	}
 	return out, rows.Err()
+}
+
+// SeriesPoint is one time bucket of usage.
+type SeriesPoint struct {
+	T        time.Time `json:"t"`
+	Requests int64     `json:"requests"`
+	Tokens   int64     `json:"tokens"` // input + output
+}
+
+// FirstRequestAt returns the earliest request in [from,to) for the given
+// employees (nil = all); ok is false when there is none.
+func (s *Store) FirstRequestAt(ctx context.Context, from, to time.Time, employeeIDs []int64) (first time.Time, ok bool, err error) {
+	var t *time.Time
+	err = s.Pool.QueryRow(ctx, `
+		SELECT MIN(started_at) FROM requests
+		WHERE started_at >= $1 AND started_at < $2 AND ($3::bigint[] IS NULL OR employee_id = ANY($3))`,
+		from, to, nullableIDs(employeeIDs)).Scan(&t)
+	if err != nil || t == nil {
+		return time.Time{}, false, err
+	}
+	return *t, true, nil
+}
+
+// UsageSeries counts requests and tokens in [from,to) per bucket, buckets
+// aligned to origin; every bucket in the window is present (empty ones as
+// zeros) so the series draws as a continuous line.
+func (s *Store) UsageSeries(ctx context.Context, from, to time.Time, employeeIDs []int64, bucket time.Duration, origin time.Time) ([]SeriesPoint, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT date_bin($1::interval, started_at, $2) AS b, COUNT(*), COALESCE(SUM(tokens_input + tokens_output), 0)
+		FROM requests
+		WHERE started_at >= $3 AND started_at < $4 AND ($5::bigint[] IS NULL OR employee_id = ANY($5))
+		GROUP BY b ORDER BY b`,
+		fmt.Sprintf("%d seconds", int64(bucket/time.Second)), origin, from, to, nullableIDs(employeeIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	got := map[int64]SeriesPoint{}
+	for rows.Next() {
+		var p SeriesPoint
+		if err := rows.Scan(&p.T, &p.Requests, &p.Tokens); err != nil {
+			return nil, err
+		}
+		got[p.T.Unix()] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	start := from.Add(-((from.Sub(origin)%bucket + bucket) % bucket)) // floor to the bucket grid
+	var out []SeriesPoint
+	for t := start; t.Before(to); t = t.Add(bucket) {
+		p, ok := got[t.Unix()]
+		if !ok {
+			p = SeriesPoint{T: t}
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }

@@ -72,7 +72,7 @@ export default function App() {
           <Route path="/usage" element={<UsagePage />} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/logs" element={<LogsPage />} />
-          <Route path="/logs/:id" element={<LogDetailPage />} />
+          {isAdmin && <Route path="/logs/:id" element={<LogDetailPage />} />}
 
           {canOversee && <Route path="/team" element={<TeamPage />} />}
 

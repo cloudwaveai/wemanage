@@ -2,11 +2,13 @@ package web_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
@@ -166,6 +168,19 @@ func TestLogsOnlyOwnUnlessSuperAdmin(t *testing.T) {
 	resp, body := c.do(http.MethodGet, "/api/logs", "")
 	if resp.StatusCode != 200 || !strings.Contains(string(body), `"total":0`) {
 		t.Fatalf("leader own logs: %d %s", resp.StatusCode, body)
+	}
+	// Employees get their own usage log, not the conversation behind an entry.
+	reqID := [16]byte{0xab}
+	if err := st.InsertRequest(ctx, store.RequestRow{ID: reqID, StartedAt: time.Now(), EmployeeID: sub.ID,
+		ClientKind: "codex", Endpoint: "responses", StatusCode: 200}); err != nil {
+		t.Fatal(err)
+	}
+	subC := login(t, ts, "ou_sub")
+	if resp, body := subC.do(http.MethodGet, "/api/logs", ""); resp.StatusCode != 200 || !strings.Contains(string(body), `"total":1`) {
+		t.Fatalf("own usage log: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := subC.do(http.MethodGet, "/api/logs/"+hex.EncodeToString(reqID[:]), ""); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("employee reading own transcript: status %d, want 403", resp.StatusCode)
 	}
 	// A super admin may read anyone's (each view is audited).
 	_ = st.EnsureSuperAdmin(ctx, "ou_admin", "admin")

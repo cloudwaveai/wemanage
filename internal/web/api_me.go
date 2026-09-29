@@ -89,7 +89,58 @@ func (s *Server) handleMyUsage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "usage query failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, u)
+	series, err := s.usageSeries(r.Context(), from, to, []int64{emp.ID})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "usage query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		store.UsageSummary
+		Series usageSeriesResp `json:"series"`
+	}{u, series})
+}
+
+// usageSeriesResp is a request/token time series and its bucket size.
+type usageSeriesResp struct {
+	BucketSeconds int64               `json:"bucket_seconds"`
+	Points        []store.SeriesPoint `json:"points"`
+}
+
+// usageSeries draws [from,to) at a resolution that suits the data: the
+// window starts one bucket before the first request (not at the start of the
+// range), and the bucket grows with it — 5 or 15 minutes for a few hours,
+// hours for a few days, days beyond that — so a single busy day reads as a
+// curve rather than a lone point. Buckets follow the company's local clock.
+func (s *Server) usageSeries(ctx context.Context, from, to time.Time, ids []int64) (usageSeriesResp, error) {
+	first, ok, err := s.deps.Store.FirstRequestAt(ctx, from, to, ids)
+	if err != nil || !ok {
+		return usageSeriesResp{Points: []store.SeriesPoint{}}, err
+	}
+	bucket := seriesBucket(to.Sub(first))
+	loc := s.deps.Loc
+	if loc == nil {
+		loc = time.Local
+	}
+	origin := time.Date(2000, 1, 1, 0, 0, 0, 0, loc)
+	points, err := s.deps.Store.UsageSeries(ctx, first.Add(-bucket), to, ids, bucket, origin)
+	if err != nil {
+		return usageSeriesResp{}, err
+	}
+	return usageSeriesResp{BucketSeconds: int64(bucket / time.Second), Points: points}, nil
+}
+
+// seriesBucket picks the bucket for a window of the given length.
+func seriesBucket(span time.Duration) time.Duration {
+	switch {
+	case span <= 2*time.Hour:
+		return 5 * time.Minute
+	case span <= 8*time.Hour:
+		return 15 * time.Minute
+	case span <= 4*24*time.Hour:
+		return time.Hour
+	default:
+		return 24 * time.Hour
+	}
 }
 
 func (s *Server) handleMyQuota(w http.ResponseWriter, r *http.Request) {

@@ -59,6 +59,12 @@ export interface UsageSummary {
   by_model: UsageBreakdown[] | null;
   by_client: UsageBreakdown[] | null;
   daily: UsagePoint[] | null;
+  // Time series at a resolution chosen from the data (5 min … 1 day).
+  series?: UsageSeries;
+}
+export interface UsageSeries {
+  bucket_seconds: number; // 0 when there is no data
+  points: { t: string; requests: number; tokens: number }[];
 }
 
 // --- quota (wrapper snake_case; inner quota Go-cased) ---
@@ -362,7 +368,6 @@ export interface RiskEvent {
 
 export interface MyDevicesResp {
   devices: Device[];
-  networks: Network[];
   confirm_hours: number;
   risk_mode: RiskMode;
   max_trusted: number; // 0 = unlimited

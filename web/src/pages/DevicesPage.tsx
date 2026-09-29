@@ -10,7 +10,6 @@ import { useToast } from "../components/Toast";
 import {
   ActionBtn,
   DevicesTable,
-  NetworksTable,
   TableCardHeader,
   deviceName,
 } from "../components/risk";
@@ -70,7 +69,6 @@ export function DevicesPage() {
   const devices = [...(data?.devices ?? [])].sort(
     (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9)
   );
-  const networks = data?.networks ?? [];
   const trustedCount = devices.filter((d) => d.status === "trusted").length;
   const busy = confirm.isPending || deny.isPending;
 
@@ -78,7 +76,7 @@ export function DevicesPage() {
     <div>
       <PageHeader
         title="我的设备"
-        desc="公司会记录你的 Key 在哪些设备和网络上使用，用来发现 Key 外泄。新设备需要你确认是本人；如果不是你，点「不是我」，Key 会立刻作废。"
+        desc="用过你 Key 的电脑。换新电脑时确认一下是你本人即可；如果不是你，点「不是我」，Key 会立刻作废。"
       />
 
       {keyRevoked && (
@@ -153,20 +151,6 @@ export function DevicesPage() {
             />
           </Card>
 
-          <Card className="overflow-hidden">
-            <TableCardHeader title="网络" sub={`最近 ${networks.length} 个`} />
-            <NetworksTable networks={networks} />
-          </Card>
-
-          <Card className="p-5">
-            <h2 className="mb-3 text-sm font-semibold text-slate-800">
-              网络使用建议
-            </h2>
-            <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              不要通过会自动切换节点的代理/VPN
-              访问网关，请把网关域名设为直连；频繁切换网络可能被误判为多人同时使用。
-            </div>
-          </Card>
         </div>
       )}
 

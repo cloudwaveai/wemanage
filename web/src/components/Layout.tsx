@@ -57,8 +57,8 @@ const PERSONAL: NavItem[] = [
   },
   {
     to: "/logs",
-    label: "对话记录",
-    roles: ["employee", "leader", "super_admin"],
+    label: "使用日志",
+    roles: ["employee", "leader"],
     icon: I("M21 21l-4.3-4.3M11 18a7 7 0 100-14 7 7 0 000 14z"),
   },
   {
@@ -85,6 +85,12 @@ const ADMIN: NavItem[] = [
     roles: ["super_admin"],
     end: true,
     icon: I("M3 12l9-9 9 9M5 10v10h14V10"),
+  },
+  {
+    to: "/logs",
+    label: "对话记录",
+    roles: ["super_admin"],
+    icon: I("M21 21l-4.3-4.3M11 18a7 7 0 100-14 7 7 0 000 14z"),
   },
   {
     to: "/employees",

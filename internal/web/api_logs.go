@@ -11,10 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// canReadTranscripts reports whether viewer may read subject's conversations:
-// their own, or anyone's for a super admin (audited). Department leaders get
-// team totals, not their people's conversations.
-func canReadTranscripts(viewer *store.Employee, subjectID int64) bool {
+// canListLogs reports whether viewer may list subject's request log (time,
+// model, status, tokens, duration): their own, or anyone's for a super admin.
+func canListLogs(viewer *store.Employee, subjectID int64) bool {
 	return viewer.IsSuperAdmin || viewer.ID == subjectID
 }
 
@@ -39,16 +38,20 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	f.Limit, _ = strconv.Atoi(q.Get("limit"))
 	f.Offset, _ = strconv.Atoi(q.Get("offset"))
 
-	// Only your own conversations, unless you are a super admin.
+	// Employees see their own usage log, like an API console; searching or
+	// reading the conversations themselves is for super admins.
 	if reqEmp := q.Get("employee_id"); reqEmp != "" {
 		id, _ := strconv.ParseInt(reqEmp, 10, 64)
-		if !canReadTranscripts(emp, id) {
-			writeErr(w, http.StatusForbidden, "只能查看自己的对话记录")
+		if !canListLogs(emp, id) {
+			writeErr(w, http.StatusForbidden, "只能查看自己的使用日志")
 			return
 		}
 		f.EmployeeIDs = []int64{id}
 	} else if !emp.IsSuperAdmin {
 		f.EmployeeIDs = []int64{emp.ID}
+	}
+	if !emp.IsSuperAdmin {
+		f.Query = ""
 	}
 
 	items, total, err := s.deps.Store.ListRequests(r.Context(), f)
@@ -70,8 +73,14 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"requests": out, "total": total})
 }
 
+// handleViewLog shows one request's full conversation. Only super admins may
+// (each view is audited); employees have the metadata-only usage log.
 func (s *Server) handleViewLog(w http.ResponseWriter, r *http.Request) {
 	emp := currentEmployee(r)
+	if !emp.IsSuperAdmin {
+		writeErr(w, http.StatusForbidden, "super admin required")
+		return
+	}
 	idHex := chi.URLParam(r, "id")
 	idb, err := hex.DecodeString(idHex)
 	if err != nil || len(idb) != 16 {
@@ -84,10 +93,6 @@ func (s *Server) handleViewLog(w http.ResponseWriter, r *http.Request) {
 	row, err := s.deps.Store.GetRequestFull(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not found")
-		return
-	}
-	if !canReadTranscripts(emp, row.EmployeeID) {
-		writeErr(w, http.StatusForbidden, "只能查看自己的对话记录")
 		return
 	}
 	// Every transcript view is audited (who viewed whom).

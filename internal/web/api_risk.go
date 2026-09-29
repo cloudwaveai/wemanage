@@ -26,14 +26,12 @@ func (s *Server) handleMyDevices(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "devices query failed")
 		return
 	}
-	nets, _ := s.deps.Store.ListNetworks(r.Context(), emp.ID, 20)
 	maxTrusted := 0
 	if set.RiskMode == settings.RiskStrict {
 		maxTrusted = strictMaxTrusted
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"devices":       nonNil(devs),
-		"networks":      nonNil(nets),
 		"confirm_hours": set.DeviceConfirmHours,
 		"risk_mode":     set.RiskMode,
 		"max_trusted":   maxTrusted,
