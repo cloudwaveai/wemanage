@@ -86,7 +86,7 @@ export function UsagePage() {
               {quota.data.quota ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Meter
-                    label="主额度已用"
+                    label="5 小时额度已用"
                     pct={quota.data.quota.PrimaryUsedPct}
                     hint={
                       quota.data.quota.PrimaryResetAt
@@ -95,7 +95,7 @@ export function UsagePage() {
                     }
                   />
                   <Meter
-                    label="次额度已用"
+                    label="每周额度已用"
                     pct={quota.data.quota.SecondaryUsedPct}
                     hint={
                       quota.data.quota.SecondaryResetAt
