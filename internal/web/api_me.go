@@ -187,31 +187,78 @@ func (s *Server) handleMyReports(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"reports": reports})
 }
 
-func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	base := s.deps.PublicBaseURL + "/v1"
-	provider := ""
-	source := "account"
-	var models []store.ModelInfo
-	acc, accErr := s.boundAccount(ctx, currentEmployee(r).ID)
+// codexSetup is what every way of configuring Codex shares: the gateway's
+// base URL, the account's models and the recommended one, and the provider
+// settings that depend on the account.
+type codexSetup struct {
+	base, provider, source, model string
+	models                        []store.ModelInfo
+	chatgpt                       bool
+	acc                           store.Account
+	wsLine, toolsLine             string
+}
+
+func (s *Server) codexSetup(ctx context.Context, employeeID int64) codexSetup {
+	cs := codexSetup{base: s.deps.PublicBaseURL + "/v1", source: "account"}
+	acc, accErr := s.boundAccount(ctx, employeeID)
 	if accErr == nil {
-		provider = acc.Provider
+		cs.acc, cs.provider = acc, acc.Provider
 		if s.deps.Models != nil {
 			if ms, err := s.deps.Models(ctx, acc); err == nil {
-				models = ms
+				cs.models = ms
 			}
 		}
 	} else if s.deps.ModelCatalog != nil {
 		// No account yet: show what a ChatGPT account typically offers.
-		source = "catalog"
+		cs.source = "catalog"
 		if ms, err := s.deps.ModelCatalog(ctx, "codex"); err == nil {
-			models = ms
+			cs.models = ms
 		}
 	}
 	// Newest first.
-	sort.SliceStable(models, func(i, j int) bool { return models[i].Created > models[j].Created })
-	chatgpt := accErr != nil || acc.IsChatGPT()
-	model := pickDefaultModel(models, chatgpt, s.deps.Settings.Get(ctx).DefaultCodexModel)
+	sort.SliceStable(cs.models, func(i, j int) bool { return cs.models[i].Created > cs.models[j].Created })
+	cs.chatgpt = accErr != nil || acc.IsChatGPT()
+	set := s.deps.Settings.Get(ctx)
+	cs.model = pickDefaultModel(cs.models, cs.chatgpt, set.DefaultCodexModel)
+
+	// ChatGPT accounts use the WebSocket transport like the official client;
+	// other providers (and the kill switch) stay on HTTP.
+	cs.wsLine = "# 与官方 Codex 一致，走 WebSocket（网关不支持时 Codex 会自动退回 HTTP）\nsupports_websockets = true"
+	if set.DisableWebsocket {
+		cs.wsLine = "# 公司暂时关闭了 WebSocket，走普通 HTTP\nsupports_websockets = false"
+	}
+	if !cs.chatgpt {
+		cs.wsLine = "# 非 ChatGPT 账号走普通 HTTP\nsupports_websockets = false"
+	}
+	// Codex only offers its image generation and web search tools for OpenAI
+	// providers; a custom provider qualifies when it sends this header and
+	// does not use OpenAI login. The gateway strips it before going upstream.
+	if cs.chatgpt {
+		cs.toolsLine = "\n# 开启 Codex 的生图和联网搜索（这个请求头只给 Codex 看，网关会去掉，不会发给上游）\n" +
+			`http_headers = { "x-openai-actor-authorization" = "aiseat" }`
+	}
+	return cs
+}
+
+// hasModel reports whether id is one of the setup's models (or, with no
+// list, the recommended one).
+func (cs codexSetup) hasModel(id string) bool {
+	if len(cs.models) == 0 {
+		return id == cs.model
+	}
+	for _, m := range cs.models {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	cs := s.codexSetup(ctx, currentEmployee(r).ID)
+	base, provider, source, model, models := cs.base, cs.provider, cs.source, cs.model, cs.models
+	chatgpt, acc, wsLine, toolsLine := cs.chatgpt, cs.acc, cs.wsLine, cs.toolsLine
 	ids := make([]string, len(models))
 	modelList := make([]map[string]any, len(models))
 	for i, m := range models {
@@ -220,14 +267,7 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelLine := fmt.Sprintf("model = %q", model)
-	// ChatGPT accounts use the WebSocket transport like the official client;
-	// other providers (and the kill switch) stay on HTTP.
-	wsLine := "# 与官方 Codex 一致，走 WebSocket（网关不支持时 Codex 会自动退回 HTTP）\nsupports_websockets = true"
-	if s.deps.Settings.Get(ctx).DisableWebsocket {
-		wsLine = "# 公司暂时关闭了 WebSocket，走普通 HTTP\nsupports_websockets = false"
-	}
 	if !chatgpt {
-		wsLine = "# 非 ChatGPT 账号走普通 HTTP\nsupports_websockets = false"
 		if model != "" {
 			modelLine = fmt.Sprintf("# 你的账号是 %s，可用模型：%s\n%s", acc.Provider, strings.Join(ids, "、"), modelLine)
 		} else {
@@ -236,14 +276,6 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 # 然后把下面改成其中一个 id
 model = "填入模型 id"`, acc.Provider, base)
 		}
-	}
-	// Codex only offers its image generation and web search tools for OpenAI
-	// providers; a custom provider qualifies when it sends this header and
-	// does not use OpenAI login. The gateway strips it before going upstream.
-	toolsLine := ""
-	if chatgpt {
-		toolsLine = "\n# 开启 Codex 的生图和联网搜索（这个请求头只给 Codex 看，网关会去掉，不会发给上游）\n" +
-			`http_headers = { "x-openai-actor-authorization" = "aiseat" }`
 	}
 	codex := fmt.Sprintf(`model_provider = "company"
 %s

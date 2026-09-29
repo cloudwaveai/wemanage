@@ -11,25 +11,29 @@ import (
 
 // Config holds all runtime configuration for the gateway.
 type Config struct {
-	ListenAddr           string
-	DatabaseURL          string
-	PublicBaseURL        string
-	CPABaseURL           string
-	CPAAPIKey            string
-	CPAManagementKey     string
-	MasterKey            []byte // 32 bytes for AES-256-GCM
-	FeishuAppID          string
-	FeishuAppSecret      string
-	FeishuBaseURL        string
-	FeishuLoginScope     string
-	BootstrapSuperAdmins []string
-	ReportLLMBaseURL     string
-	ReportLLMAPIKey      string
-	ReportLLMModel       string
-	SpoolDir             string
-	EgressEchoURL        string
-	DevLogin             bool
-	Timezone             *time.Location
+	ListenAddr       string
+	DatabaseURL      string
+	PublicBaseURL    string
+	CPABaseURL       string
+	CPAAPIKey        string
+	CPAManagementKey string
+	MasterKey        []byte // 32 bytes for AES-256-GCM
+	FeishuAppID      string
+	FeishuAppSecret  string
+	FeishuBaseURL    string
+	FeishuLoginScope string
+	// Optional checks on Feishu's card callbacks: the app's Verification
+	// Token and, when one is set in the console, its Encrypt Key.
+	FeishuVerificationToken string
+	FeishuEncryptKey        string
+	BootstrapSuperAdmins    []string
+	ReportLLMBaseURL        string
+	ReportLLMAPIKey         string
+	ReportLLMModel          string
+	SpoolDir                string
+	EgressEchoURL           string
+	DevLogin                bool
+	Timezone                *time.Location
 
 	// Risk controls.
 	GeoIPDB           string // optional ip2region .xdb path
@@ -55,31 +59,33 @@ func getenv(key, def string) string {
 // Load reads configuration from the environment, applying defaults and validating.
 func Load() (*Config, error) {
 	c := &Config{
-		ListenAddr:        getenv("LISTEN_ADDR", ":8080"),
-		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		PublicBaseURL:     strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
-		CPABaseURL:        strings.TrimRight(getenv("CPA_BASE_URL", "http://cpa:8317"), "/"),
-		CPAAPIKey:         strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		CPAManagementKey:  strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
-		FeishuAppID:       strings.TrimSpace(os.Getenv("FEISHU_APP_ID")),
-		FeishuAppSecret:   strings.TrimSpace(os.Getenv("FEISHU_APP_SECRET")),
-		FeishuBaseURL:     strings.TrimRight(getenv("FEISHU_BASE_URL", "https://open.feishu.cn"), "/"),
-		FeishuLoginScope:  strings.TrimSpace(os.Getenv("FEISHU_LOGIN_SCOPE")),
-		ReportLLMBaseURL:  strings.TrimRight(getenv("REPORT_LLM_BASE_URL", "https://api.openai.com/v1"), "/"),
-		ReportLLMAPIKey:   strings.TrimSpace(os.Getenv("REPORT_LLM_API_KEY")),
-		ReportLLMModel:    getenv("REPORT_LLM_MODEL", "gpt-5-mini"),
-		SpoolDir:          getenv("SPOOL_DIR", "./spool"),
-		EgressEchoURL:     getenv("EGRESS_ECHO_URL", "https://api.ipify.org?format=text"),
-		DevLogin:          strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN")), "true"),
-		GeoIPDB:           strings.TrimSpace(os.Getenv("GEOIP_DB")),
-		TrustProxyHeaders: !strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_PROXY_HEADERS")), "false"),
-		BlobBackend:       strings.ToLower(getenv("BLOB_BACKEND", "postgres")),
-		S3Endpoint:        strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
-		S3Region:          strings.TrimSpace(os.Getenv("S3_REGION")),
-		S3Bucket:          strings.TrimSpace(os.Getenv("S3_BUCKET")),
-		S3AccessKey:       strings.TrimSpace(os.Getenv("S3_ACCESS_KEY")),
-		S3SecretKey:       strings.TrimSpace(os.Getenv("S3_SECRET_KEY")),
-		S3UseSSL:          !strings.EqualFold(strings.TrimSpace(os.Getenv("S3_USE_SSL")), "false"),
+		ListenAddr:              getenv("LISTEN_ADDR", ":8080"),
+		DatabaseURL:             strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		PublicBaseURL:           strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/"),
+		CPABaseURL:              strings.TrimRight(getenv("CPA_BASE_URL", "http://cpa:8317"), "/"),
+		CPAAPIKey:               strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		CPAManagementKey:        strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
+		FeishuAppID:             strings.TrimSpace(os.Getenv("FEISHU_APP_ID")),
+		FeishuAppSecret:         strings.TrimSpace(os.Getenv("FEISHU_APP_SECRET")),
+		FeishuBaseURL:           strings.TrimRight(getenv("FEISHU_BASE_URL", "https://open.feishu.cn"), "/"),
+		FeishuLoginScope:        strings.TrimSpace(os.Getenv("FEISHU_LOGIN_SCOPE")),
+		FeishuVerificationToken: strings.TrimSpace(os.Getenv("FEISHU_VERIFICATION_TOKEN")),
+		FeishuEncryptKey:        strings.TrimSpace(os.Getenv("FEISHU_ENCRYPT_KEY")),
+		ReportLLMBaseURL:        strings.TrimRight(getenv("REPORT_LLM_BASE_URL", "https://api.openai.com/v1"), "/"),
+		ReportLLMAPIKey:         strings.TrimSpace(os.Getenv("REPORT_LLM_API_KEY")),
+		ReportLLMModel:          getenv("REPORT_LLM_MODEL", "gpt-5-mini"),
+		SpoolDir:                getenv("SPOOL_DIR", "./spool"),
+		EgressEchoURL:           getenv("EGRESS_ECHO_URL", "https://api.ipify.org?format=text"),
+		DevLogin:                strings.EqualFold(strings.TrimSpace(os.Getenv("DEV_LOGIN")), "true"),
+		GeoIPDB:                 strings.TrimSpace(os.Getenv("GEOIP_DB")),
+		TrustProxyHeaders:       !strings.EqualFold(strings.TrimSpace(os.Getenv("TRUST_PROXY_HEADERS")), "false"),
+		BlobBackend:             strings.ToLower(getenv("BLOB_BACKEND", "postgres")),
+		S3Endpoint:              strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
+		S3Region:                strings.TrimSpace(os.Getenv("S3_REGION")),
+		S3Bucket:                strings.TrimSpace(os.Getenv("S3_BUCKET")),
+		S3AccessKey:             strings.TrimSpace(os.Getenv("S3_ACCESS_KEY")),
+		S3SecretKey:             strings.TrimSpace(os.Getenv("S3_SECRET_KEY")),
+		S3UseSSL:                !strings.EqualFold(strings.TrimSpace(os.Getenv("S3_USE_SSL")), "false"),
 	}
 
 	if c.DatabaseURL == "" {

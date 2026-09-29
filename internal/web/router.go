@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"aiseat/internal/cpa"
+	"aiseat/internal/devicecard"
 	"aiseat/internal/feishu"
 	"aiseat/internal/health"
 	"aiseat/internal/risk"
@@ -46,12 +47,18 @@ type Deps struct {
 	// Risk is the key-sharing engine (optional); used to refresh gate caches
 	// and notify on device/freeze changes.
 	Risk *risk.Engine
-	Log  *slog.Logger
+	// Cards reads the tokens on new-device card buttons; FeishuVerifyToken and
+	// FeishuEncryptKey (both optional) check Feishu's card callbacks.
+	Cards             *devicecard.Signer
+	FeishuVerifyToken string
+	FeishuEncryptKey  string
+	Log               *slog.Logger
 }
 
 // Server holds web dependencies.
 type Server struct {
-	deps Deps
+	deps     Deps
+	installs installCodes
 }
 
 // NewServer builds the web server.
@@ -64,6 +71,8 @@ func NewServer(deps Deps) *Server {
 
 // Mount attaches the /api routes.
 func (s *Server) Mount(r chi.Router) {
+	// Install scripts: public, the single-use code is the credential.
+	r.Get("/i/{code}", s.handleInstallScript)
 	r.Route("/api", func(r chi.Router) {
 		// Public auth endpoints.
 		r.Get("/auth/feishu/login", s.handleFeishuLogin)
@@ -71,6 +80,11 @@ func (s *Server) Mount(r chi.Router) {
 		if s.deps.DevLogin {
 			r.Post("/auth/dev", s.handleDevLogin)
 		}
+		// Feishu card button callbacks: public, checked by the sealed button token.
+		r.Post("/feishu/card", s.handleFeishuCard)
+		r.Get("/auth/options", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"dev_login": s.deps.DevLogin})
+		})
 
 		// Authenticated endpoints.
 		r.Group(func(r chi.Router) {
@@ -85,6 +99,7 @@ func (s *Server) Mount(r chi.Router) {
 			r.Get("/me/reports", s.handleMyReports)
 			r.Post("/me/weekly-report", s.handleWeeklyReportPref)
 			r.Get("/me/config-snippets", s.handleConfigSnippets)
+			r.Post("/me/install-code", s.handleInstallCode)
 			r.Get("/me/devices", s.handleMyDevices)
 			r.Post("/me/devices/{id}/confirm", s.handleConfirmDevice)
 			r.Post("/me/devices/{id}/deny", s.handleDenyDevice)
@@ -140,9 +155,15 @@ func (s *Server) audit(r *http.Request, action, targetType, targetID string, det
 	if emp != nil {
 		actor = &emp.ID
 	}
-	_ = s.deps.Store.Audit(r.Context(), store.AuditEntry{
+	s.auditAs(r.Context(), actor, clientIP(r), action, targetType, targetID, detail)
+}
+
+// auditAs records an action taken outside a portal session (e.g. from a
+// Feishu card), on behalf of actor.
+func (s *Server) auditAs(ctx context.Context, actor *int64, ip, action, targetType, targetID string, detail map[string]any) {
+	_ = s.deps.Store.Audit(ctx, store.AuditEntry{
 		ActorID: actor, Action: action, TargetType: targetType, TargetID: targetID,
-		Detail: detail, IP: clientIP(r),
+		Detail: detail, IP: ip,
 	})
 }
 

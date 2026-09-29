@@ -78,10 +78,14 @@ export function LogsPage() {
     return p.toString();
   }, [applied, page]);
 
+  // Requests are written about a second after they finish; poll while the
+  // page is open and visible (react-query pauses in background tabs).
   const logs = useQuery({
     queryKey: ["logs", qs],
     queryFn: () => api.get<LogList>(`/api/logs?${qs}`),
     placeholderData: keepPreviousData,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
   });
 
   const rows = logs.data?.requests ?? [];
@@ -110,8 +114,8 @@ export function LogsPage() {
         title={isAdmin ? "对话记录" : "使用日志"}
         desc={
           isAdmin
-            ? "全部员工经过网关的请求。点开一条可看原文，查看会写入审计。"
-            : "你经过网关的每次调用：时间、模型、状态、Token 和耗时。失败的会写明原因。"
+            ? "全部员工经过网关的请求，每 10 秒自动刷新。点开一条可看原文，查看会写入审计。"
+            : "你经过网关的每次调用：时间、模型、状态、Token 和耗时。失败的会写明原因。每 10 秒自动刷新。"
         }
       />
 

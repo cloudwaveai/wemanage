@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,31 +62,40 @@ func (s *Server) handleConfirmDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, code, msg)
 		return
 	}
+	was := d.Status
+	if code, msg := s.confirmDevice(r.Context(), *emp, d); code != http.StatusOK {
+		writeErr(w, code, msg)
+		return
+	}
+	if was != store.DeviceTrusted {
+		s.audit(r, "device_confirm", "device", fmt.Sprint(d.ID), map[string]any{"label": d.Label, "last_ip": d.LastIP})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": store.DeviceTrusted})
+}
+
+// confirmDevice trusts one of emp's devices (the portal button or the
+// Feishu card). On failure it returns a status and a message for the employee.
+func (s *Server) confirmDevice(ctx context.Context, emp store.Employee, d store.Device) (int, string) {
 	switch d.Status {
 	case store.DeviceTrusted:
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": d.Status})
-		return
+		return http.StatusOK, ""
 	case store.DeviceBlocked:
-		writeErr(w, http.StatusForbidden, "这台设备已被拉黑，只能由管理员恢复")
-		return
+		return http.StatusForbidden, "这台设备已被拉黑，只能由管理员恢复"
 	}
-	set := s.deps.Settings.Get(r.Context())
+	set := s.deps.Settings.Get(ctx)
 	if set.RiskMode == settings.RiskStrict {
-		n, err := s.deps.Store.CountTrustedDevices(r.Context(), emp.ID)
+		n, err := s.deps.Store.CountTrustedDevices(ctx, emp.ID)
 		if err == nil && n >= strictMaxTrusted {
-			writeErr(w, http.StatusConflict, fmt.Sprintf("最多只能确认 %d 台设备，请先让管理员移除旧设备", strictMaxTrusted))
-			return
+			return http.StatusConflict, fmt.Sprintf("最多只能确认 %d 台设备，请先让管理员移除旧设备", strictMaxTrusted)
 		}
 	}
-	if err := s.deps.Store.SetDeviceStatus(r.Context(), d.ID, store.DeviceTrusted, &emp.ID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "cannot confirm device")
-		return
+	if err := s.deps.Store.SetDeviceStatus(ctx, d.ID, store.DeviceTrusted, &emp.ID); err != nil {
+		return http.StatusInternalServerError, "cannot confirm device"
 	}
 	if s.deps.Risk != nil {
 		s.deps.Risk.DeviceChanged(emp.ID, d.ID, store.DeviceTrusted)
 	}
-	s.audit(r, "device_confirm", "device", fmt.Sprint(d.ID), map[string]any{"label": d.Label, "last_ip": d.LastIP})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": store.DeviceTrusted})
+	return http.StatusOK, ""
 }
 
 func (s *Server) handleDenyDevice(w http.ResponseWriter, r *http.Request) {
@@ -95,25 +105,33 @@ func (s *Server) handleDenyDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, code, msg)
 		return
 	}
-	ctx := r.Context()
-	if err := s.deps.Store.SetDeviceStatus(ctx, d.ID, store.DeviceBlocked, nil); err != nil {
-		writeErr(w, http.StatusInternalServerError, "cannot block device")
+	if code, msg := s.denyDevice(r.Context(), *emp, d); code != http.StatusOK {
+		writeErr(w, code, msg)
 		return
 	}
-	// Someone else holds the key: revoke it so the employee reissues a fresh one.
+	s.audit(r, "device_deny", "device", fmt.Sprint(d.ID), map[string]any{"label": d.Label, "last_ip": d.LastIP, "key_revoked": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": store.DeviceBlocked, "key_revoked": true})
+}
+
+// denyDevice handles "not me" for one of emp's devices: the device is
+// blocked and the key revoked, since someone else holds it; the employee
+// reissues a fresh one. The administrators are told in the background.
+func (s *Server) denyDevice(ctx context.Context, emp store.Employee, d store.Device) (int, string) {
+	if err := s.deps.Store.SetDeviceStatus(ctx, d.ID, store.DeviceBlocked, nil); err != nil {
+		return http.StatusInternalServerError, "cannot block device"
+	}
 	if err := s.deps.Store.RevokeKeys(ctx, emp.ID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "cannot revoke key")
-		return
+		return http.StatusInternalServerError, "cannot revoke key"
 	}
 	if s.deps.Risk != nil {
-		s.deps.Risk.DeviceDenied(ctx, *emp, d)
+		s.deps.Risk.DeviceChanged(emp.ID, d.ID, store.DeviceBlocked)
+		go s.deps.Risk.DeviceDenied(context.WithoutCancel(ctx), emp, d)
 	} else {
 		id := d.ID
 		_, _ = s.deps.Store.AddRiskEvent(ctx, store.RiskEvent{EmployeeID: emp.ID, Rule: "device_denied", Severity: "high",
 			DeviceID: &id, Detail: map[string]any{"label": d.Label, "last_ip": d.LastIP}})
 	}
-	s.audit(r, "device_deny", "device", fmt.Sprint(d.ID), map[string]any{"label": d.Label, "last_ip": d.LastIP, "key_revoked": true})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": store.DeviceBlocked, "key_revoked": true})
+	return http.StatusOK, ""
 }
 
 // --- admin: risk center ---

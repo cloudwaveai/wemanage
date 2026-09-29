@@ -26,8 +26,14 @@ export function Login() {
   useEffect(() => {
     if (auto) window.location.replace(loginUrl);
   }, [auto, loginUrl]);
+  useEffect(() => {
+    api
+      .get<{ dev_login: boolean }>("/api/auth/options")
+      .then((o) => setDevVisible(o.dev_login))
+      .catch(() => setDevVisible(false));
+  }, []);
 
-  const [devVisible, setDevVisible] = useState(true);
+  const [devVisible, setDevVisible] = useState(false);
   const [openId, setOpenId] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -81,10 +87,6 @@ export function Login() {
             href={loginUrl}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M4 5h16v14H4z" opacity="0" />
-              <path d="M6 4h9l3 3v13H6z" opacity="0" />
-            </svg>
             {auto ? "正在用飞书登录…" : "飞书登录"}
           </a>
 

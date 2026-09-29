@@ -9,6 +9,7 @@ import { useToast } from "../components/Toast";
 import { fmtDateTime } from "../lib/format";
 import type { ConfigSnippets } from "../lib/types";
 import { CCSWITCH_DOWNLOAD, ccSwitchLink } from "../lib/ccswitch";
+import { InstallCommand } from "../components/InstallCommand";
 
 export function KeyPage() {
   const { me, refetch } = useAuth();
@@ -128,15 +129,27 @@ export function KeyPage() {
           {plainKey && <CopyButton text={plainKey} />}
         </div>
         {plainKey && snippets.data && (
-          <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
-            <div className="flex flex-wrap items-center gap-3">
+          <div className="mt-4 space-y-4">
+            <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+              <div className="mb-2 text-sm font-medium text-slate-800">
+                一条命令配好 Codex（推荐）
+              </div>
+              <InstallCommand
+                keyValue={plainKey}
+                model={snippets.data.default_model}
+                tools={!!snippets.data.ccswitch.config_toml}
+                auto
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-3 px-1 text-xs text-slate-500">
+              <span>或者用 CC Switch：</span>
               <a
                 href={ccSwitchLink(
                   snippets.data.ccswitch,
                   plainKey,
                   snippets.data.default_model,
                 )}
-                className="inline-flex items-center rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+                className="font-medium text-indigo-600 hover:underline"
               >
                 一键导入 CC Switch
               </a>
@@ -144,13 +157,13 @@ export function KeyPage() {
                 href={CCSWITCH_DOWNLOAD}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs text-indigo-600 hover:underline"
+                className="hover:underline"
               >
-                还没装？下载 CC Switch
+                下载 CC Switch
               </a>
             </div>
-            <p className="mt-2 text-xs text-slate-500">
-              使用模型 {snippets.data.default_model}，导入后 Codex 会切换到公司网关。要换模型，到「一键配置」页选择后重新导入。
+            <p className="px-1 text-xs text-slate-400">
+              使用模型 {snippets.data.default_model}。要换模型，到「一键配置」页重新生成。
             </p>
           </div>
         )}

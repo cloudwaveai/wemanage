@@ -5,6 +5,7 @@ import type { ConfigSnippets } from "../lib/types";
 import { Card, PageHeader, Loading, ErrorBox } from "../components/ui";
 import { CodeBlock, CopyButton } from "../components/CopyButton";
 import { CCSWITCH_DOWNLOAD, ccSwitchLink, looksLikeKey } from "../lib/ccswitch";
+import { InstallCommand } from "../components/InstallCommand";
 
 export function ConfigPage() {
   const { data, isLoading, error } = useQuery({
@@ -16,7 +17,7 @@ export function ConfigPage() {
     <div>
       <PageHeader
         title="一键配置"
-        desc="推荐用 CC Switch 一键导入；不用 CC Switch 时，按下面的手动配置写入 Codex。"
+        desc="推荐用一条命令配好；也可以导入 CC Switch，或按下面的手动配置写入 Codex。"
       />
 
       {isLoading && <Loading />}
@@ -24,10 +25,10 @@ export function ConfigPage() {
 
       {data && (
         <div className="space-y-5">
-          <CCSwitchCard data={data} />
+          <SetupCard data={data} />
 
           <h2 className="pt-2 text-sm font-semibold text-slate-500">
-            手动配置（不用 CC Switch 时）
+            手动配置（前两种都不方便时）
           </h2>
 
           <Card className="p-5">
@@ -77,9 +78,11 @@ export function ConfigPage() {
   );
 }
 
-// CCSwitchCard builds a ccswitch:// import link from the pasted key. The key
-// stays in the browser: it only goes into the link handed to the local app.
-function CCSwitchCard({ data }: { data: ConfigSnippets }) {
+// SetupCard takes the employee's key and model once, then offers the two ways
+// to set Codex up with them: a one-line install command (the key goes to the
+// gateway only to make a single-use code) or a CC Switch import (the key goes
+// only into the link handed to the local app).
+function SetupCard({ data }: { data: ConfigSnippets }) {
   const [key, setKey] = useState("");
   const [model, setModel] = useState(data.default_model);
   const models = data.models.length
@@ -87,19 +90,15 @@ function CCSwitchCard({ data }: { data: ConfigSnippets }) {
     : [{ id: data.default_model, name: "", created: 0 }];
   const keyOK = looksLikeKey(key);
   const link = keyOK && model ? ccSwitchLink(data.ccswitch, key, model) : "";
+  const tools = !!data.ccswitch.config_toml;
   const inputCls =
     "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100";
-
   return (
     <Card className="p-5">
-      <h2 className="text-sm font-semibold text-slate-800">
-        用 CC Switch 一键导入（推荐）
-      </h2>
+      <h2 className="text-sm font-semibold text-slate-800">配置 Codex</h2>
       <p className="mt-1 text-sm text-slate-500">
-        粘贴你的 Key，选好模型，点「导入到 CC Switch」。CC Switch 会弹窗让你确认，确认后 Codex
-        立即切换到公司网关。Key 只写进你电脑上的 CC Switch，不会再发回服务器。
+        粘贴你的 Key、选好模型，然后任选一种方式。
       </p>
-
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_220px]">
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500">
@@ -144,58 +143,74 @@ function CCSwitchCard({ data }: { data: ConfigSnippets }) {
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <a
-          href={link || undefined}
-          aria-disabled={!link}
-          className={
-            "inline-flex items-center rounded-lg px-3.5 py-2 text-sm font-medium " +
-            (link
-              ? "bg-indigo-600 text-white hover:bg-indigo-500"
-              : "pointer-events-none bg-indigo-300 text-white")
-          }
-        >
-          导入到 CC Switch
-        </a>
-        <a
-          href={CCSWITCH_DOWNLOAD}
-          target="_blank"
-          rel="noreferrer"
-          className="text-sm text-indigo-600 hover:underline"
-        >
-          还没装？下载 CC Switch
-        </a>
+      <div className="mt-5 border-t border-slate-100 pt-4">
+        <h3 className="mb-2 text-sm font-semibold text-slate-800">
+          方式一：一条命令配好（推荐）
+        </h3>
+        <InstallCommand keyValue={keyOK ? key : ""} model={model} tools={tools} />
       </div>
 
-      {data.ccswitch.config_toml && (
-        <div className="mt-5 rounded-lg border border-indigo-100 bg-indigo-50/50 p-4">
-          <h3 className="text-sm font-semibold text-slate-800">导入后开启生图和联网搜索</h3>
-          <p className="mt-1 text-xs leading-relaxed text-slate-500">
-            CC Switch 导入的配置会让 Codex 关掉生图（image_gen）和联网搜索。导入后在 CC Switch 里点这个供应商的「编辑」，
-            把 config.toml 整段换成下面这段（已经填好你的 Key 和模型），保存后重新打开 Codex 即可。
-          </p>
-          <div className="mt-3">
-            <CodeBlock
-              code={data.ccswitch.config_toml
-                .replace("{{KEY}}", keyOK ? key.trim() : "粘贴你的 sk-emp- Key")
-                .replace("{{MODEL}}", model)}
-            />
-          </div>
+      <div className="mt-5 border-t border-slate-100 pt-4">
+        <h3 className="text-sm font-semibold text-slate-800">方式二：导入 CC Switch</h3>
+        <p className="mt-1 text-xs leading-relaxed text-slate-500">
+          适合经常在几个服务商之间来回切换的人。点「导入到 CC Switch」，CC Switch 弹窗确认后 Codex 就切到公司网关；Key
+          只写进你电脑上的 CC Switch。
+          {tools && "注意：CC Switch 导入的配置没有生图和联网搜索，要用的话按下面替换一次。"}
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <a
+            href={link || undefined}
+            aria-disabled={!link}
+            className={
+              "inline-flex items-center rounded-lg px-3.5 py-2 text-sm font-medium " +
+              (link
+                ? "border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50"
+                : "pointer-events-none border border-slate-200 bg-white text-slate-300")
+            }
+          >
+            导入到 CC Switch
+          </a>
+          <a
+            href={CCSWITCH_DOWNLOAD}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm text-indigo-600 hover:underline"
+          >
+            还没装？下载 CC Switch
+          </a>
         </div>
-      )}
+        {tools && (
+          <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+            <summary className="cursor-pointer text-xs font-medium text-slate-600">
+              导入后开启生图和联网搜索
+            </summary>
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">
+              在 CC Switch 里点这个供应商的「编辑」，把 config.toml 整段换成下面这段（已经填好你的 Key
+              和模型），保存后重新打开 Codex。
+            </p>
+            <div className="mt-2">
+              <CodeBlock
+                code={data.ccswitch.config_toml
+                  .replace("{{KEY}}", keyOK ? key.trim() : "粘贴你的 sk-emp- Key")
+                  .replace("{{MODEL}}", model)}
+              />
+            </div>
+          </details>
+        )}
+      </div>
 
-      <ul className="mt-4 list-disc space-y-1 pl-5 text-xs text-slate-500">
+      <ul className="mt-5 list-disc space-y-1 border-t border-slate-100 pl-5 pt-4 text-xs text-slate-500">
         <li>
-          Key 只在生成时显示一次。忘了的话到「我的 Key」重置一个，新 Key 生成时也能直接一键导入。
+          Key 只在生成时显示一次。忘了的话到「我的 Key」重置一个，新 Key 生成时会直接给出安装命令。
         </li>
         {!data.provider && (
           <li className="text-amber-600">
-            你还没有绑定账号，导入后暂时用不了，请先联系管理员分配账号。
+            你还没有绑定账号，配好后暂时用不了；管理员分配好后飞书会通知你。
           </li>
         )}
         <li>
           电脑上开着代理的话，把 <code className="font-mono">{hostOf(data.ccswitch.homepage)}</code>{" "}
-          加到代理的直连名单，否则每次请求会多绕几秒。
+          加到代理的直连名单，否则每次请求会多绕几秒（方式一会自动处理终端里的代理设置）。
         </li>
       </ul>
     </Card>

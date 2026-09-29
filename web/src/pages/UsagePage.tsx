@@ -22,6 +22,8 @@ export function UsagePage() {
   const usage = useQuery({
     queryKey: ["my-usage", range],
     queryFn: () => api.get<UsageSummary>(`/api/me/usage?range=${range}`),
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
 
   const quota = useQuery({
@@ -36,6 +38,8 @@ export function UsagePage() {
       }
     },
     retry: false,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
 
   const u = usage.data;
