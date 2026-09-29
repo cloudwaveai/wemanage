@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import type { IPGroupRow } from "../lib/types";
 import { Modal } from "./Modal";
 import { Button } from "./ui";
+import { CopyButton } from "./CopyButton";
 import { useToast } from "./Toast";
 
 type Path = "oauth" | "kimi" | "import";
@@ -240,16 +241,21 @@ export function AddAccountWizard({
             ) : (
               <>
                 <div className="rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  <a
-                    href={authUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="break-all font-medium text-indigo-600 hover:text-indigo-500"
-                  >
-                    在浏览器中登录该 ChatGPT 账号 ↗
-                  </a>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CopyButton text={authUrl} label="复制登录链接" />
+                    <span className="text-slate-500">粘到浏览器的无痕窗口里打开</span>
+                  </div>
                   <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                    登录后回调页（localhost:1455）打不开是正常的，复制地址栏完整 URL 粘回下面。
+                    用无痕窗口，避免登录成你平时浏览器里已登录的账号。登录完成后回调页（localhost:1455）打不开是正常的，复制地址栏的完整 URL 粘回下面。也可以直接
+                    <a
+                      href={authUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mx-1 font-medium text-indigo-600 hover:text-indigo-500"
+                    >
+                      在当前浏览器打开 ↗
+                    </a>
+                    。
                   </p>
                 </div>
                 <div>
