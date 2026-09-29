@@ -186,6 +186,14 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 model = "填入模型 id"`, acc.Provider, base)
 		}
 	}
+	// Codex only offers its image generation and web search tools for OpenAI
+	// providers; a custom provider qualifies when it sends this header and
+	// does not use OpenAI login. The gateway strips it before going upstream.
+	toolsLine := ""
+	if chatgpt {
+		toolsLine = "\n# 开启 Codex 的生图和联网搜索（这个请求头只给 Codex 看，网关会去掉，不会发给上游）\n" +
+			`http_headers = { "x-openai-actor-authorization" = "aiseat" }`
+	}
 	codex := fmt.Sprintf(`model_provider = "company"
 %s
 
@@ -197,7 +205,26 @@ wire_api = "responses"
 env_key = "AISEAT_API_KEY"
 env_key_instructions = "在门户「我的 Key」生成后：export AISEAT_API_KEY=sk-emp-..."
 requires_openai_auth = false
-%s`, modelLine, base, wsLine)
+%s%s`, modelLine, base, wsLine, toolsLine)
+
+	// CC Switch's import writes a fixed config (key in auth.json, OpenAI login
+	// required), which rules the tools out. For ChatGPT accounts we offer a
+	// full replacement to paste into CC Switch's editor; the browser fills in
+	// {{KEY}} and {{MODEL}}, and the key never comes back here.
+	ccToml := ""
+	if chatgpt {
+		ccToml = fmt.Sprintf(`model_provider = "custom"
+model = "{{MODEL}}"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "AI 订阅网关"
+base_url = "%s"
+wire_api = "responses"
+requires_openai_auth = false
+experimental_bearer_token = "{{KEY}}"
+%s%s`, base, wsLine, toolsLine)
+	}
 
 	note := "在 Cursor / Cherry Studio 等工具中把 Base URL 设为上面地址，API Key 填你的 sk-emp- key。第三方客户端风险较高，建议优先使用 Codex。"
 	allowed := s.deps.Settings.Get(ctx).AllowNonCodex
@@ -218,6 +245,9 @@ requires_openai_auth = false
 			"name":     "AI 订阅网关",
 			"endpoint": base,
 			"homepage": s.deps.PublicBaseURL,
+			// Replacement config.toml enabling image generation and web search
+			// ("" when the account cannot use them); the browser fills {{KEY}} and {{MODEL}}.
+			"config_toml": ccToml,
 		},
 		"third_party": map[string]any{
 			"base_url": base,

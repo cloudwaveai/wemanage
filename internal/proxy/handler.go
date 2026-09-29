@@ -95,6 +95,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/v1/responses/compact", h.handleProxy("responses"))
 	r.Post("/v1/chat/completions", h.handleProxy("chat"))
 	r.Get("/v1/models", h.handleModels)
+	r.Post("/v1/images/generations", h.handleImages("generations"))
+	r.Post("/v1/images/edits", h.handleImages("edits"))
 }
 
 func (h *Handler) classifier(set settings.Settings) *Classifier {

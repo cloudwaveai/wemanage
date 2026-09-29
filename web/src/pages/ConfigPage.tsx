@@ -167,6 +167,23 @@ function CCSwitchCard({ data }: { data: ConfigSnippets }) {
         </a>
       </div>
 
+      {data.ccswitch.config_toml && (
+        <div className="mt-5 rounded-lg border border-indigo-100 bg-indigo-50/50 p-4">
+          <h3 className="text-sm font-semibold text-slate-800">导入后开启生图和联网搜索</h3>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">
+            CC Switch 导入的配置会让 Codex 关掉生图（image_gen）和联网搜索。导入后在 CC Switch 里点这个供应商的「编辑」，
+            把 config.toml 整段换成下面这段（已经填好你的 Key 和模型），保存后重新打开 Codex 即可。
+          </p>
+          <div className="mt-3">
+            <CodeBlock
+              code={data.ccswitch.config_toml
+                .replace("{{KEY}}", keyOK ? key.trim() : "粘贴你的 sk-emp- Key")
+                .replace("{{MODEL}}", model)}
+            />
+          </div>
+        </div>
+      )}
+
       <ul className="mt-4 list-disc space-y-1 pl-5 text-xs text-slate-500">
         <li>
           Key 只在生成时显示一次。忘了的话到「我的 Key」重置一个，新 Key 生成时也能直接一键导入。
@@ -174,13 +191,6 @@ function CCSwitchCard({ data }: { data: ConfigSnippets }) {
         {!data.provider && (
           <li className="text-amber-600">
             你还没有绑定账号，导入后暂时用不了，请先联系管理员分配账号。
-          </li>
-        )}
-        {data.provider === "codex" && (
-          <li>
-            CC Switch 导入的配置走普通 HTTP，使用上没有区别。想和官方客户端一样走 WebSocket，可以在
-            CC Switch 里编辑这个供应商，在 <code className="font-mono">[model_providers.custom]</code>{" "}
-            下加一行 <code className="font-mono">supports_websockets = true</code>。
           </li>
         )}
         <li>

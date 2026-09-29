@@ -100,7 +100,9 @@ export interface ConfigSnippets {
   models: { id: string; name: string; created: number }[];
   models_source: "account" | "catalog";
   default_model: string;
-  ccswitch: { name: string; endpoint: string; homepage: string };
+  // config_toml: replacement for CC Switch's config (image generation + web
+  // search); "" for accounts that cannot use them. Fill {{KEY}} and {{MODEL}}.
+  ccswitch: { name: string; endpoint: string; homepage: string; config_toml: string };
   codex_toml: string;
   codex_env: string;
   third_party: {

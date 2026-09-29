@@ -60,6 +60,9 @@ var codexDropHeaders = func() map[string]bool {
 		"X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host",
 		"X-Forwarded-Port", "X-Real-Ip", "Forwarded", "Via",
 		"True-Client-Ip", "X-Api-Key",
+		// Set by our Codex config only to unlock Codex's image and web
+		// search tools; it means nothing upstream.
+		"X-Openai-Actor-Authorization",
 	}
 	m := make(map[string]bool, len(names))
 	for _, n := range names {

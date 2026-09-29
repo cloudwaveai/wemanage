@@ -99,6 +99,7 @@ func TestKimiAccountOnboarding(t *testing.T) {
 	}
 	_ = json.Unmarshal(body, &snip)
 	if !strings.Contains(snip.CodexToml, `env_key = "AISEAT_API_KEY"`) || strings.Contains(snip.CodexToml, "gpt-6-luna") ||
+		strings.Contains(snip.CodexToml, "x-openai-actor-authorization") ||
 		!strings.Contains(snip.CodexToml, "supports_websockets = false") {
 		t.Fatalf("snippet for a Kimi account:\n%s", snip.CodexToml)
 	}
@@ -108,7 +109,8 @@ func TestKimiAccountOnboarding(t *testing.T) {
 	_, body = login(t, ts, "ou_kuser").do(http.MethodGet, "/api/me/config-snippets", "")
 	_ = json.Unmarshal(body, &snip)
 	// With no model list it recommends the configured default model.
-	if !strings.Contains(snip.CodexToml, "supports_websockets = true") || !strings.Contains(snip.CodexToml, `model = "gpt-6-luna"`) {
+	if !strings.Contains(snip.CodexToml, "supports_websockets = true") || !strings.Contains(snip.CodexToml, `model = "gpt-6-luna"`) ||
+		!strings.Contains(snip.CodexToml, `"x-openai-actor-authorization"`) {
 		t.Fatalf("snippet for a ChatGPT account:\n%s", snip.CodexToml)
 	}
 }
