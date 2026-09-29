@@ -207,6 +207,10 @@ type wsSession struct {
 	turns []*wsTurn
 	done  chan struct{}
 	once  sync.Once
+	// why says which side ended the connection first (client_closed,
+	// upstream_closed, gateway_restart, gateway_refused); turns still in
+	// flight are logged with it.
+	why string
 }
 
 func (s *wsSession) run() {
@@ -220,14 +224,15 @@ func (s *wsSession) run() {
 	}()
 	go s.keepAlive()
 	s.pumpClient()
-	s.shutdown(websocket.CloseNormalClosure, "")
+	s.shutdown("client_closed", websocket.CloseNormalClosure, "")
 	<-upDone
-	s.failPending("websocket_closed")
+	s.failPending(s.why)
 }
 
 // shutdown closes both sides once.
-func (s *wsSession) shutdown(code int, reason string) {
+func (s *wsSession) shutdown(why string, code int, reason string) {
 	s.once.Do(func() {
+		s.why = why
 		close(s.done)
 		msg := websocket.FormatCloseMessage(code, reason)
 		deadline := time.Now().Add(wsWriteWait)
@@ -252,7 +257,7 @@ func (s *wsSession) keepAlive() {
 			err := s.client.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteWait))
 			s.cwMu.Unlock()
 			if err != nil {
-				s.shutdown(websocket.CloseGoingAway, "")
+				s.shutdown("client_closed", websocket.CloseGoingAway, "")
 				return
 			}
 		}
@@ -295,6 +300,7 @@ func (s *wsSession) pumpClient() {
 			case "response.create", "response.append":
 				out, ok, fatal := s.beginTurn(data)
 				if fatal {
+					s.shutdown("gateway_refused", websocket.CloseNormalClosure, "")
 					return
 				}
 				if !ok {
@@ -316,9 +322,9 @@ func (s *wsSession) pumpUpstream() {
 		if err != nil {
 			var ce *websocket.CloseError
 			if errors.As(err, &ce) && ce.Code != websocket.CloseNoStatusReceived && ce.Code != websocket.CloseAbnormalClosure {
-				s.shutdown(ce.Code, ce.Text) // mirror e.g. 1009 so Codex can react
+				s.shutdown("upstream_closed", ce.Code, ce.Text) // mirror e.g. 1009 so Codex can react
 			} else {
-				s.shutdown(websocket.CloseGoingAway, "upstream closed")
+				s.shutdown("upstream_closed", websocket.CloseGoingAway, "upstream closed")
 			}
 			return
 		}
@@ -328,7 +334,7 @@ func (s *wsSession) pumpUpstream() {
 			data = s.onUpstreamEvent(data)
 		}
 		if err := s.writeClient(mt, data); err != nil {
-			s.shutdown(websocket.CloseGoingAway, "")
+			s.shutdown("client_closed", websocket.CloseGoingAway, "")
 			return
 		}
 	}
@@ -572,6 +578,6 @@ func (h *Handler) CloseWebsockets() {
 	}
 	h.wsMu.Unlock()
 	for _, s := range sessions {
-		s.shutdown(websocket.CloseGoingAway, "server restarting")
+		s.shutdown("gateway_restart", websocket.CloseGoingAway, "server restarting")
 	}
 }

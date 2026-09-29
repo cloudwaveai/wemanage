@@ -22,6 +22,9 @@ const REASONS: Record<string, string> = {
   images_unsupported: "账号不支持生图",
   upstream_unreachable: "上游连不上",
   websocket_closed: "连接中断",
+  client_closed: "Codex 中途断开（多为按了 Esc 或打断）",
+  upstream_closed: "上游中途断开",
+  gateway_restart: "网关重启，Codex 会自动重连",
   context_length_exceeded: "对话超出长度",
 };
 

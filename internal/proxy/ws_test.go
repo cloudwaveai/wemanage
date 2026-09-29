@@ -60,6 +60,12 @@ func (f *fakeCPAWS) handler(t *testing.T) http.Handler {
 				"secondary": map[string]any{"used_percent": 40.0, "window_minutes": 10080, "reset_at": time.Now().Add(48 * time.Hour).Unix()},
 			}})
 			send(map[string]any{"type": "response.output_text.delta", "delta": "hi"})
+			switch in := fmt.Sprint(req["input"]); {
+			case strings.Contains(in, "hang"): // never finishes
+				continue
+			case strings.Contains(in, "drop"): // upstream goes away mid-answer
+				return
+			}
 			send(map[string]any{"type": "response.completed", "response": map[string]any{
 				"id": id, "model": "gpt-5.1-codex",
 				"usage":  map[string]any{"input_tokens": 11, "output_tokens": 7},
@@ -255,4 +261,39 @@ func TestWSRejectsFrozenAtHandshake(t *testing.T) {
 		t.Fatalf("frozen: body %s", body)
 	}
 	_ = store.ErrNotFound
+}
+
+// A turn cut short is logged with the side that ended the connection, so
+// "连接中断" can say whether Codex or the upstream hung up.
+func TestWSUnfinishedTurnSaysWhoClosed(t *testing.T) {
+	for _, c := range []struct{ text, want string }{{"hang", "client_closed"}, {"drop", "upstream_closed"}} {
+		h, _, url := wsRig(t)
+		conn, _, err := dialGW(t, url, h.key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sendCreate(t, conn, nil, c.text)
+		readUntil(t, conn, "response.output_text.delta")
+		if c.text == "hang" {
+			_ = conn.Close() // Codex hangs up mid-answer
+		}
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			h.rec.Flush()
+			var status int
+			var code string
+			err := h.st.Pool.QueryRow(h.ctx, `SELECT status_code, error_type FROM requests`).Scan(&status, &code)
+			if err == nil {
+				if status != 499 || code != c.want {
+					t.Fatalf("%s: logged %d %q, want 499 %s", c.text, status, code, c.want)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: nothing logged", c.text)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		_ = conn.Close()
+	}
 }
