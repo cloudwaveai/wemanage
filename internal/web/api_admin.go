@@ -384,7 +384,7 @@ func (s *Server) handleBind(w http.ResponseWriter, r *http.Request) {
 	if emp, err := s.deps.Store.GetEmployee(r.Context(), body.EmployeeID); err == nil && s.deps.Risk != nil {
 		portal := strings.TrimRight(s.deps.PublicBaseURL, "/")
 		go s.deps.Risk.Notify(context.WithoutCancel(r.Context()), emp.FeishuOpenID,
-			"【AI 网关】你的 AI 账号已经分配好了，现在就能用。还没配置的话，打开 "+portal+"/config 按「一键配置」操作即可。")
+			"【AI 网关】你的 AI 账号已经分配好了，现在就能用。还没配置的话，打开 "+portal+"/key 生成 Key，弹窗里有一条命令配好的方式。")
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

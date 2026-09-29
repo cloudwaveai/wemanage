@@ -4,8 +4,6 @@ import { useAuth } from "./context/AuthContext";
 import { Layout } from "./components/Layout";
 import { Login } from "./pages/Login";
 import { KeyPage } from "./pages/KeyPage";
-import { StatusPage } from "./pages/StatusPage";
-import { ConfigPage } from "./pages/ConfigPage";
 import { UsagePage } from "./pages/UsagePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { LogsPage } from "./pages/LogsPage";
@@ -65,12 +63,13 @@ export default function App() {
         <Routes>
           <Route
             path="/"
-            element={isAdmin ? <OverviewPage /> : <Navigate to="/me" replace />}
+            element={isAdmin ? <OverviewPage /> : <Navigate to="/key" replace />}
           />
-          <Route path="/me" element={<StatusPage />} />
+          {/* Pages folded into 我的 Key; old links (Feishu messages) still land. */}
+          <Route path="/me" element={<Navigate to="/key" replace />} />
+          <Route path="/config" element={<Navigate to="/key" replace />} />
           <Route path="/key" element={<KeyPage />} />
           <Route path="/devices" element={<DevicesPage />} />
-          <Route path="/config" element={<ConfigPage />} />
           <Route path="/usage" element={<UsagePage />} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/logs" element={<LogsPage />} />

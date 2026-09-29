@@ -65,7 +65,7 @@ func (a *QuotaAlerter) check(ctx context.Context, t store.QuotaAlertTarget, wind
 	if alerted != nil && alerted.Sub(*reset).Abs() < 30*time.Minute {
 		return
 	}
-	text := fmt.Sprintf("【AI 网关】你的账号%s额度已用 %.0f%%，预计 %s 重置。\n不想收到这个提醒，可以在门户「我的状态」里关掉：%s/me",
+	text := fmt.Sprintf("【AI 网关】你的账号%s额度已用 %.0f%%，预计 %s 重置。\n不想收到这个提醒，可以在门户「我的用量」里关掉：%s/usage",
 		label, *pct, timefmt.Relative(*reset, now, a.Loc), strings.TrimRight(a.PortalURL, "/"))
 	if err := a.Sender.SendText(ctx, t.OpenID, text); err != nil {
 		return // tried again on the next run

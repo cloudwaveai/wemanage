@@ -124,7 +124,7 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	portal := strings.TrimRight(s.deps.PublicBaseURL, "/")
 	e, ok := s.installs.take(code)
 	if !ok {
-		msg := "这条安装命令已经失效（10 分钟内有效，只能用一次）。请回门户重新生成：" + portal + "/config"
+		msg := "这条安装命令已经失效（10 分钟内有效，只能用一次）。请回门户「我的 Key」重新生成：" + portal + "/key"
 		if ps {
 			fmt.Fprintf(w, "Write-Host -ForegroundColor Red '%s'\n", msg)
 		} else {

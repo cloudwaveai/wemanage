@@ -67,7 +67,7 @@ func TestQuotaAlertOncePerWindow(t *testing.T) {
 		t.Fatalf("reminder below 80%%: %d", n)
 	}
 	snap(85, reset)
-	if n := run(); n != 1 || !strings.Contains(out.msgs[0], "5 小时额度已用 85%") || !strings.Contains(out.msgs[0], "https://portal/me") {
+	if n := run(); n != 1 || !strings.Contains(out.msgs[0], "5 小时额度已用 85%") || !strings.Contains(out.msgs[0], "https://portal/usage") {
 		t.Fatalf("first reminder: %q", out.msgs)
 	}
 	snap(95, reset.Add(3*time.Second)) // same window, reset time a little off

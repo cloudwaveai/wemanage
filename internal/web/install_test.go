@@ -142,30 +142,3 @@ model = "kept-inside-a-table"
 		t.Errorf("after a second run, aiseat tables = %d:\n%s", n, cfgBytes)
 	}
 }
-
-func TestMyStatus(t *testing.T) {
-	ts, _, _ := newServer(t)
-	c := login(t, ts, "ou_status")
-	_, raw := c.do(http.MethodGet, "/api/me/status", "")
-	var st struct {
-		HasKey  bool `json:"has_key"`
-		Account struct {
-			Bound bool `json:"bound"`
-		} `json:"account"`
-		Pending    []any `json:"pending_devices"`
-		LastOK     any   `json:"last_ok"`
-		QuotaAlert bool  `json:"quota_alert"`
-	}
-	if err := json.Unmarshal(raw, &st); err != nil || st.HasKey || st.Account.Bound || st.Pending == nil || st.LastOK != nil {
-		t.Fatalf("fresh employee status: %s", raw)
-	}
-	c.do(http.MethodPost, "/api/me/key", "")
-	if resp, _ := c.do(http.MethodPost, "/api/me/quota-alert", `{"enabled":true}`); resp.StatusCode != 200 {
-		t.Fatalf("quota-alert: %d", resp.StatusCode)
-	}
-	_, raw = c.do(http.MethodGet, "/api/me/status", "")
-	_ = json.Unmarshal(raw, &st)
-	if !st.HasKey || !st.QuotaAlert {
-		t.Fatalf("after key + reminder: %s", raw)
-	}
-}

@@ -406,29 +406,3 @@ export interface TeamUsageResp {
   members: TeamMember[] | null; // sorted by name
   with_account: number;
 }
-
-// --- my status (snake_case) ---
-export interface RequestBrief {
-  at: string;
-  client_kind: string;
-  model: string;
-  status_code: number;
-  error_type: string;
-}
-export interface MyStatus {
-  frozen: boolean;
-  frozen_reason: string;
-  quota_alert: boolean;
-  has_key: boolean;
-  account: {
-    bound: boolean;
-    provider?: string;
-    status?: AccountStatus;
-    rate_limited_until?: string | null;
-  };
-  quota?: QuotaSnapshot;
-  pending_devices: { id: number; label: string; last_ip: string; first_seen: string; status: string }[];
-  last_ok: RequestBrief | null;
-  last_failure: RequestBrief | null;
-  today_requests: number;
-}

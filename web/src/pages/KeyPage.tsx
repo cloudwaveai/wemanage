@@ -8,8 +8,7 @@ import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { fmtDateTime } from "../lib/format";
 import type { ConfigSnippets } from "../lib/types";
-import { CCSWITCH_DOWNLOAD, ccSwitchLink } from "../lib/ccswitch";
-import { InstallCommand } from "../components/InstallCommand";
+import { CodexSetup } from "../components/CodexSetup";
 
 export function KeyPage() {
   const { me, refetch } = useAuth();
@@ -18,11 +17,11 @@ export function KeyPage() {
   const [plainKey, setPlainKey] = useState<string | null>(null);
 
   const hasKey = !!me?.key_prefix;
-  // Needed only to offer the CC Switch import next to a freshly issued key.
+  const [pasted, setPasted] = useState("");
+  // What every way of configuring Codex needs (models, config templates).
   const snippets = useQuery({
     queryKey: ["config-snippets"],
     queryFn: () => api.get<ConfigSnippets>("/api/me/config-snippets"),
-    enabled: !!plainKey,
   });
 
   const issue = useMutation({
@@ -40,7 +39,7 @@ export function KeyPage() {
     <div>
       <PageHeader
         title="我的 Key"
-        desc="用于在 Codex / 第三方客户端中访问网关的专属密钥。"
+        desc="你访问公司网关的专属密钥。生成后弹窗里直接给出配置 Codex 的方式。"
       />
 
       <Card className="p-5">
@@ -81,9 +80,33 @@ export function KeyPage() {
         </div>
 
         <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Key 只在生成时完整显示一次，请妥善保存。重置会立即使旧 Key 失效。
+          Key 只在生成时完整显示一次，请妥善保存。重置会立即使旧 Key 失效，已经配好的电脑都要重新配置。
         </div>
       </Card>
+
+      {hasKey && snippets.data && (
+        <Card className="mt-5 p-5">
+          <details>
+            <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+              已有 Key，在另一台电脑上配置
+            </summary>
+            <p className="mt-2 text-xs text-slate-500">
+              粘贴你保存的 Key，就能拿到这台电脑的安装命令，不用重置（重置会让其它电脑上的旧 Key 失效）。
+            </p>
+            <input
+              type="password"
+              autoComplete="off"
+              value={pasted}
+              onChange={(e) => setPasted(e.target.value)}
+              placeholder="sk-emp-…"
+              className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+            />
+            <div className="mt-4">
+              <CodexSetup data={snippets.data} keyValue={pasted} />
+            </div>
+          </details>
+        </Card>
+      )}
 
       {/* Confirm reset */}
       <Modal
@@ -113,6 +136,7 @@ export function KeyPage() {
         open={!!plainKey}
         onClose={() => setPlainKey(null)}
         title="你的新 Key"
+        width="max-w-2xl"
         footer={
           <Button variant="primary" onClick={() => setPlainKey(null)}>
             我已保存
@@ -129,42 +153,8 @@ export function KeyPage() {
           {plainKey && <CopyButton text={plainKey} />}
         </div>
         {plainKey && snippets.data && (
-          <div className="mt-4 space-y-4">
-            <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
-              <div className="mb-2 text-sm font-medium text-slate-800">
-                一条命令配好 Codex（推荐）
-              </div>
-              <InstallCommand
-                keyValue={plainKey}
-                model={snippets.data.default_model}
-                tools={!!snippets.data.ccswitch.config_toml}
-                auto
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-3 px-1 text-xs text-slate-500">
-              <span>或者用 CC Switch：</span>
-              <a
-                href={ccSwitchLink(
-                  snippets.data.ccswitch,
-                  plainKey,
-                  snippets.data.default_model,
-                )}
-                className="font-medium text-indigo-600 hover:underline"
-              >
-                一键导入 CC Switch
-              </a>
-              <a
-                href={CCSWITCH_DOWNLOAD}
-                target="_blank"
-                rel="noreferrer"
-                className="hover:underline"
-              >
-                下载 CC Switch
-              </a>
-            </div>
-            <p className="px-1 text-xs text-slate-400">
-              使用模型 {snippets.data.default_model}。要换模型，到「一键配置」页重新生成。
-            </p>
+          <div className="mt-5">
+            <CodexSetup data={snippets.data} keyValue={plainKey} auto />
           </div>
         )}
       </Modal>

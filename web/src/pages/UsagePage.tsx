@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 import type { UsageSummary, QuotaResp } from "../lib/types";
 import {
   Card,
@@ -12,12 +13,18 @@ import {
   StatusBadge,
   Meter,
   RangeTabs,
+  Switch,
 } from "../components/ui";
 import { fmtNum, fmtDateTime } from "../lib/format";
 import { UsageTrend } from "../components/UsageTrend";
 
 export function UsagePage() {
   const [range, setRange] = useState(7);
+  const { me, refetch } = useAuth();
+  const reminder = useMutation({
+    mutationFn: (enabled: boolean) => api.post("/api/me/quota-alert", { enabled }),
+    onSuccess: () => refetch(),
+  });
 
   const usage = useQuery({
     queryKey: ["my-usage", range],
@@ -99,6 +106,14 @@ export function UsagePage() {
               ) : (
                 <p className="text-sm text-slate-400">暂无额度快照。</p>
               )}
+              <div className="mt-4 border-t border-slate-100 pt-3">
+                <Switch
+                  checked={!!me?.quota_alert}
+                  onChange={(v) => reminder.mutate(v)}
+                  disabled={reminder.isPending}
+                  label="额度用到 80% 时，在飞书提醒我（只发给你自己）"
+                />
+              </div>
             </Card>
           )}
 

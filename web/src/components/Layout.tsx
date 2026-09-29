@@ -32,12 +32,6 @@ const I = (path: string) => (
 
 const PERSONAL: NavItem[] = [
   {
-    to: "/me",
-    label: "我的状态",
-    roles: ["employee", "leader", "super_admin"],
-    icon: I("M22 12h-4l-3 9L9 3l-3 9H2"),
-  },
-  {
     to: "/key",
     label: "我的 Key",
     roles: ["employee", "leader", "super_admin"],
@@ -48,12 +42,6 @@ const PERSONAL: NavItem[] = [
     label: "我的设备",
     roles: ["employee", "leader", "super_admin"],
     icon: I("M4 5h16a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM8 20h8M12 16v4"),
-  },
-  {
-    to: "/config",
-    label: "一键配置",
-    roles: ["employee", "leader", "super_admin"],
-    icon: I("M4 6h16M4 12h16M4 18h10"),
   },
   {
     to: "/usage",
@@ -197,8 +185,7 @@ function NavSection({
 function RiskBanner() {
   const { me } = useAuth();
   const { pathname } = useLocation();
-  // The status page already lists all of this, with actions.
-  if (!me || pathname === "/me") return null;
+  if (!me) return null;
 
   if (me.frozen) {
     return (
