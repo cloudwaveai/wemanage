@@ -139,7 +139,7 @@ func TestImagesNeedChatGPTAndJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	w = imageReq(t, h.r, h.key, "/v1/images/generations", `{"prompt":"x"}`)
-	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "images_unsupported") {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"reason":"images_unsupported"`) {
 		t.Fatalf("kimi: status %d %s", w.Code, w.Body.String())
 	}
 }

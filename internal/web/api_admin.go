@@ -1,12 +1,14 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"aiseat/internal/cpa"
@@ -379,6 +381,11 @@ func (s *Server) handleBind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "account_bind", "account", fmt.Sprint(accID), map[string]any{"employee_id": body.EmployeeID})
+	if emp, err := s.deps.Store.GetEmployee(r.Context(), body.EmployeeID); err == nil && s.deps.Risk != nil {
+		portal := strings.TrimRight(s.deps.PublicBaseURL, "/")
+		go s.deps.Risk.Notify(context.WithoutCancel(r.Context()), emp.FeishuOpenID,
+			"【AI 网关】你的 AI 账号已经分配好了，现在就能用。还没配置的话，打开 "+portal+"/config 按「一键配置」操作即可。")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

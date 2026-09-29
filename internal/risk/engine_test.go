@@ -268,3 +268,19 @@ func TestEngineAccumulatesDeviceAndNetworkUses(t *testing.T) {
 		t.Fatalf("networks = %+v, want one /24 with 3 uses", nets)
 	}
 }
+
+func TestEngineTellsAdminsAboutKeyWithoutAccount(t *testing.T) {
+	e := newEnv(t, settings.RiskStandard)
+	o := e.obs(risk.CachedDevice{}, "1.2.3.4")
+	o.Denied = "no_account_bound"
+	e.eng.Observe(o)
+	e.eng.Observe(o) // once a day is enough
+	e.eng.Flush()
+	got := e.msg.to("ou_admin")
+	if len(got) != 1 || !strings.Contains(got[0], "张三") || !strings.Contains(got[0], "https://portal/accounts") {
+		t.Fatalf("admin messages: %q", got)
+	}
+	if n := len(e.msg.to("ou_emp")); n != 0 {
+		t.Fatalf("employee got %d messages; Codex already tells them", n)
+	}
+}

@@ -20,6 +20,7 @@ type RequestListItem struct {
 	ModelRequested string
 	ModelResponded string
 	StatusCode     int
+	ErrorType      string
 	TokensInput    int64
 	TokensOutput   int64
 	DurationMS     int
@@ -82,7 +83,7 @@ func (s *Store) ListRequests(ctx context.Context, f RequestFilter) ([]RequestLis
 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT r.id, r.started_at, r.employee_id, COALESCE(e.name,''), r.client_kind, r.endpoint,
-			r.model_requested, r.model_responded, r.status_code, r.tokens_input, r.tokens_output, r.duration_ms
+			r.model_requested, r.model_responded, r.status_code, r.error_type, r.tokens_input, r.tokens_output, r.duration_ms
 		FROM requests r LEFT JOIN employees e ON e.id = r.employee_id
 		`+where+`
 		ORDER BY r.started_at DESC LIMIT $`+limIdx+` OFFSET $`+offIdx, args...)
@@ -95,7 +96,7 @@ func (s *Store) ListRequests(ctx context.Context, f RequestFilter) ([]RequestLis
 		var it RequestListItem
 		var idb []byte
 		if err := rows.Scan(&idb, &it.StartedAt, &it.EmployeeID, &it.EmployeeName, &it.ClientKind, &it.Endpoint,
-			&it.ModelRequested, &it.ModelResponded, &it.StatusCode, &it.TokensInput, &it.TokensOutput, &it.DurationMS); err != nil {
+			&it.ModelRequested, &it.ModelResponded, &it.StatusCode, &it.ErrorType, &it.TokensInput, &it.TokensOutput, &it.DurationMS); err != nil {
 			return nil, 0, err
 		}
 		copy(it.ID[:], idb)

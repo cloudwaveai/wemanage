@@ -128,6 +128,7 @@ export interface LogRow {
   model_requested: string;
   model_responded: string;
   status_code: number;
+  error_type: string;
   tokens_input: number;
   tokens_output: number;
   duration_ms: number;

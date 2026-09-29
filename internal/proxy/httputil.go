@@ -59,25 +59,34 @@ func flushCopy(w http.ResponseWriter, src io.Reader) {
 	}
 }
 
-// parseRateLimitReset derives a rate-limit deadline from upstream headers.
+// parseRateLimitReset derives a rate-limit deadline from upstream headers,
+// five minutes from now when they give none.
 func parseRateLimitReset(h http.Header) time.Time {
 	now := time.Now()
+	if t, ok := headerReset(h, now); ok {
+		return t
+	}
+	return now.Add(5 * time.Minute)
+}
+
+// headerReset reads a rate-limit deadline from upstream headers.
+func headerReset(h http.Header, now time.Time) (time.Time, bool) {
 	if v := h.Get("X-Codex-Primary-Reset-At"); v != "" {
 		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs > 0 {
-			return time.Unix(secs, 0)
+			return time.Unix(secs, 0), true
 		}
 	}
 	if v := h.Get("X-Codex-Primary-Reset-After-Seconds"); v != "" {
 		if s, err := strconv.Atoi(v); err == nil && s > 0 {
-			return now.Add(time.Duration(s) * time.Second)
+			return now.Add(time.Duration(s) * time.Second), true
 		}
 	}
 	if v := h.Get("Retry-After"); v != "" {
 		if s, err := strconv.Atoi(v); err == nil && s > 0 {
-			return now.Add(time.Duration(s) * time.Second)
+			return now.Add(time.Duration(s) * time.Second), true
 		}
 	}
-	return now.Add(5 * time.Minute)
+	return time.Time{}, false
 }
 
 func hashSeed(s string) string {

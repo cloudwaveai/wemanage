@@ -26,11 +26,11 @@ var allow = Decision{Allow: true}
 func ClientGate(set settings.Settings, clientKind string, dev DeviceInfo) Decision {
 	if clientKind != KindCodex && !set.AllowNonCodex {
 		return Decision{Status: http.StatusForbidden, Code: "client_not_allowed",
-			Message: "only the official Codex client is allowed with this key"}
+			Message: "这个 Key 只能在官方 Codex 客户端里使用。"}
 	}
 	if clientKind == KindCodex && set.RequireCodexInstallID && dev.InstallID == "" {
 		return Decision{Status: http.StatusForbidden, Code: "client_not_allowed",
-			Message: "Codex installation id missing; please update Codex to the latest version"}
+			Message: "Codex 版本太旧，请升级到最新版后再用。"}
 	}
 	return allow
 }
@@ -42,7 +42,7 @@ func DeviceGate(set settings.Settings, dev CachedDevice, created bool, now time.
 	switch dev.Status {
 	case store.DeviceBlocked:
 		return Decision{Status: http.StatusForbidden, Code: "device_blocked",
-			Message: "this device has been blocked for your key; contact the administrator"}
+			Message: "这台电脑已被停用（在门户点过「不是我」，或被管理员停用）。如需恢复，请联系管理员。"}
 	case store.DeviceTrusted:
 		return allow
 	}
@@ -50,7 +50,7 @@ func DeviceGate(set settings.Settings, dev CachedDevice, created bool, now time.
 		return allow
 	}
 	unconfirmed := Decision{Status: http.StatusForbidden, Code: "device_unconfirmed",
-		Message: "new device awaiting confirmation; confirm it in the portal: " + portal}
+		Message: "这台新电脑还没确认是你本人。打开 " + portal + " 点「是我」，确认后就能继续用。"}
 	if set.RiskMode == settings.RiskStrict {
 		return unconfirmed
 	}
@@ -118,5 +118,5 @@ func NetworkGate(set settings.Settings, remoteAllowed bool, ip string, m *Office
 		return allow
 	}
 	return Decision{Status: http.StatusForbidden, Code: "network_not_allowed",
-		Message: "this key can only be used from the company network; ask the administrator if you need remote access"}
+		Message: "这个 Key 只能在公司网络里使用。需要在外面用，请联系管理员开通远程使用。"}
 }

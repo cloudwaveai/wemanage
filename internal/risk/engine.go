@@ -328,6 +328,13 @@ func (e *Engine) process(ctx context.Context, o Observation) {
 		e.outsideOffice(ctx, o)
 		return
 	}
+	if o.Denied == "no_account_bound" {
+		if e.once(ctx, o.EmployeeID, "no_account", "", 24*time.Hour, false) {
+			e.broadcastAdmins(ctx, fmt.Sprintf("【AI 网关】%s 已经在用 Key，但还没有分配 AI 账号。请到「账号」页给其绑定一个：%s",
+				e.employeeName(ctx, o.EmployeeID), strings.TrimRight(e.cfg.PortalURL, "/")+"/accounts"))
+		}
+		return
+	}
 	if o.Denied == "client_not_allowed" {
 		if e.once(ctx, o.EmployeeID, RuleNonCodexBlocked, "", 24*time.Hour, true) {
 			ev := e.addEvent(ctx, o.EmployeeID, RuleNonCodexBlocked, "warn", nil, nil,

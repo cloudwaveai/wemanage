@@ -42,13 +42,10 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 		ctx := r.Context()
 		set := h.deps.Settings.Get(ctx)
 
-		prin, acc, ge := h.authorize(ctx, bearer(r), set)
-		if ge != nil {
-			ge.write(w)
-			return
-		}
-		if !acc.IsChatGPT() {
-			oaError(w, http.StatusNotFound, "image generation needs a ChatGPT account", "invalid_request_error", "images_unsupported")
+		kind := h.classifier(set).Classify(r.Header)
+		prin, acc, refused := h.authorize(ctx, bearer(r), set)
+		if refused != nil && prin.EmployeeID == 0 {
+			refused.write(w, kind)
 			return
 		}
 		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
@@ -61,16 +58,38 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 			return
 		}
 
-		kind := h.classifier(set).Classify(r.Header)
+		model := stripPrefix(gjson.GetBytes(body, "model").String())
+		if model == "" {
+			model = defaultImageModel
+		}
+		logBody := imageLogBody(op, model, gjson.GetBytes(body, "prompt").String())
 		clientIP := risk.ClientIP(r, h.deps.TrustProxy)
+		sessionSeed := h.sessionSeed(kind, r.Header, body, prin.EmployeeID)
+		rec := recorder.Record{
+			RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
+			AccountID: accountID(prin), APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
+			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: imagesEndpointName,
+			ModelRequested: model, ReqBody: logBody, ClientIP: clientIP,
+		}
 		obs := risk.Observation{
 			EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
 			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
 		}
+		if refused != nil {
+			h.observeRefusal(obs, refused)
+			h.refuse(w, refused, kind, &rec)
+			return
+		}
+		if !acc.IsChatGPT() {
+			h.refuse(w, &refusal{status: http.StatusNotFound, typ: "invalid_request_error", code: "images_unsupported",
+				msg: "生图需要 ChatGPT 账号，你现在的 AI 账号不支持。"}, kind, &rec)
+			return
+		}
+
 		deny := func(d risk.Decision) {
 			obs.Denied = d.Code
 			h.observe(obs)
-			oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+			h.refuse(w, fromDecision(d), kind, &rec)
 		}
 		if d := risk.NetworkGate(set, prin.RemoteAllowed, clientIP, &h.office); !d.Allow {
 			deny(d)
@@ -83,19 +102,12 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 			deny(d)
 			return
 		}
-
-		model := stripPrefix(gjson.GetBytes(body, "model").String())
-		if model == "" {
-			model = defaultImageModel
-		}
-		logBody := imageLogBody(op, model, gjson.GetBytes(body, "prompt").String())
 		if hit, flagged := h.auditor.Check(set, imagesEndpointName, logBody); flagged {
 			obs.ContentRule, obs.ContentSnippet = hit.Rule, hit.Snippet
 			obs.ContentBlocked = set.ContentAuditMode == settings.AuditBlock
 		}
 		if obs.ContentBlocked {
-			deny(risk.Decision{Status: http.StatusForbidden, Code: "content_blocked",
-				Message: "request blocked by the company's AI usage policy (" + obs.ContentRule + "); contact the administrator if this is a mistake"})
+			deny(contentBlocked(obs.ContentRule))
 			return
 		}
 		h.observe(obs)
@@ -107,16 +119,15 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 		release, waited, err := h.deps.Limiter.Acquire(ctx, acc.ID, capN, time.Duration(set.QueueTimeoutSeconds)*time.Second)
 		if err != nil {
 			if errors.Is(err, ErrQueueTimeout) {
-				w.Header().Set("Retry-After", "1")
-				oaError(w, http.StatusTooManyRequests, "gateway concurrency limit reached, retry shortly", "rate_limit_error", "gateway_busy")
+				h.refuse(w, gatewayBusy(), kind, &rec)
 				return
 			}
 			w.WriteHeader(499)
 			return
 		}
 		defer release()
+		rec.QueuedMS = int(waited.Milliseconds())
 
-		sessionSeed := h.sessionSeed(kind, r.Header, body, prin.EmployeeID)
 		outBody, _ := sjson.SetBytes(body, "model", acc.Prefix()+"/"+model)
 		hdr := BuildUpstreamHeaders(HeaderInput{
 			Kind: kind, Client: r.Header, Profile: set.CodexProfile, Device: acc.DeviceProfile,
@@ -131,12 +142,6 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 		upReq, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, h.deps.CPABaseURL+"/v1/images/"+op, strings.NewReader(string(outBody)))
 		upReq.Header = hdr
 
-		rec := recorder.Record{
-			RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
-			AccountID: &acc.ID, APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
-			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: imagesEndpointName,
-			ModelRequested: model, QueuedMS: int(waited.Milliseconds()), ReqBody: logBody, ClientIP: clientIP,
-		}
 		resp, err := h.deps.Upstream.Do(upReq)
 		if err != nil {
 			rec.StatusCode = http.StatusBadGateway
@@ -144,7 +149,7 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 			rec.ErrorBody = err.Error()
 			rec.DurationMS = int(time.Since(start).Milliseconds())
 			h.deps.Recorder.Submit(rec)
-			oaError(w, http.StatusBadGateway, "upstream unavailable", "server_error", "upstream_unreachable")
+			oaError(w, http.StatusBadGateway, "上游服务暂时连不上，请稍后重试。", "server_error", "upstream_unreachable")
 			return
 		}
 		defer resp.Body.Close()

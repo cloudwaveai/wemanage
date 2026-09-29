@@ -1,9 +1,32 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api, ApiError, setCsrfToken } from "../lib/api";
 
+// Opened inside the Feishu client (workbench, or a link in a bot message):
+// the user is already signed in to Feishu, so log in without a click.
+const IN_FEISHU = /Lark|Feishu/i.test(navigator.userAgent);
+const LOGGED_OUT_FLAG = "aiseat_logged_out";
+
+function loggedOutThisTab(): boolean {
+  try {
+    return sessionStorage.getItem(LOGGED_OUT_FLAG) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function Login() {
   const { refetch } = useAuth();
+  const params = new URLSearchParams(window.location.search);
+  const loginError = params.get("login_error");
+  params.delete("login_error");
+  const back = window.location.pathname + (params.toString() ? "?" + params : "");
+  const loginUrl = "/api/auth/feishu/login?next=" + encodeURIComponent(back);
+  const auto = IN_FEISHU && !loginError && !loggedOutThisTab();
+  useEffect(() => {
+    if (auto) window.location.replace(loginUrl);
+  }, [auto, loginUrl]);
+
   const [devVisible, setDevVisible] = useState(true);
   const [openId, setOpenId] = useState("");
   const [name, setName] = useState("");
@@ -49,15 +72,20 @@ export function Login() {
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          {loginError && (
+            <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {loginError}
+            </div>
+          )}
           <a
-            href="/api/auth/feishu/login"
+            href={loginUrl}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-500"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M4 5h16v14H4z" opacity="0" />
               <path d="M6 4h9l3 3v13H6z" opacity="0" />
             </svg>
-            飞书登录
+            {auto ? "正在用飞书登录…" : "飞书登录"}
           </a>
 
           {devVisible && (

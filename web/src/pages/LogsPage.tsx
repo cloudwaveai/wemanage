@@ -13,6 +13,7 @@ import {
   Button,
 } from "../components/ui";
 import { fmtDateTime, fmtNum, fmtDuration } from "../lib/format";
+import { failureReason } from "../lib/failures";
 
 const PAGE_SIZE = 20;
 
@@ -110,7 +111,7 @@ export function LogsPage() {
         desc={
           isAdmin
             ? "全部员工经过网关的请求。点开一条可看原文，查看会写入审计。"
-            : "你经过网关的每次调用：时间、模型、状态、Token 和耗时。"
+            : "你经过网关的每次调用：时间、模型、状态、Token 和耗时。失败的会写明原因。"
         }
       />
 
@@ -255,7 +256,7 @@ export function LogsPage() {
                           </span>
                         )}
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="whitespace-nowrap px-4 py-2.5">
                       <span
                         className={
                           "inline-flex rounded-full px-2 py-0.5 text-xs font-medium " +
@@ -264,6 +265,11 @@ export function LogsPage() {
                       >
                         {r.status_code || "-"}
                       </span>
+                      {failureReason(r.status_code, r.error_type) && (
+                        <span className="ml-2 whitespace-nowrap text-xs text-slate-500">
+                          {failureReason(r.status_code, r.error_type)}
+                        </span>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-slate-600">
                       {fmtNum(r.tokens_input)}

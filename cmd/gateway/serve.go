@@ -120,6 +120,7 @@ func runServe() error {
 		Store: st, Settings: set, Limiter: proxy.NewLimiter(), Recorder: rec,
 		CPABaseURL: cfg.CPABaseURL, CPAAPIKey: cfg.CPAAPIKey, Upstream: upstream, Log: log,
 		Risk: riskEngine, TrustProxy: cfg.TrustProxyHeaders,
+		PortalURL: cfg.PublicBaseURL, Loc: cfg.Timezone,
 	})
 
 	// Web / management plane.

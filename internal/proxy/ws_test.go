@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -230,8 +231,13 @@ func TestWSContentBlockKeepsConnection(t *testing.T) {
 	h.rec.Flush()
 	var n int
 	_ = h.st.Pool.QueryRow(h.ctx, `SELECT COUNT(*) FROM requests`).Scan(&n)
-	if n != 1 {
-		t.Fatalf("logged requests = %d, want 1 (the blocked turn never went upstream)", n)
+	if n != 2 {
+		t.Fatalf("logged requests = %d, want 2 (the blocked turn and the served one)", n)
+	}
+	var blocked int
+	_ = h.st.Pool.QueryRow(h.ctx, `SELECT COUNT(*) FROM requests WHERE error_type = 'content_blocked' AND status_code = 400`).Scan(&blocked)
+	if blocked != 1 {
+		t.Fatalf("blocked turn not logged as content_blocked")
 	}
 }
 
@@ -241,8 +247,12 @@ func TestWSRejectsFrozenAtHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, resp, err := dialGW(t, url, h.key)
-	if err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("frozen: want 403 at handshake, got %v %v", resp, err)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("frozen: want 400 at handshake, got %v %v", resp, err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `"reason":"account_frozen"`) {
+		t.Fatalf("frozen: body %s", body)
 	}
 	_ = store.ErrNotFound
 }

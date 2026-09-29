@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,10 @@ type HandlerDeps struct {
 	Risk *risk.Engine
 	// TrustProxy trusts X-Forwarded-For from private-network peers (Caddy).
 	TrustProxy bool
+	// PortalURL is the employee portal's public base URL, linked from refusal
+	// messages; Loc is the time zone those messages give times in.
+	PortalURL string
+	Loc       *time.Location
 }
 
 // Handler implements the OpenAI-compatible data plane.
@@ -162,36 +167,55 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			oaError(w, http.StatusUpgradeRequired, "websocket transport not supported", "invalid_request_error", "websocket_unsupported")
 			return
 		}
+		kind := h.classifier(set).Classify(r.Header)
+		clientIP := risk.ClientIP(r, h.deps.TrustProxy)
 
 		// --- 1. Authenticate ---
-		prin, acc, ge := h.authorize(ctx, bearer(r), set)
-		if ge != nil {
-			ge.write(w)
+		prin, acc, refused := h.authorize(ctx, bearer(r), set)
+		if refused != nil && prin.EmployeeID == 0 {
+			refused.write(w, kind)
 			return
 		}
 
-		// --- 2. Read body & classify ---
+		// --- 2. Read body; from here on every outcome is logged ---
 		body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
 		if err != nil {
-			oaError(w, http.StatusBadRequest, "cannot read request body", "invalid_request_error", "bad_body")
+			oaError(w, http.StatusBadRequest, "请求内容读取失败，请重试。", "invalid_request_error", "bad_body")
 			return
 		}
-		kind := h.classifier(set).Classify(r.Header)
+		model := stripPrefix(gjson.GetBytes(body, "model").String())
+		stream := gjson.GetBytes(body, "stream").Bool()
+		reasoning := gjson.GetBytes(body, "reasoning.effort").String()
+		if reasoning == "" {
+			reasoning = gjson.GetBytes(body, "reasoning_effort").String()
+		}
+		sessionSeed := h.sessionSeed(kind, r.Header, body, prin.EmployeeID)
+		rec := recorder.Record{
+			RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
+			AccountID: accountID(prin), APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
+			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: endpoint,
+			Stream: stream, ModelRequested: model, ReasoningEffort: reasoning,
+			ReqBody: body, ClientIP: clientIP,
+		}
+		obs := risk.Observation{
+			EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
+			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
+		}
+		if refused != nil {
+			h.observeRefusal(obs, refused)
+			h.refuse(w, refused, kind, &rec)
+			return
+		}
 		if kind == KindCodex {
 			go h.recordObserved(r.Header)
 		}
 
 		// --- 2b. Gates: office network, client type, content audit, device ---
-		clientIP := risk.ClientIP(r, h.deps.TrustProxy)
 		devInfo := risk.ExtractDevice(r.Header, body)
-		obs := risk.Observation{
-			EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
-			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
-		}
 		deny := func(d risk.Decision) {
 			obs.Denied = d.Code
 			h.observe(obs)
-			oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+			h.refuse(w, fromDecision(d), kind, &rec)
 		}
 		if d := risk.NetworkGate(set, prin.RemoteAllowed, clientIP, &h.office); !d.Allow {
 			deny(d)
@@ -205,14 +229,13 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			obs.ContentRule, obs.ContentSnippet = hit.Rule, hit.Snippet
 			obs.ContentBlocked = set.ContentAuditMode == settings.AuditBlock
 		}
-		var deviceID *int64
 		if h.deps.Risk != nil {
 			dev, created, err := h.deps.Risk.Device(ctx, prin.EmployeeID, devInfo, kind, clientIP)
 			if err != nil {
 				// Fail open: detection must not take the service down with the DB.
 				h.deps.Log.Warn("risk: device lookup failed", "employee", prin.EmployeeID, "err", err)
 			} else {
-				deviceID = &dev.ID
+				rec.DeviceID = &dev.ID
 				obs.Device, obs.NewDevice = dev, created
 				if d := risk.DeviceGate(set, dev, created, time.Now(), h.deps.Risk.PortalDevicesURL()); !d.Allow {
 					deny(d)
@@ -221,18 +244,10 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			}
 		}
 		if obs.ContentBlocked {
-			deny(risk.Decision{Status: http.StatusForbidden, Code: "content_blocked",
-				Message: "request blocked by the company's AI usage policy (" + obs.ContentRule + "); contact the administrator if this is a mistake"})
+			deny(contentBlocked(obs.ContentRule))
 			return
 		}
 		h.observe(obs)
-
-		model := stripPrefix(gjson.GetBytes(body, "model").String())
-		stream := gjson.GetBytes(body, "stream").Bool()
-		reasoning := gjson.GetBytes(body, "reasoning.effort").String()
-		if reasoning == "" {
-			reasoning = gjson.GetBytes(body, "reasoning_effort").String()
-		}
 
 		// --- 3. Concurrency gate ---
 		capN := set.DefaultMaxConcurrency
@@ -242,8 +257,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		release, waited, err := h.deps.Limiter.Acquire(ctx, acc.ID, capN, time.Duration(set.QueueTimeoutSeconds)*time.Second)
 		if err != nil {
 			if errors.Is(err, ErrQueueTimeout) {
-				w.Header().Set("Retry-After", "1")
-				oaError(w, http.StatusTooManyRequests, "gateway concurrency limit reached, retry shortly", "rate_limit_error", "gateway_busy")
+				h.refuse(w, gatewayBusy(), kind, &rec)
 				return
 			}
 			// context cancelled by client
@@ -251,11 +265,9 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			return
 		}
 		defer release()
+		rec.QueuedMS = int(waited.Milliseconds())
 
 		// --- 4. Build upstream request ---
-		sessionSeed := h.sessionSeed(kind, r.Header, body, prin.EmployeeID)
-		sessionID := SessionUUID(sessionSeed)
-
 		upstreamModel := acc.Prefix() + "/" + model
 		outBody, _ := sjson.SetBytes(body, "model", upstreamModel)
 
@@ -264,7 +276,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			Client:    r.Header,
 			Profile:   set.CodexProfile,
 			Device:    acc.DeviceProfile,
-			SessionID: sessionID,
+			SessionID: SessionUUID(sessionSeed),
 			CPAAPIKey: h.deps.CPAAPIKey,
 		})
 
@@ -279,15 +291,6 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		upReq, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, upURL, strings.NewReader(string(outBody)))
 		upReq.Header = hdr
 
-		rec := recorder.Record{
-			RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
-			AccountID: &acc.ID, APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
-			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: endpoint,
-			Stream: stream, ModelRequested: model, ReasoningEffort: reasoning,
-			QueuedMS: int(waited.Milliseconds()), ReqBody: body,
-			ClientIP: clientIP, DeviceID: deviceID,
-		}
-
 		resp, err := h.deps.Upstream.Do(upReq)
 		if err != nil {
 			rec.StatusCode = http.StatusBadGateway
@@ -295,7 +298,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			rec.ErrorBody = err.Error()
 			rec.DurationMS = int(time.Since(start).Milliseconds())
 			h.deps.Recorder.Submit(rec)
-			oaError(w, http.StatusBadGateway, "upstream unavailable", "server_error", "upstream_unreachable")
+			oaError(w, http.StatusBadGateway, "上游服务暂时连不上，请稍后重试。", "server_error", "upstream_unreachable")
 			return
 		}
 		defer resp.Body.Close()
@@ -305,6 +308,18 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			go func(hdr http.Header) {
 				_ = health.RecordQuotaFromHeaders(context.Background(), h.deps.Store, acc.ID, hdr, time.Now())
 			}(resp.Header.Clone())
+		}
+		// A used-up quota goes out in Codex's usage-limit shape, without the
+		// upstream plan's upgrade advice: Codex stops and shows the reset time.
+		if resp.StatusCode == http.StatusTooManyRequests {
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			if until, ok := quotaReset(raw, resp.Header, time.Now()); ok {
+				rec.ErrorBody = string(raw[:min(len(raw), 2000)])
+				h.refuse(w, h.usageLimited(until), kind, &rec)
+				h.markRateLimited(context.WithoutCancel(ctx), acc.ID, until, nil)
+				return
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(raw))
 		}
 		copyResponseHeaders(w, resp.Header)
 		w.WriteHeader(resp.StatusCode)
@@ -334,69 +349,82 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 	}
 }
 
+func accountID(p store.KeyPrincipal) *int64 {
+	if p.Account == nil {
+		return nil
+	}
+	id := p.Account.ID
+	return &id
+}
+
+func gatewayBusy() *refusal {
+	return &refusal{status: http.StatusTooManyRequests, typ: "rate_limit_error", code: "gateway_busy",
+		msg: "同时进行的请求太多，稍后会自动重试。", retryAfter: "1"}
+}
+
+// observeRefusal tells the risk engine about an employee who has a key but
+// no account yet, so the administrators hear about it.
+func (h *Handler) observeRefusal(o risk.Observation, f *refusal) {
+	if f.code == "no_account_bound" {
+		o.Denied = f.code
+		h.observe(o)
+	}
+}
+
 func (h *Handler) observe(o risk.Observation) {
 	if h.deps.Risk != nil {
 		h.deps.Risk.Observe(o)
 	}
 }
 
-// gateError is an OpenAI-shaped rejection produced before any upstream work.
-type gateError struct {
-	status     int
-	msg, typ   string
-	code       string
-	retryAfter string
-}
-
-func (g *gateError) write(w http.ResponseWriter) {
-	if g.retryAfter != "" {
-		w.Header().Set("Retry-After", g.retryAfter)
-	}
-	oaError(w, g.status, g.msg, g.typ, g.code)
-}
-
 // authorize resolves a bearer token to its principal and bound account and
-// applies the employee/notice/account checks shared by the HTTP and
-// WebSocket paths.
-func (h *Handler) authorize(ctx context.Context, token string, set settings.Settings) (store.KeyPrincipal, store.Account, *gateError) {
-	deny := func(status int, msg, typ, code string) (store.KeyPrincipal, store.Account, *gateError) {
-		return store.KeyPrincipal{}, store.Account{}, &gateError{status: status, msg: msg, typ: typ, code: code}
+// applies the employee and account checks shared by the HTTP and WebSocket
+// paths. A refusal after the key is found still returns the principal, so the
+// refusal can be logged for the employee.
+func (h *Handler) authorize(ctx context.Context, token string, set settings.Settings) (store.KeyPrincipal, store.Account, *refusal) {
+	no := func(status int, code, msg string) *refusal {
+		return &refusal{status: status, typ: "invalid_request_error", code: code, msg: msg}
 	}
 	if token == "" {
-		return deny(http.StatusUnauthorized, "missing API key", "invalid_request_error", "missing_key")
+		return store.KeyPrincipal{}, store.Account{}, no(http.StatusUnauthorized, "missing_key",
+			"没有带上 Key。请打开 "+h.portal("/config")+" 按「一键配置」重新配置。")
 	}
 	prin, err := h.cache.Get(ctx, secure.HashAPIKey(token))
 	if errors.Is(err, store.ErrNotFound) {
-		return deny(http.StatusUnauthorized, "invalid API key", "invalid_request_error", "invalid_key")
+		return store.KeyPrincipal{}, store.Account{}, no(http.StatusUnauthorized, "invalid_key",
+			"Key 无效，可能已经重置过。请到 "+h.portal("/key")+" 重新生成并导入。")
 	}
 	if err != nil {
 		h.deps.Log.Warn("key lookup failed", "err", err)
-		p, a, g := deny(http.StatusServiceUnavailable, "gateway database temporarily unavailable, retry shortly", "server_error", "gateway_unavailable")
-		g.retryAfter = "5"
-		return p, a, g
+		return store.KeyPrincipal{}, store.Account{}, &refusal{status: http.StatusServiceUnavailable,
+			typ: "server_error", code: "gateway_unavailable", msg: "网关暂时连不上数据库，稍后会自动重试。", retryAfter: "5"}
 	}
-	if prin.EmployeeStatus != "active" {
-		return deny(http.StatusForbidden, "account disabled", "invalid_request_error", "employee_disabled")
+	var f *refusal
+	switch acc := prin.Account; {
+	case prin.EmployeeStatus != "active":
+		f = no(http.StatusForbidden, "employee_disabled", "你的账号已停用，如有疑问请联系管理员。")
+	case prin.Frozen:
+		why := ""
+		if prin.FrozenReason != "" {
+			why = "（" + prin.FrozenReason + "）"
+		}
+		f = no(http.StatusForbidden, "account_frozen", "你的 Key 已被暂停"+why+"，请联系管理员。")
+	case acc == nil:
+		f = no(http.StatusForbidden, "no_account_bound", "你还没有分配 AI 账号，已通知管理员；分配好后会在飞书告诉你。")
+	case acc.Status != "active":
+		f = no(http.StatusForbidden, "account_disabled", "你的 AI 账号已被管理员停用，请联系管理员。")
+	case acc.NeedsLogin:
+		f = no(http.StatusServiceUnavailable, "account_needs_login", "你的 AI 账号登录已失效，管理员已收到通知，重新登录后即可继续使用。")
+	case acc.RateLimitedUntil != nil && acc.RateLimitedUntil.After(time.Now()):
+		f = h.usageLimited(*acc.RateLimitedUntil)
+	default:
+		return prin, *acc, nil
 	}
-	if prin.Frozen {
-		return deny(http.StatusForbidden, "this key is suspended ("+prin.FrozenReason+"); contact the administrator", "invalid_request_error", "account_frozen")
+	var acc store.Account
+	if prin.Account != nil {
+		acc = *prin.Account
 	}
-	if prin.Account == nil {
-		return deny(http.StatusForbidden, "no upstream account bound to this key", "invalid_request_error", "no_account_bound")
-	}
-	acc := *prin.Account
-	if acc.Status != "active" {
-		return deny(http.StatusForbidden, "upstream account disabled", "invalid_request_error", "account_disabled")
-	}
-	if acc.NeedsLogin {
-		return deny(http.StatusServiceUnavailable, "account needs re-login; the administrator has been notified", "server_error", "account_needs_login")
-	}
-	if acc.RateLimitedUntil != nil && acc.RateLimitedUntil.After(time.Now()) {
-		p, a, g := deny(http.StatusTooManyRequests, "account rate limited", "rate_limit_error", "account_rate_limited")
-		g.retryAfter = strconv.Itoa(int(time.Until(*acc.RateLimitedUntil).Seconds()) + 1)
-		return p, a, g
-	}
-	return prin, acc, nil
+	return prin, acc, f
 }
 
 // sessionSeed derives a stable per-conversation seed.
@@ -477,10 +505,7 @@ func (h *Handler) quotaDue(accountID int64, status int) bool {
 func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *http.Response, model string, outcome capture.Outcome, set settings.Settings) {
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		until := parseRateLimitReset(resp.Header)
-		_ = h.deps.Store.SetRateLimitedUntil(ctx, acc.ID, &until)
-		h.cache.forgetAccount(acc.ID)
-		_, _ = h.deps.Store.AddSignal(ctx, acc.ID, "rate_limited", map[string]any{"until": until})
+		h.markRateLimited(ctx, acc.ID, parseRateLimitReset(resp.Header), nil)
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		_ = h.deps.Store.SetNeedsLogin(ctx, acc.ID, true)
 		h.cache.forgetAccount(acc.ID)
@@ -494,20 +519,31 @@ func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *
 	}
 }
 
+// markRateLimited stops routing to an account until its limit resets.
+func (h *Handler) markRateLimited(ctx context.Context, accountID int64, until time.Time, extra map[string]any) {
+	_ = h.deps.Store.SetRateLimitedUntil(ctx, accountID, &until)
+	h.cache.forgetAccount(accountID)
+	detail := map[string]any{"until": until}
+	for k, v := range extra {
+		detail[k] = v
+	}
+	_, _ = h.deps.Store.AddSignal(ctx, accountID, "rate_limited", detail)
+}
+
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := bearer(r)
 	if token == "" {
-		oaError(w, http.StatusUnauthorized, "missing API key", "invalid_request_error", "missing_key")
+		oaError(w, http.StatusUnauthorized, "没有带上 Key。", "invalid_request_error", "missing_key")
 		return
 	}
 	prin, err := h.cache.Get(ctx, secure.HashAPIKey(token))
 	if err != nil || prin.Account == nil {
-		oaError(w, http.StatusForbidden, "no account bound", "invalid_request_error", "no_account_bound")
+		oaError(w, http.StatusForbidden, "Key 无效，或还没有分配 AI 账号。", "invalid_request_error", "no_account_bound")
 		return
 	}
 	if prin.Frozen || prin.EmployeeStatus != "active" {
-		oaError(w, http.StatusForbidden, "this key is suspended; contact the administrator", "invalid_request_error", "account_frozen")
+		oaError(w, http.StatusForbidden, "你的 Key 已被暂停，请联系管理员。", "invalid_request_error", "account_frozen")
 		return
 	}
 	models, err := h.AccountModels(ctx, *prin.Account)

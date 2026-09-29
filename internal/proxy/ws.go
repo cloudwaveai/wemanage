@@ -88,10 +88,21 @@ func (h *Handler) handleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		oaError(w, http.StatusBadRequest, "websocket upgrade required", "invalid_request_error", "websocket_required")
 		return
 	}
+	kind := h.classifier(set).Classify(r.Header)
+	clientIP := risk.ClientIP(r, h.deps.TrustProxy)
 	token := bearer(r)
-	prin, acc, ge := h.authorize(ctx, token, set)
-	if ge != nil {
-		ge.write(w)
+	prin, acc, refused := h.authorize(ctx, token, set)
+	// A refused handshake has no request body; it is logged as an empty turn.
+	rec := &recorder.Record{
+		RequestID: uuid.New(), StartedAt: time.Now(), EmployeeID: prin.EmployeeID,
+		AccountID: accountID(prin), APIKeyID: &prin.KeyID, SessionKey: h.sessionSeed(kind, r.Header, nil, prin.EmployeeID),
+		ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: "responses", Stream: true, ClientIP: clientIP,
+	}
+	base := risk.Observation{EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP,
+		ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), At: time.Now()}
+	if refused != nil {
+		h.observeRefusal(base, refused)
+		h.refuse(w, refused, kind, rec)
 		return
 	}
 	// 426 makes Codex switch to HTTP for the rest of the session.
@@ -100,23 +111,19 @@ func (h *Handler) handleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind := h.classifier(set).Classify(r.Header)
-	clientIP := risk.ClientIP(r, h.deps.TrustProxy)
-	base := risk.Observation{EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP,
-		ClientKind: kind, UserAgent: r.Header.Get("User-Agent")}
-	if d := risk.NetworkGate(set, prin.RemoteAllowed, clientIP, &h.office); !d.Allow {
+	deny := func(d risk.Decision) {
 		o := base
-		o.At, o.Denied = time.Now(), d.Code
+		o.Denied = d.Code
 		h.observe(o)
-		oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+		h.refuse(w, fromDecision(d), kind, rec)
+	}
+	if d := risk.NetworkGate(set, prin.RemoteAllowed, clientIP, &h.office); !d.Allow {
+		deny(d)
 		return
 	}
 	// The installation id arrives with each response.create; checked per turn.
 	if d := risk.ClientGate(set, kind, risk.DeviceInfo{InstallID: "-"}); !d.Allow {
-		o := base
-		o.At, o.Denied = time.Now(), d.Code
-		h.observe(o)
-		oaError(w, d.Status, d.Message, "invalid_request_error", d.Code)
+		deny(d)
 		return
 	}
 	if kind == KindCodex {
@@ -265,6 +272,13 @@ func (s *wsSession) sendError(status int, typ, code, msg string) {
 	_ = s.writeClient(websocket.TextMessage, b)
 }
 
+// refuse reports a per-turn refusal as a Responses error event and logs it.
+func (s *wsSession) refuse(f *refusal, rec *recorder.Record) {
+	status, b := f.event(s.kind)
+	_ = s.writeClient(websocket.TextMessage, b)
+	s.h.logRefusal(rec, status, f.code)
+}
+
 // pumpClient forwards client frames upstream, turning each response.create
 // into a gated, logged turn.
 func (s *wsSession) pumpClient() {
@@ -308,7 +322,7 @@ func (s *wsSession) pumpUpstream() {
 		// Account for the event first (log, release the slot), then forward:
 		// when the client sees a turn complete, its record is already queued.
 		if mt == websocket.TextMessage {
-			s.onUpstreamEvent(data)
+			data = s.onUpstreamEvent(data)
 		}
 		if err := s.writeClient(mt, data); err != nil {
 			s.shutdown(websocket.CloseGoingAway, "")
@@ -323,15 +337,34 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 	start := time.Now()
 	set := h.deps.Settings.Get(ctx)
 
+	model := stripPrefix(gjson.GetBytes(data, "model").String())
+	// generate:false is Codex's connection warm-up: no output, not worth a log row.
+	logIt := gjson.GetBytes(data, "generate").Type != gjson.False
+	rec := recorder.Record{
+		RequestID: uuid.New(), StartedAt: start, EmployeeID: s.prin.EmployeeID,
+		AccountID: &s.acc.ID, APIKeyID: &s.prin.KeyID, SessionKey: h.sessionSeed(s.kind, s.hdr, data, s.prin.EmployeeID),
+		ClientKind: s.kind, UserAgent: s.hdr.Get("User-Agent"), Endpoint: "responses", Stream: true,
+		ModelRequested: model, ReasoningEffort: gjson.GetBytes(data, "reasoning.effort").String(),
+		ReqBody: data, ClientIP: s.ip,
+		Delta: strings.TrimSpace(gjson.GetBytes(data, "previous_response_id").String()) != "",
+	}
+	refuse := func(f *refusal) {
+		logged := &rec
+		if !logIt {
+			logged = nil
+		}
+		s.refuse(f, logged)
+	}
+
 	// Freezes, revocations and account changes apply mid-connection too.
-	prin, acc, ge := h.authorize(ctx, s.token, set)
-	if ge != nil {
-		s.sendError(ge.status, ge.typ, ge.code, ge.msg)
+	prin, acc, refused := h.authorize(ctx, s.token, set)
+	if refused != nil {
+		refuse(refused)
 		return nil, false, true
 	}
 	// The bound account cannot change under an open connection's prefix.
 	if acc.ID != s.acc.ID {
-		s.sendError(http.StatusConflict, "invalid_request_error", "account_changed", "your upstream account changed; reconnect")
+		s.sendError(http.StatusConflict, "invalid_request_error", "account_changed", "你的 AI 账号有变动，正在重新连接。")
 		return nil, false, true
 	}
 
@@ -341,7 +374,7 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 	deny := func(d risk.Decision) (out []byte, ok, fatal bool) {
 		obs.Denied = d.Code
 		h.observe(obs)
-		s.sendError(d.Status, "invalid_request_error", d.Code, d.Message)
+		refuse(fromDecision(d))
 		return nil, false, false
 	}
 	if d := risk.ClientGate(set, s.kind, devInfo); !d.Allow {
@@ -351,13 +384,12 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 		obs.ContentRule, obs.ContentSnippet = hit.Rule, hit.Snippet
 		obs.ContentBlocked = set.ContentAuditMode == settings.AuditBlock
 	}
-	var deviceID *int64
 	if h.deps.Risk != nil {
 		dev, created, err := h.deps.Risk.Device(ctx, prin.EmployeeID, devInfo, s.kind, s.ip)
 		if err != nil {
 			h.deps.Log.Warn("risk: device lookup failed", "employee", prin.EmployeeID, "err", err)
 		} else {
-			deviceID = &dev.ID
+			rec.DeviceID = &dev.ID
 			obs.Device, obs.NewDevice = dev, created
 			if d := risk.DeviceGate(set, dev, created, time.Now(), h.deps.Risk.PortalDevicesURL()); !d.Allow {
 				return deny(d)
@@ -365,8 +397,7 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 		}
 	}
 	if obs.ContentBlocked {
-		return deny(risk.Decision{Status: http.StatusForbidden, Code: "content_blocked",
-			Message: "request blocked by the company's AI usage policy (" + obs.ContentRule + "); contact the administrator if this is a mistake"})
+		return deny(contentBlocked(obs.ContentRule))
 	}
 	h.observe(obs)
 
@@ -376,29 +407,18 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 	}
 	release, waited, err := h.deps.Limiter.Acquire(ctx, acc.ID, capN, time.Duration(set.QueueTimeoutSeconds)*time.Second)
 	if err != nil {
-		s.sendError(http.StatusTooManyRequests, "rate_limit_error", "gateway_busy", "gateway concurrency limit reached, retry shortly")
+		refuse(gatewayBusy())
 		return nil, false, false
 	}
+	rec.QueuedMS = int(waited.Milliseconds())
 
-	model := stripPrefix(gjson.GetBytes(data, "model").String())
 	out = data
 	if model != "" {
 		out, _ = sjson.SetBytes(data, "model", acc.Prefix()+"/"+model)
 	}
-	reasoning := gjson.GetBytes(data, "reasoning.effort").String()
 	t := &wsTurn{
-		release: release, model: model,
-		// generate:false is Codex's connection warm-up: no output, not worth a log row.
-		logIt:  gjson.GetBytes(data, "generate").Type != gjson.False,
+		release: release, model: model, logIt: logIt, rec: rec,
 		parser: capture.NewStreamParser("responses", start),
-		rec: recorder.Record{
-			RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
-			AccountID: &acc.ID, APIKeyID: &prin.KeyID, SessionKey: h.sessionSeed(s.kind, s.hdr, data, prin.EmployeeID),
-			ClientKind: s.kind, UserAgent: s.hdr.Get("User-Agent"), Endpoint: "responses", Stream: true,
-			ModelRequested: model, ReasoningEffort: reasoning, QueuedMS: int(waited.Milliseconds()),
-			ReqBody: data, ClientIP: s.ip, DeviceID: deviceID,
-			Delta: strings.TrimSpace(gjson.GetBytes(data, "previous_response_id").String()) != "",
-		},
 	}
 	s.mu.Lock()
 	s.turns = append(s.turns, t)
@@ -406,11 +426,20 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 	return out, true, false
 }
 
-func (s *wsSession) onUpstreamEvent(data []byte) {
+// onUpstreamEvent accounts for an upstream event and returns it as it should
+// reach the client.
+func (s *wsSession) onUpstreamEvent(data []byte) []byte {
 	typ := gjson.GetBytes(data, "type").String()
 	if typ == "codex.rate_limits" {
 		s.recordRateLimits(data)
-		return
+		return data
+	}
+	var until time.Time
+	if typ == "error" && gjson.GetBytes(data, "error.type").String() == typeUsageLimit {
+		// Codex turns plan_type into upgrade advice for the upstream plan;
+		// without it, it just says the limit is reached and when it resets.
+		data, _ = sjson.DeleteBytes(data, "error.plan_type")
+		until, _ = quotaReset(data, nil, time.Now())
 	}
 	s.mu.Lock()
 	var t *wsTurn
@@ -419,13 +448,13 @@ func (s *wsSession) onUpstreamEvent(data []byte) {
 	}
 	s.mu.Unlock()
 	if t == nil {
-		return
+		return data
 	}
 	_, _ = t.parser.Write(append(append([]byte("data: "), data...), '\n', '\n'))
 
 	switch typ {
 	case "response.completed", "response.incomplete":
-		s.finishTurn(http.StatusOK, "")
+		s.finishTurn(http.StatusOK, "", until)
 	case "response.failed", "error":
 		status := int(gjson.GetBytes(data, "status").Int())
 		if status == 0 {
@@ -438,12 +467,14 @@ func (s *wsSession) onUpstreamEvent(data []byte) {
 		if code == "" {
 			code = typ
 		}
-		s.finishTurn(status, code)
+		s.finishTurn(status, code, until)
 	}
+	return data
 }
 
 // finishTurn completes the oldest in-flight turn.
-func (s *wsSession) finishTurn(status int, errType string) {
+// until, when set, is when a used-up quota resets.
+func (s *wsSession) finishTurn(status int, errType string, until time.Time) {
 	s.mu.Lock()
 	if len(s.turns) == 0 {
 		s.mu.Unlock()
@@ -452,7 +483,7 @@ func (s *wsSession) finishTurn(status int, errType string) {
 	t := s.turns[0]
 	s.turns = s.turns[1:]
 	s.mu.Unlock()
-	s.complete(t, status, errType)
+	s.complete(t, status, errType, until)
 }
 
 func (s *wsSession) failPending(errType string) {
@@ -461,11 +492,11 @@ func (s *wsSession) failPending(errType string) {
 	s.turns = nil
 	s.mu.Unlock()
 	for _, t := range pending {
-		s.complete(t, 499, errType)
+		s.complete(t, 499, errType, time.Time{})
 	}
 }
 
-func (s *wsSession) complete(t *wsTurn, status int, errType string) {
+func (s *wsSession) complete(t *wsTurn, status int, errType string, until time.Time) {
 	h := s.h
 	t.release()
 	outcome := t.parser.Finish()
@@ -478,10 +509,10 @@ func (s *wsSession) complete(t *wsTurn, status int, errType string) {
 	}
 	ctx := context.Background()
 	if strings.Contains(errType, "rate_limit") || strings.Contains(errType, "usage_limit") || status == http.StatusTooManyRequests {
-		until := time.Now().Add(5 * time.Minute)
-		_ = h.deps.Store.SetRateLimitedUntil(ctx, s.acc.ID, &until)
-		h.cache.forgetAccount(s.acc.ID)
-		_, _ = h.deps.Store.AddSignal(ctx, s.acc.ID, "rate_limited", map[string]any{"until": until, "via": "websocket"})
+		if until.IsZero() {
+			until = time.Now().Add(5 * time.Minute)
+		}
+		h.markRateLimited(ctx, s.acc.ID, until, map[string]any{"via": "websocket"})
 	}
 	if s.acc.IsChatGPT() && outcome.Model != "" && t.model != "" && stripPrefix(outcome.Model) != t.model {
 		_, _ = h.deps.Store.AddSignal(ctx, s.acc.ID, "model_mismatch",

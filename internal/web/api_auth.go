@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"aiseat/internal/secure"
 	"aiseat/internal/store"
@@ -20,8 +22,27 @@ func (s *Server) handleFeishuLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "cannot start login")
 		return
 	}
+	// Links in Feishu messages point at a page (e.g. /devices); come back to it.
+	if next := r.URL.Query().Get("next"); safeNext(next) {
+		http.SetCookie(w, &http.Cookie{Name: nextCookie, Value: url.QueryEscape(next), Path: "/api/auth",
+			HttpOnly: true, Secure: s.deps.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: 600})
+	}
 	redirect := s.deps.PublicBaseURL + "/api/auth/feishu/callback"
 	http.Redirect(w, r, s.deps.Feishu.OAuthURL(state, redirect, s.deps.FeishuLoginScope), http.StatusFound)
+}
+
+const nextCookie = "aiseat_next"
+
+// safeNext accepts only a path on this site.
+func safeNext(p string) bool {
+	return strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "/\\") &&
+		!strings.HasPrefix(p, "/api/") && !strings.ContainsAny(p, "\r\n")
+}
+
+// loginFailed sends the browser back to the portal, which shows why: the
+// login page may be inside Feishu, where a bare JSON error helps no one.
+func loginFailed(w http.ResponseWriter, r *http.Request, msg string) {
+	http.Redirect(w, r, "/?login_error="+url.QueryEscape(msg), http.StatusFound)
 }
 
 func (s *Server) handleFeishuCallback(w http.ResponseWriter, r *http.Request) {
@@ -32,20 +53,20 @@ func (s *Server) handleFeishuCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	if code == "" || state == "" {
-		writeErr(w, http.StatusBadRequest, "missing code or state")
+		loginFailed(w, r, "飞书没有返回登录信息，请重试。")
 		return
 	}
 	// Validate and consume state.
 	tag, err := s.deps.Store.Pool.Exec(r.Context(), `DELETE FROM oauth_states WHERE state=$1`, state)
 	if err != nil || tag.RowsAffected() == 0 {
-		writeErr(w, http.StatusBadRequest, "invalid or expired state")
+		loginFailed(w, r, "登录链接已过期，请重试。")
 		return
 	}
 	redirect := s.deps.PublicBaseURL + "/api/auth/feishu/callback"
 	info, err := s.deps.Feishu.ExchangeUser(r.Context(), code, redirect)
 	if err != nil {
 		s.deps.Log.Warn("feishu login: code exchange failed", "err", err)
-		writeErr(w, http.StatusBadGateway, "feishu exchange failed")
+		loginFailed(w, r, "飞书登录失败，请重试。")
 		return
 	}
 	emp, err := s.deps.Store.GetEmployeeByOpenID(r.Context(), info.OpenID)
@@ -53,15 +74,22 @@ func (s *Server) handleFeishuCallback(w http.ResponseWriter, r *http.Request) {
 		// Logged so the first administrator can find their open_id for
 		// BOOTSTRAP_SUPER_ADMINS before the directory has been synced.
 		s.deps.Log.Info("feishu login rejected: not in the employee list", "open_id", info.OpenID, "name", info.Name)
-		writeErr(w, http.StatusForbidden, "账号未开通，请联系管理员先同步通讯录")
+		loginFailed(w, r, "账号还没开通，请联系管理员同步通讯录。")
 		return
 	}
 	if emp.Status != "active" {
-		writeErr(w, http.StatusForbidden, "账号已停用")
+		loginFailed(w, r, "账号已停用，如有疑问请联系管理员。")
 		return
 	}
 	s.startSession(w, r.Context(), emp.ID)
-	http.Redirect(w, r, "/", http.StatusFound)
+	dest := "/"
+	if c, err := r.Cookie(nextCookie); err == nil {
+		if next, err := url.QueryUnescape(c.Value); err == nil && safeNext(next) {
+			dest = next
+		}
+		http.SetCookie(w, &http.Cookie{Name: nextCookie, Path: "/api/auth", MaxAge: -1})
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {

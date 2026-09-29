@@ -52,6 +52,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* ignore */
     }
+    // Inside Feishu the login page signs in by itself; not right after a logout.
+    try {
+      sessionStorage.setItem("aiseat_logged_out", "1");
+    } catch {
+      /* storage unavailable */
+    }
     qc.clear();
     await refetch();
   };

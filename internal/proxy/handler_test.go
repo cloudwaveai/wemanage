@@ -34,6 +34,7 @@ type fakeCPA struct {
 	maxInFlight   int32
 	status        int
 	respHeader    map[string]string
+	errBody       string
 	sse           string
 }
 
@@ -55,14 +56,17 @@ func newFakeCPA() *fakeCPA {
 		f.lastUA = r.Header.Get("User-Agent")
 		f.lastAuth = r.Header.Get("Authorization")
 		f.lastForwarded = r.Header.Get("X-Forwarded-For")
-		st, sh, sse := f.status, f.respHeader, f.sse
+		st, sh, sse, eb := f.status, f.respHeader, f.sse, f.errBody
 		f.mu.Unlock()
 		for k, v := range sh {
 			w.Header().Set(k, v)
 		}
 		if st != 200 {
+			if eb == "" {
+				eb = `{"error":{"message":"upstream"}}`
+			}
 			w.WriteHeader(st)
-			_, _ = w.Write([]byte(`{"error":{"message":"upstream"}}`))
+			_, _ = w.Write([]byte(eb))
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -216,12 +220,11 @@ func TestProxyConcurrencyCappedAtFour(t *testing.T) {
 func TestProxyInvalidKey(t *testing.T) {
 	cpa := newFakeCPA()
 	r, _, _, _, _ := harness(t, cpa)
-	w := doReq(t, r, "sk-emp-bogus", `{"model":"gpt-5.1-codex"}`)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "invalid_request_error") {
-		t.Fatalf("not OpenAI error shape: %s", w.Body.String())
+	// Codex is told in a shape it shows at once; other clients get a plain 401.
+	wantRefusal(t, doReq(t, r, "sk-emp-bogus", `{"model":"gpt-5.1-codex"}`), "invalid_key")
+	w := doUA(t, r, "sk-emp-bogus", "curl/8.7.1", `{"model":"gpt-5.1-codex"}`)
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), `"code":"invalid_key"`) {
+		t.Fatalf("non-Codex: status = %d %s, want 401 invalid_key", w.Code, w.Body.String())
 	}
 }
 
@@ -229,26 +232,63 @@ func TestProxyUpstreamRateLimitSetsAccount(t *testing.T) {
 	cpa := newFakeCPA()
 	reset := time.Now().Add(2 * time.Hour).Unix()
 	cpa.status = 429
-	cpa.respHeader = map[string]string{"X-Codex-Primary-Reset-At": fmt.Sprintf("%d", reset)}
+	cpa.errBody = fmt.Sprintf(`{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"plus","resets_at":%d}}`, reset)
 	r, st, key, rec, ctx := harness(t, cpa)
 
+	// Codex's usage-limit shape, minus the upstream plan (Codex would turn it
+	// into "upgrade to Pro" advice), with the reset time.
 	w := doReq(t, r, key, `{"model":"gpt-5.1-codex","input":[]}`)
-	if w.Code != 429 {
-		t.Fatalf("status = %d, want 429", w.Code)
+	b := w.Body.String()
+	if w.Code != 429 || !strings.Contains(b, `"type":"usage_limit_reached"`) || strings.Contains(b, "plan_type") ||
+		!strings.Contains(b, fmt.Sprintf(`"resets_at":%d`, reset)) {
+		t.Fatalf("status = %d %s, want 429 usage_limit_reached with resets_at", w.Code, b)
 	}
 	rec.Flush()
-	// account should now be marked rate limited
 	accs, _ := st.ListAccounts(ctx)
-	if len(accs) != 1 || accs[0].RateLimitedUntil == nil {
-		t.Fatalf("account not rate-limited: %+v", accs)
+	if len(accs) != 1 || accs[0].RateLimitedUntil == nil || accs[0].RateLimitedUntil.Unix() != reset {
+		t.Fatalf("account not rate-limited until the reset: %+v", accs)
 	}
-	// a subsequent request is short-circuited to 429 without hitting upstream
-	before := cpa.lastModel
+	// A subsequent request is answered the same way without hitting upstream.
+	cpa.mu.Lock()
+	cpa.lastModel = ""
+	cpa.mu.Unlock()
 	w2 := doReq(t, r, key, `{"model":"gpt-5.1-codex","input":[]}`)
-	if w2.Code != 429 {
-		t.Fatalf("second status = %d, want 429", w2.Code)
+	if w2.Code != 429 || !strings.Contains(w2.Body.String(), `"type":"usage_limit_reached"`) || cpa.lastModel != "" {
+		t.Fatalf("second: status = %d %s (upstream model %q)", w2.Code, w2.Body.String(), cpa.lastModel)
 	}
-	_ = before
+	rec.Flush()
+	var n int
+	_ = st.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM requests WHERE status_code = 429 AND error_type = 'account_rate_limited'`).Scan(&n)
+	if n != 2 {
+		t.Fatalf("logged usage-limit requests = %d, want 2", n)
+	}
+}
+
+func TestProxyBriefUpstream429PassesThrough(t *testing.T) {
+	cpa := newFakeCPA()
+	cpa.status = 429
+	cpa.respHeader = map[string]string{"Retry-After": "5"}
+	r, _, key, _, _ := harness(t, cpa)
+	w := doReq(t, r, key, `{"model":"gpt-5.1-codex","input":[]}`)
+	if w.Code != 429 || strings.Contains(w.Body.String(), "usage_limit_reached") {
+		t.Fatalf("status = %d %s, want the upstream 429 as it is", w.Code, w.Body.String())
+	}
+}
+
+func TestProxyLogsRefusals(t *testing.T) {
+	cpa := newFakeCPA()
+	h := newRig(t, cpa, settings.RiskStrict)
+	seedDevice(t, h)
+	wantRefusal(t, doReq(t, h.r, h.key, codexBody), "device_unconfirmed")
+	h.rec.Flush()
+	var status int
+	var code string
+	if err := h.st.Pool.QueryRow(h.ctx, `SELECT status_code, error_type FROM requests`).Scan(&status, &code); err != nil {
+		t.Fatal(err)
+	}
+	if status != 400 || code != "device_unconfirmed" {
+		t.Fatalf("logged %d %q, want 400 device_unconfirmed", status, code)
+	}
 }
 
 func TestProxyModelMismatchSignal(t *testing.T) {
@@ -281,6 +321,16 @@ func doUA(t *testing.T, r http.Handler, key, ua, body string) *httptest.Response
 	return w
 }
 
+// wantRefusal expects the shape Codex shows at once without retrying: 400
+// invalid_prompt, with the gateway's own code in "reason".
+func wantRefusal(t *testing.T, w *httptest.ResponseRecorder, reason string) {
+	t.Helper()
+	b := w.Body.String()
+	if w.Code != http.StatusBadRequest || !strings.Contains(b, `"code":"invalid_prompt"`) || !strings.Contains(b, `"reason":"`+reason+`"`) {
+		t.Fatalf("status=%d body=%s, want 400 invalid_prompt reason %s", w.Code, b, reason)
+	}
+}
+
 func wantCode(t *testing.T, w *httptest.ResponseRecorder, status int, code string) {
 	t.Helper()
 	if w.Code != status || (code != "" && !strings.Contains(w.Body.String(), `"code":"`+code+`"`)) {
@@ -304,7 +354,7 @@ func TestProxyFrozenEmployee(t *testing.T) {
 	if _, err := h.st.FreezeEmployee(h.ctx, h.empID, "test"); err != nil {
 		t.Fatal(err)
 	}
-	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "account_frozen")
+	wantRefusal(t, doReq(t, h.r, h.key, codexBody), "account_frozen")
 }
 
 // seedDevice gives the rig's employee an earlier device, so the next one the
@@ -375,7 +425,7 @@ func TestProxyPendingPastConfirmWindow(t *testing.T) {
 		}
 	}
 	h.eng.DeviceChanged(h.empID, devs[0].ID, store.DevicePending) // drop the gate cache
-	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "device_unconfirmed")
+	wantRefusal(t, doReq(t, h.r, h.key, codexBody), "device_unconfirmed")
 
 	// Once the employee confirms, the device works again.
 	_ = h.st.SetDeviceStatus(h.ctx, devs[0].ID, store.DeviceTrusted, &h.empID)
@@ -386,7 +436,7 @@ func TestProxyPendingPastConfirmWindow(t *testing.T) {
 func TestProxyStrictBlocksNewDevice(t *testing.T) {
 	h := newRig(t, newFakeCPA(), settings.RiskStrict)
 	seedDevice(t, h)
-	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "device_unconfirmed")
+	wantRefusal(t, doReq(t, h.r, h.key, codexBody), "device_unconfirmed")
 	h.eng.Flush()
 	devs, _ := h.st.ListDevices(h.ctx, h.empID)
 	if len(devs) != 2 || devs[0].Status != store.DevicePending && devs[1].Status != store.DevicePending {
@@ -417,7 +467,7 @@ func TestProxyOfficeOnly(t *testing.T) {
 		s.OfficeOnly = true
 		s.OfficeNetworks = []string{"10.0.0.0/8", "203.0.113.7"}
 	})
-	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusForbidden, "network_not_allowed")
+	wantRefusal(t, doReq(t, h.r, h.key, codexBody), "network_not_allowed")
 	h.eng.Flush()
 	evs, _ := h.st.ListRiskEvents(h.ctx, store.RiskEventFilter{EmployeeID: &h.empID})
 	if len(evs) != 1 || evs[0].Rule != "outside_office" {
@@ -456,7 +506,7 @@ func TestProxyContentAudit(t *testing.T) {
 	}
 
 	putSettings(t, h, func(s *settings.Settings) { s.ContentAuditMode = settings.AuditBlock })
-	wantCode(t, doReq(t, h.r, h.key, bad), http.StatusForbidden, "content_blocked")
+	wantRefusal(t, doReq(t, h.r, h.key, bad), "content_blocked")
 	wantCode(t, doReq(t, h.r, h.key, codexBody), http.StatusOK, "") // clean prompts still pass
 }
 

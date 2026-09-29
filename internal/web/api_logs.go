@@ -66,7 +66,7 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 			"employee_id": it.EmployeeID, "employee_name": it.EmployeeName,
 			"client_kind": it.ClientKind, "endpoint": it.Endpoint,
 			"model_requested": it.ModelRequested, "model_responded": it.ModelResponded,
-			"status_code": it.StatusCode, "tokens_input": it.TokensInput,
+			"status_code": it.StatusCode, "error_type": it.ErrorType, "tokens_input": it.TokensInput,
 			"tokens_output": it.TokensOutput, "duration_ms": it.DurationMS,
 		})
 	}
