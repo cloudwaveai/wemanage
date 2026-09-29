@@ -89,8 +89,8 @@ func TestKimiAccountOnboarding(t *testing.T) {
 		t.Fatal("a Kimi account must not count as ChatGPT")
 	}
 
-	// Its employee's Codex snippet reads the key from AISEAT_API_KEY and does
-	// not hard-code a ChatGPT model.
+	// Its employee's Codex snippet carries the key in the file (no environment
+	// variable) and does not hard-code a ChatGPT model.
 	emp, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_kuser", Name: "u"})
 	_ = st.BindAccount(ctx, accs[0].ID, emp.ID)
 	_, body = login(t, ts, "ou_kuser").do(http.MethodGet, "/api/me/config-snippets", "")
@@ -98,7 +98,8 @@ func TestKimiAccountOnboarding(t *testing.T) {
 		CodexToml string `json:"codex_toml"`
 	}
 	_ = json.Unmarshal(body, &snip)
-	if !strings.Contains(snip.CodexToml, `env_key = "AISEAT_API_KEY"`) || strings.Contains(snip.CodexToml, "gpt-6-luna") ||
+	if !strings.Contains(snip.CodexToml, `experimental_bearer_token = "{{KEY}}"`) || strings.Contains(snip.CodexToml, "env_key") ||
+		strings.Contains(snip.CodexToml, "gpt-6-luna") ||
 		strings.Contains(snip.CodexToml, "x-openai-actor-authorization") ||
 		!strings.Contains(snip.CodexToml, "supports_websockets = false") {
 		t.Fatalf("snippet for a Kimi account:\n%s", snip.CodexToml)
@@ -109,7 +110,7 @@ func TestKimiAccountOnboarding(t *testing.T) {
 	_, body = login(t, ts, "ou_kuser").do(http.MethodGet, "/api/me/config-snippets", "")
 	_ = json.Unmarshal(body, &snip)
 	// With no model list it recommends the configured default model.
-	if !strings.Contains(snip.CodexToml, "supports_websockets = true") || !strings.Contains(snip.CodexToml, `model = "gpt-6-luna"`) ||
+	if !strings.Contains(snip.CodexToml, "supports_websockets = true") || !strings.Contains(snip.CodexToml, `model = "{{MODEL}}"`) ||
 		!strings.Contains(snip.CodexToml, `"x-openai-actor-authorization"`) {
 		t.Fatalf("snippet for a ChatGPT account:\n%s", snip.CodexToml)
 	}

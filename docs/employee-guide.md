@@ -29,28 +29,22 @@ Key 只写进你电脑上的 CC Switch。CC Switch 导入的配置没有生图�
 
 ### 手动配置
 
-在"一键配置"里复制 Codex 配置片段，写入 `~/.codex/config.toml`：
+在"一键配置"页先在上面粘贴你的 Key、选好模型，再复制下面的 Codex 配置——Key 会自动填进去。写入 `~/.codex/config.toml`（Windows 是 `%USERPROFILE%\.codex\config.toml`），原来的 `model_provider`、`model` 两行删掉：
 
 ```toml
-model_provider = "company"
-model = "gpt-6-luna"   # 以「一键配置」页推荐的为准
+model_provider = "aiseat"
+model = "gpt-6-luna"   # 以「一键配置」页选的为准
 
-[model_providers.company]
-name = "Company Gateway"
+[model_providers.aiseat]
+name = "AI 订阅网关"
 base_url = "https://ai.example.com/v1"
 wire_api = "responses"
-env_key = "AISEAT_API_KEY"
 requires_openai_auth = false
+experimental_bearer_token = "sk-emp-你的key"
 supports_websockets = true
 ```
 
-最后一行让 Codex 用 WebSocket 连网关，和官方 Codex 连 OpenAI 的方式一致。以「一键配置」页给出的为准：公司临时关闭 WebSocket、或你的账号不是 ChatGPT 时，那里会写成 `false`；就算没改，网关也会让 Codex 自动退回普通 HTTP，不影响使用。
-
-然后设置环境变量 `AISEAT_API_KEY` 为你的 `sk-emp-...` Key（配置里的 `env_key` 就是告诉 Codex 从这个变量读 Key；没有它 Codex 不会带上 Key，网关会返回 401）。建议写进 `~/.zshrc` 或 `~/.bashrc`：
-
-```bash
-export AISEAT_API_KEY="sk-emp-你的key"
-```
+Key 直接写在文件里（`experimental_bearer_token`），不用再设环境变量，Codex 桌面版也能读到；这个文件别发给别人。`supports_websockets = true` 让 Codex 用 WebSocket 连网关，和官方 Codex 连 OpenAI 的方式一致；公司临时关闭 WebSocket、或你的账号不是 ChatGPT 时，页面上会写成 `false`。
 
 **如果你电脑上开着代理 / 梯子**：Codex 会读取终端里的 `HTTPS_PROXY` 环境变量，请求会绕道代理——每次连接多花好几秒，还可能因为代理节点切换被风控当成"多个网络同时使用"。请把网关域名排除在代理之外（两种都做最稳）：
 

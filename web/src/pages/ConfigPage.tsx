@@ -23,57 +23,69 @@ export function ConfigPage() {
       {isLoading && <Loading />}
       {error && <ErrorBox error={error} />}
 
-      {data && (
-        <div className="space-y-5">
-          <SetupCard data={data} />
+      {data && <ConfigBody data={data} />}
+    </div>
+  );
+}
 
-          <h2 className="pt-2 text-sm font-semibold text-slate-500">
-            手动配置（前两种都不方便时）
+// ConfigBody holds the key and model the employee enters once; every way of
+// configuring below uses them.
+function ConfigBody({ data }: { data: ConfigSnippets }) {
+  const [key, setKey] = useState("");
+  const [model, setModel] = useState(data.default_model);
+  const keyOK = looksLikeKey(key);
+  const manual = data.codex_toml
+    .split("{{KEY}}").join(keyOK ? key.trim() : "在上面粘贴你的 Key 后这里会自动填上")
+    .split("{{MODEL}}").join(model);
+  return (
+    <div className="space-y-5">
+      <SetupCard data={data} keyValue={key} setKey={setKey} model={model} setModel={setModel} />
+
+      <h2 className="pt-2 text-sm font-semibold text-slate-500">
+        手动配置（前两种都不方便时）
+      </h2>
+
+      <Card className="p-5">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-800">
+            Codex <span className="font-mono">config.toml</span>
           </h2>
-
-          <Card className="p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-800">
-                Codex <span className="font-mono">config.toml</span>
-              </h2>
-            </div>
-            <CodeBlock code={data.codex_toml} />
-          </Card>
-
-          <Card className="p-5">
-            <h2 className="mb-2 text-sm font-semibold text-slate-800">
-              环境变量
-            </h2>
-            <CodeBlock code={data.codex_env} />
-            <p className="mt-2 text-xs text-slate-500">
-              将 API Key 换成你在「我的 Key」页面生成的 <code className="font-mono">sk-emp-</code> 开头密钥。
-            </p>
-          </Card>
-
-          <Card className="p-5">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-slate-800">
-                第三方客户端
-              </h2>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-xs text-slate-500">
-                  Base URL
-                </span>
-                <code className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">
-                  {data.third_party.base_url}
-                </code>
-                <CopyButton text={data.third_party.base_url} />
-              </div>
-            </div>
-            <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">
-              {data.third_party.note}
-            </div>
-            <p className="mt-2 text-xs font-medium text-amber-700">
-              第三方客户端风险较高，建议优先使用 Codex。
-            </p>
-          </Card>
         </div>
-      )}
+        {!keyOK && (
+          <p className="mb-3 rounded-lg bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+            先在上面「你的 Key」里粘贴 Key，下面的配置才会带上它，复制出来就能直接用。
+          </p>
+        )}
+        <CodeBlock code={manual} />
+        <p className="mt-2 text-xs leading-relaxed text-slate-500">
+          写入 <code className="font-mono">~/.codex/config.toml</code>（Windows：
+          <code className="font-mono">%USERPROFILE%\.codex\config.toml</code>），原来的 model_provider、model
+          两行要删掉。Key 直接写在文件里，不用再设环境变量，Codex 桌面版也能用；这个文件别发给别人。
+        </p>
+      </Card>
+
+      <Card className="p-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-800">
+            第三方客户端
+          </h2>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-slate-500">
+              Base URL
+            </span>
+            <code className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">
+              {data.third_party.base_url}
+            </code>
+            <CopyButton text={data.third_party.base_url} />
+          </div>
+        </div>
+        <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">
+          {data.third_party.note}
+        </div>
+        <p className="mt-2 text-xs font-medium text-amber-700">
+          第三方客户端风险较高，建议优先使用 Codex。
+        </p>
+      </Card>
     </div>
   );
 }
@@ -82,9 +94,19 @@ export function ConfigPage() {
 // to set Codex up with them: a one-line install command (the key goes to the
 // gateway only to make a single-use code) or a CC Switch import (the key goes
 // only into the link handed to the local app).
-function SetupCard({ data }: { data: ConfigSnippets }) {
-  const [key, setKey] = useState("");
-  const [model, setModel] = useState(data.default_model);
+function SetupCard({
+  data,
+  keyValue: key,
+  setKey,
+  model,
+  setModel,
+}: {
+  data: ConfigSnippets;
+  keyValue: string;
+  setKey: (v: string) => void;
+  model: string;
+  setModel: (v: string) => void;
+}) {
   const models = data.models.length
     ? data.models
     : [{ id: data.default_model, name: "", created: 0 }];

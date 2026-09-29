@@ -89,7 +89,20 @@ func (s *Server) handleInstallCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	top := fmt.Sprintf("model_provider = \"aiseat\"\nmodel = %q\n", model)
-	table := fmt.Sprintf(`[model_providers.aiseat]
+	code := s.installs.put(installEntry{top: top, table: cs.providerTable(key), expires: time.Now().Add(installTTL)})
+	portal := strings.TrimRight(s.deps.PublicBaseURL, "/")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"expires_at": time.Now().Add(installTTL),
+		"unix":       "curl -fsSL " + portal + "/i/" + code + " | sh",
+		"windows":    "irm " + portal + "/i/" + code + ".ps1 | iex",
+	})
+}
+
+// providerTable is the gateway's provider in config.toml, key included: the
+// key is written into the file (experimental_bearer_token), so Codex needs no
+// environment variable, which the desktop app would not see anyway.
+func (cs codexSetup) providerTable(key string) string {
+	return fmt.Sprintf(`[model_providers.aiseat]
 name = "AI 订阅网关"
 base_url = %q
 wire_api = "responses"
@@ -97,13 +110,6 @@ requires_openai_auth = false
 experimental_bearer_token = %q
 %s%s
 `, cs.base, key, cs.wsLine, cs.toolsLine)
-	code := s.installs.put(installEntry{top: top, table: table, expires: time.Now().Add(installTTL)})
-	portal := strings.TrimRight(s.deps.PublicBaseURL, "/")
-	writeJSON(w, http.StatusOK, map[string]any{
-		"expires_at": time.Now().Add(installTTL),
-		"unix":       "curl -fsSL " + portal + "/i/" + code + " | sh",
-		"windows":    "irm " + portal + "/i/" + code + ".ps1 | iex",
-	})
 }
 
 // handleInstallScript serves the script for an install code (".ps1" for

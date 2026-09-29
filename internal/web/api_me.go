@@ -341,29 +341,20 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 		modelList[i] = map[string]any{"id": m.ID, "name": m.Name, "created": m.Created}
 	}
 
-	modelLine := fmt.Sprintf("model = %q", model)
+	// The manual config is the install script's, as a template: the browser
+	// fills in {{KEY}} and {{MODEL}} from what the employee entered.
+	modelLine := `model = "{{MODEL}}"`
 	if !chatgpt {
 		if model != "" {
 			modelLine = fmt.Sprintf("# 你的账号是 %s，可用模型：%s\n%s", acc.Provider, strings.Join(ids, "、"), modelLine)
 		} else {
 			modelLine = fmt.Sprintf(`# 你的账号不是 ChatGPT（%s）。查看可用模型：
-#   curl -s %s/models -H "Authorization: Bearer $AISEAT_API_KEY"
+#   curl -s %s/models -H "Authorization: Bearer 你的 Key"
 # 然后把下面改成其中一个 id
 model = "填入模型 id"`, acc.Provider, base)
 		}
 	}
-	codex := fmt.Sprintf(`model_provider = "company"
-%s
-
-[model_providers.company]
-name = "Company Gateway"
-base_url = "%s"
-wire_api = "responses"
-# Codex 从这个环境变量读取你的 sk-emp- Key，并作为 Bearer 发给网关
-env_key = "AISEAT_API_KEY"
-env_key_instructions = "在门户「我的 Key」生成后：export AISEAT_API_KEY=sk-emp-..."
-requires_openai_auth = false
-%s%s`, modelLine, base, wsLine, toolsLine)
+	codex := "model_provider = \"aiseat\"\n" + modelLine + "\n\n" + cs.providerTable("{{KEY}}")
 
 	// CC Switch's import writes a fixed config (key in auth.json, OpenAI login
 	// required), which rules the tools out. For ChatGPT accounts we offer a
@@ -395,8 +386,8 @@ experimental_bearer_token = "{{KEY}}"
 		"models":        modelList,
 		"models_source": source,
 		"default_model": model,
-		"codex_toml":    codex,
-		"codex_env":     "export AISEAT_API_KEY=\"你的 sk-emp-... key\"",
+		// Manual config.toml; the browser fills in {{KEY}} and {{MODEL}}.
+		"codex_toml": codex,
 		// CC Switch builds its own config.toml from these (the key is added in
 		// the browser and never sent back to the server).
 		"ccswitch": map[string]any{

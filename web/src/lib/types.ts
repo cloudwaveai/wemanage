@@ -110,8 +110,8 @@ export interface ConfigSnippets {
   // config_toml: replacement for CC Switch's config (image generation + web
   // search); "" for accounts that cannot use them. Fill {{KEY}} and {{MODEL}}.
   ccswitch: { name: string; endpoint: string; homepage: string; config_toml: string };
+  // Manual config.toml with {{KEY}} and {{MODEL}} to fill in.
   codex_toml: string;
-  codex_env: string;
   third_party: {
     base_url: string;
     note: string;
