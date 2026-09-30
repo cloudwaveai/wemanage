@@ -7,6 +7,7 @@ import { Markdown } from "../lib/md";
 import { fmtNum, fmtDateTime } from "../lib/format";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../components/Toast";
+import { CopyButton } from "../components/CopyButton";
 
 const STAT_LABELS: Record<string, string> = {
   requests: "请求",
@@ -66,7 +67,10 @@ function ReportItem({ r }: { r: Report }) {
       </button>
       {open && (
         <div className="space-y-3 border-t border-slate-100 px-5 py-4">
-          <StatChips stats={r.Stats} />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <StatChips stats={r.Stats} />
+            <CopyButton text={r.SummaryMD} label="复制周报" />
+          </div>
           <Markdown text={r.SummaryMD} />
         </div>
       )}
@@ -84,7 +88,7 @@ export function ReportsPage() {
   const pref = useMutation({
     mutationFn: (enabled: boolean) => api.post("/api/me/weekly-report", { enabled }),
     onSuccess: (_, enabled) => {
-      toast(enabled ? "已开启周报" : "已关闭周报，之后不会再生成和推送", "success");
+      toast(enabled ? "已开启自动周报" : "已关闭自动周报，之后不会再生成和推送", "success");
       refetch();
     },
     onError: (e: unknown) => toast(e instanceof Error ? e.message : "操作失败", "error"),
@@ -97,25 +101,25 @@ export function ReportsPage() {
     <div>
       <PageHeader
         title="我的周报"
-        desc="每周一由 AI 整理上周你借助 AI 做了哪些事，只发给你本人，部门负责人和其他人都看不到。"
+        desc="每周五下午根据你本周在 Codex 里做的事，自动编写本周周报，省去你编写周报的麻烦。只发给你本人，部门负责人和其他人都看不到。"
       />
       <Card className="mb-5 flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
-          <div className="text-sm font-medium text-slate-800">每周一飞书推送周报</div>
+          <div className="text-sm font-medium text-slate-800">每周五自动编写本周周报</div>
           <div className="mt-0.5 text-xs text-slate-400">
-            关掉后不再生成，也不会推送。随时可以再打开。
+            写好后通过飞书发给你，复制后稍作修改就能提交。关掉后不再生成，随时可以再打开。
           </div>
         </div>
         <Switch
           checked={pref.isPending ? !!pref.variables : enabled}
           disabled={pref.isPending}
           onChange={(v) => pref.mutate(v)}
-          label="周报"
+          label="自动周报"
         />
       </Card>
       {isLoading && <Loading />}
       {error && <ErrorBox error={error} />}
-      {data && reports.length === 0 && <Empty label="还没有周报" />}
+      {data && reports.length === 0 && <Empty label="还没有周报，本周五下午会自动写好" />}
       <div className="space-y-3">
         {reports.map((r) => (
           <ReportItem key={r.ID} r={r} />

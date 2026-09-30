@@ -166,7 +166,7 @@ func TestGenerateForWeekStoresAndSendsToTheEmployeeOnly(t *testing.T) {
 	if sender.texts[0].openID != "ou_daily" {
 		t.Errorf("push open_id = %q, want ou_daily", sender.texts[0].openID)
 	}
-	if !strings.Contains(sender.texts[0].text, "只发给你本人") || !strings.Contains(sender.texts[0].text, "09/21–09/27") {
+	if !strings.Contains(sender.texts[0].text, "本周周报已帮你写好") || !strings.Contains(sender.texts[0].text, "只发给你本人") || !strings.Contains(sender.texts[0].text, "09/21–09/27") {
 		t.Errorf("recap text = %q", sender.texts[0].text)
 	}
 	if _, err := st.GetReport(ctx, off.ID, week); err != store.ErrNotFound {

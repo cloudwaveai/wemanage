@@ -11,11 +11,11 @@ import (
 )
 
 // System prompts. The LLM writes only prose; it never supplies numbers. The
-// recap is for the employee, so it describes what AI helped with and never
-// judges effort, output or hours.
+// result is a draft of the employee's own weekly report, for them to copy and
+// edit: it states what was done and never judges effort, output or hours.
 const (
-	sessionSystemPrompt = "用一两句中文概括这次对话借助 AI 做了什么。只写事情本身，不做任何评价。"
-	weeklySystemPrompt  = "下面是一个人本周借助 AI 完成的事情概要。请用中文为他本人写一段简短、轻松友好的本周回顾：主要借助 AI 做了哪些事，有没有值得以后复用的做法。不要评价工作量、效率或投入时间，不要写成工作汇报。"
+	sessionSystemPrompt = "用一两句中文概括这次对话里做了什么工作：处理的任务、完成的改动或得出的结论。只写事情本身，不做任何评价。"
+	weeklySystemPrompt  = "下面是一个人本周工作内容的概要。请用中文替他起草本周工作周报，让他复制后稍作修改就能提交：第一人称，按事项分条列出完成了什么、进展到哪一步，同类事项合并，语言简洁、书面。只根据材料写，不要编造材料里没有的事情、数据或下周计划；不要提到 AI、Codex 或对话；不要评价工作量、效率或投入时间。"
 )
 
 // maxSessionsPerReport caps how many sessions are summarized per employee.
@@ -132,7 +132,7 @@ func generateOne(ctx context.Context, d Deps, employeeID int64, from, to time.Ti
 			return fmt.Errorf("get employee: %w", err)
 		}
 		if emp.FeishuOpenID != "" {
-			text := renderReportText(emp.Name, from, to, summaryMD, mat.Stats)
+			text := renderReportText(emp.Name, from, to, summaryMD)
 			if err := d.Sender.SendText(ctx, emp.FeishuOpenID, text); err != nil {
 				return fmt.Errorf("push report: %w", err)
 			}
@@ -156,17 +156,16 @@ func joinTurns(turns []Turn) string {
 	return b.String()
 }
 
-// renderReportText builds the message sent to the employee. All numbers come
-// from Stats (SQL).
-func renderReportText(name string, from, to time.Time, summaryMD string, s Stats) string {
+// renderReportText builds the message sent to the employee: the draft alone,
+// ready to copy. Usage numbers stay on the portal, out of the draft.
+func renderReportText(name string, from, to time.Time, summaryMD string) string {
 	var b strings.Builder
 	if name != "" {
 		b.WriteString(name)
 		b.WriteString("，")
 	}
-	fmt.Fprintf(&b, "这是你本周的 AI 使用回顾（%s–%s）\n\n", from.Format("01/02"), to.AddDate(0, 0, -1).Format("01/02"))
+	fmt.Fprintf(&b, "本周周报已帮你写好（%s–%s），复制后稍作修改就能用：\n\n", from.Format("01/02"), to.AddDate(0, 0, -1).Format("01/02"))
 	b.WriteString(strings.TrimSpace(summaryMD))
-	fmt.Fprintf(&b, "\n\n本周 %d 次请求，输入 %d / 输出 %d tokens。", s.Requests, s.TokensInput, s.TokensOutput)
-	b.WriteString("\n\n这份回顾只发给你本人。不想收到的话，可以在门户「我的周报」里关掉。")
+	b.WriteString("\n\n———\n这份周报草稿根据你本周在 Codex 里做的事整理，只发给你本人。不需要的话，可以在门户「我的周报」里关掉。")
 	return b.String()
 }

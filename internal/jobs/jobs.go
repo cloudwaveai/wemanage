@@ -127,10 +127,11 @@ func Register(c *cron.Cron, d Deps) {
 		}
 	})
 
-	// Weekly AI recap for last week — Mondays 09:30, to each employee only.
-	_, _ = c.AddFunc("30 9 * * 1", func() {
-		lastWeek := report.WeekStart(time.Now(), d.Loc).AddDate(0, 0, -7)
-		if err := report.GenerateForWeek(ctx, d.Report, lastWeek); err != nil {
+	// This week's report draft — Fridays 16:00, in time to hand the report in,
+	// to each employee only.
+	_, _ = c.AddFunc("0 16 * * 5", func() {
+		thisWeek := report.WeekStart(time.Now(), d.Loc)
+		if err := report.GenerateForWeek(ctx, d.Report, thisWeek); err != nil {
 			log.Warn("weekly report", "err", err)
 		}
 	})
