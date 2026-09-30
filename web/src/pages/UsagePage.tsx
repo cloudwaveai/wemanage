@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
-import type { UsageSummary, QuotaResp, ResetCreditsResp } from "../lib/types";
-import { Modal } from "../components/Modal";
-import { useToast } from "../components/Toast";
+import type { UsageSummary, QuotaResp } from "../lib/types";
+import { ResetCreditsCard } from "../components/ResetCredits";
 import {
   Card,
   PageHeader,
@@ -16,9 +15,8 @@ import {
   Meter,
   RangeTabs,
   Switch,
-  Button,
 } from "../components/ui";
-import { fmtNum, fmtDateTime, fmtDate } from "../lib/format";
+import { fmtNum, fmtDateTime } from "../lib/format";
 import { UsageTrend } from "../components/UsageTrend";
 
 export function UsagePage() {
@@ -28,33 +26,6 @@ export function UsagePage() {
     mutationFn: (enabled: boolean) => api.post("/api/me/quota-alert", { enabled }),
     onSuccess: () => refetch(),
   });
-  const qc = useQueryClient();
-  const { toast } = useToast();
-  const [confirmReset, setConfirmReset] = useState(false);
-  const credits = useQuery({
-    queryKey: ["my-reset-credits"],
-    queryFn: () => api.get<ResetCreditsResp>("/api/me/reset-credits"),
-    retry: false,
-  });
-  const spendCredit = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; message: string }>("/api/me/reset-credits/use"),
-    onSuccess: (d) => {
-      setConfirmReset(false);
-      toast(d.message, d.ok ? "success" : "info");
-      qc.invalidateQueries({ queryKey: ["my-quota"] });
-      qc.invalidateQueries({ queryKey: ["my-reset-credits"] });
-    },
-    onError: (e: unknown) => {
-      setConfirmReset(false);
-      toast(e instanceof Error ? e.message : "重置没有成功", "error");
-    },
-  });
-  const rc = credits.data;
-  const soonest = rc?.credits
-    .map((c) => c.expires_at)
-    .filter((x): x is string => !!x)
-    .sort()[0];
-
   const usage = useQuery({
     queryKey: ["my-usage", range],
     queryFn: () => api.get<UsageSummary>(`/api/me/usage?range=${range}`),
@@ -135,26 +106,6 @@ export function UsagePage() {
               ) : (
                 <p className="text-sm text-slate-400">暂无额度快照。</p>
               )}
-              {rc?.supported && (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-4 py-3">
-                  <div>
-                    <div className="text-sm font-medium text-slate-800">重置卡 {rc.available} 张</div>
-                    <div className="mt-0.5 text-xs text-slate-500">
-                      {rc.available > 0
-                        ? `用一张，5 小时和每周额度立即重新开始${soonest ? `；最早一张 ${fmtDate(soonest)} 过期` : ""}。`
-                        : "暂时没有重置卡。"}
-                      {rc.available > 0 && !rc.can_use && rc.reason}
-                    </div>
-                  </div>
-                  <Button
-                    variant="primary"
-                    disabled={!rc.can_use || spendCredit.isPending}
-                    onClick={() => setConfirmReset(true)}
-                  >
-                    使用重置卡
-                  </Button>
-                </div>
-              )}
               <div className="mt-4 border-t border-slate-100 pt-3">
                 <Switch
                   checked={!!me?.quota_alert}
@@ -165,6 +116,8 @@ export function UsagePage() {
               </div>
             </Card>
           )}
+
+          <ResetCreditsCard />
 
           <Card className="p-5">
             <h2 className="mb-1 text-sm font-semibold text-slate-800">请求趋势</h2>
@@ -201,23 +154,6 @@ export function UsagePage() {
         </div>
       )}
 
-      <Modal
-        open={confirmReset}
-        onClose={() => setConfirmReset(false)}
-        title="使用重置卡？"
-        footer={
-          <>
-            <Button onClick={() => setConfirmReset(false)}>取消</Button>
-            <Button variant="primary" onClick={() => spendCredit.mutate()} disabled={spendCredit.isPending}>
-              {spendCredit.isPending ? "重置中…" : "确认使用"}
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm leading-relaxed text-slate-600">
-          使用后，你的 5 小时和每周额度会立即清零、重新开始计算。重置卡用一张少一张，确定现在使用吗？
-        </p>
-      </Modal>
     </div>
   );
 }
