@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { UpdateBanner } from "./UpdateBanner";
+import { Modal } from "./Modal";
+import { GettingStartedBody } from "./GettingStarted";
 import { useMutation } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "./Toast";
@@ -228,6 +230,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const role = me?.role ?? "employee";
 
   const sync = useMutation({
@@ -306,6 +309,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setGuideOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 21a9 9 0 100-18 9 9 0 000 18zM9.5 9a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.2M12 17h.01" />
+              </svg>
+              <span className="hidden sm:inline">使用指引</span>
+            </button>
             {role === "super_admin" && (
               <button
                 onClick={() => sync.mutate()}
@@ -353,6 +365,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      <Modal open={guideOpen} onClose={() => setGuideOpen(false)} title="使用指引" width="max-w-2xl">
+        <GettingStartedBody onNavigate={() => setGuideOpen(false)} />
+      </Modal>
     </div>
   );
 }

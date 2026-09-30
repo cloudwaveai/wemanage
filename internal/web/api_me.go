@@ -63,7 +63,35 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 			"email": acc.Email, "plan_type": acc.PlanType, "status": accountStatus(acc),
 		}
 	}
+	// The getting-started guide checks Codex off once a request got through,
+	// and says which client and version it came from.
+	if l, err := s.deps.Store.LastSuccess(r.Context(), emp.ID); err == nil {
+		client, version, cli := codexClient(l.UserAgent)
+		resp["last_success"] = map[string]any{"at": l.At, "client": client, "version": version, "cli": cli}
+	}
+	resp["codex_version"] = set.CodexProfile.Version
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// codexClient names the client and version in a Codex User-Agent such as
+// "codex_cli_rs/0.159.0 (Mac OS 15.6.0; arm64) iTerm.app/3.5" or
+// "Codex Desktop/1.3.0 …"; cli reports whether the version is the Codex CLI's
+// (the desktop app numbers its own releases).
+func codexClient(ua string) (client, version string, cli bool) {
+	product, rest, ok := strings.Cut(strings.TrimSpace(ua), "/")
+	if !ok {
+		return "", "", false
+	}
+	version, _, _ = strings.Cut(rest, " ")
+	switch strings.ToLower(strings.TrimSpace(product)) {
+	case "codex_cli_rs", "codex-tui", "codex_exec":
+		return "Codex 命令行", version, true
+	case "codex_vscode":
+		return "Codex 编辑器插件", version, true
+	case "codex desktop":
+		return "Codex 桌面版", version, false
+	}
+	return strings.TrimSpace(product), version, false
 }
 
 func (s *Server) handleIssueKey(w http.ResponseWriter, r *http.Request) {

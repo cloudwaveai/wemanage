@@ -30,6 +30,10 @@ export interface Me {
     plan_type: string;
     status: AccountStatus;
   };
+  // The employee's latest request that got through the gateway, absent until
+  // one has; cli: version is the Codex CLI's (comparable to codex_version).
+  last_success?: { at: string; client: string; version: string; cli: boolean };
+  codex_version: string; // the Codex CLI release the gateway targets
 }
 
 export type AccountStatus =

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
@@ -9,6 +9,7 @@ import { useToast } from "../components/Toast";
 import { fmtDateTime } from "../lib/format";
 import type { ConfigSnippets } from "../lib/types";
 import { CodexSetup } from "../components/CodexSetup";
+import { GettingStarted } from "../components/GettingStarted";
 
 export function KeyPage() {
   const { me, refetch } = useAuth();
@@ -18,6 +19,8 @@ export function KeyPage() {
 
   const hasKey = !!me?.key_prefix;
   const [pasted, setPasted] = useState("");
+  const [setupOpen, setSetupOpen] = useState(false);
+  const setupRef = useRef<HTMLDetailsElement>(null);
   // What every way of configuring Codex needs (models, config templates).
   const snippets = useQuery({
     queryKey: ["config-snippets"],
@@ -40,6 +43,15 @@ export function KeyPage() {
       <PageHeader
         title="我的 Key"
         desc="你访问公司网关的专属密钥。生成后弹窗里直接给出配置 Codex 的方式。"
+      />
+
+      <GettingStarted
+        onIssueKey={() => (hasKey ? setConfirmOpen(true) : issue.mutate())}
+        issuing={issue.isPending}
+        onShowSetup={() => {
+          setSetupOpen(true);
+          window.setTimeout(() => setupRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+        }}
       />
 
       <Card className="p-5">
@@ -86,7 +98,12 @@ export function KeyPage() {
 
       {hasKey && snippets.data && (
         <Card className="mt-5 p-5">
-          <details>
+          <details
+            ref={setupRef}
+            className="scroll-mt-28"
+            open={setupOpen}
+            onToggle={(e) => setSetupOpen((e.target as HTMLDetailsElement).open)}
+          >
             <summary className="cursor-pointer text-sm font-semibold text-slate-800">
               已有 Key，在另一台电脑上配置
             </summary>

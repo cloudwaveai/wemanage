@@ -2,8 +2,32 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
+
+// LastSuccess is an employee's latest request through the gateway that
+// succeeded, with the client that sent it.
+type LastSuccess struct {
+	At        time.Time
+	UserAgent string
+}
+
+// LastSuccess returns the employee's latest successful request, or
+// ErrNotFound while none has succeeded yet.
+func (s *Store) LastSuccess(ctx context.Context, employeeID int64) (LastSuccess, error) {
+	var l LastSuccess
+	err := s.Pool.QueryRow(ctx, `
+		SELECT started_at, user_agent FROM requests
+		WHERE employee_id = $1 AND status_code < 400
+		ORDER BY started_at DESC LIMIT 1`, employeeID).Scan(&l.At, &l.UserAgent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LastSuccess{}, ErrNotFound
+	}
+	return l, err
+}
 
 // QuotaAlertTarget is an employee who wants quota reminders, with their
 // account and the windows already reminded about (the reset time of each).
