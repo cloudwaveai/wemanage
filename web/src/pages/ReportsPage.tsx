@@ -101,11 +101,11 @@ export function ReportsPage() {
     <div>
       <PageHeader
         title="我的周报"
-        desc="每周五下午根据你本周在 Codex 里做的事，自动编写本周周报，省去你编写周报的麻烦。只发给你本人，部门负责人和其他人都看不到。"
+        desc="每周日下午根据你本周在 Codex 里做的事，自动编写本周周报，省去你编写周报的麻烦。只发给你本人，部门负责人和其他人都看不到。"
       />
       <Card className="mb-5 flex flex-wrap items-center justify-between gap-3 p-4">
         <div>
-          <div className="text-sm font-medium text-slate-800">每周五自动编写本周周报</div>
+          <div className="text-sm font-medium text-slate-800">每周日自动编写本周周报</div>
           <div className="mt-0.5 text-xs text-slate-400">
             写好后通过飞书发给你，复制后稍作修改就能提交。关掉后不再生成，随时可以再打开。
           </div>
@@ -119,7 +119,7 @@ export function ReportsPage() {
       </Card>
       {isLoading && <Loading />}
       {error && <ErrorBox error={error} />}
-      {data && reports.length === 0 && <Empty label="还没有周报，本周五下午会自动写好" />}
+      {data && reports.length === 0 && <Empty label="还没有周报，本周日下午会自动写好" />}
       <div className="space-y-3">
         {reports.map((r) => (
           <ReportItem key={r.ID} r={r} />

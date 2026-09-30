@@ -126,7 +126,7 @@ const TIPS: { to: string; title: string; text: string }[] = [
   { to: "/usage", title: "我的用量", text: "看 5 小时和每周额度用了多少、什么时候恢复；用到 80% 和用完时飞书会提醒你，急用时可以用重置卡。" },
   { to: "/logs", title: "使用日志", text: "每次请求的状态和用量，失败时写明原因，Codex 报错时先来这里看。" },
   { to: "/devices", title: "我的设备", text: "换新电脑第一次用时要在这里确认；不是你本人的设备就点「不是我」，Key 会立即作废。" },
-  { to: "/reports", title: "我的周报", text: "每周五下午根据你本周在 Codex 里做的事自动写好周报，飞书发给你，复制后改一改就能交。" },
+  { to: "/reports", title: "我的周报", text: "每周日下午根据你本周在 Codex 里做的事自动写好周报，飞书发给你，复制后改一改就能交。" },
 ];
 
 function Tips() {

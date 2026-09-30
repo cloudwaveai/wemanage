@@ -127,9 +127,9 @@ func Register(c *cron.Cron, d Deps) {
 		}
 	})
 
-	// This week's report draft — Fridays 16:00, in time to hand the report in,
+	// This week's report draft — Sundays 16:00, once the week's work is all in,
 	// to each employee only.
-	_, _ = c.AddFunc("0 16 * * 5", func() {
+	_, _ = c.AddFunc("0 16 * * 0", func() {
 		thisWeek := report.WeekStart(time.Now(), d.Loc)
 		if err := report.GenerateForWeek(ctx, d.Report, thisWeek); err != nil {
 			log.Warn("weekly report", "err", err)

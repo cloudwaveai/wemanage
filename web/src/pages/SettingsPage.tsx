@@ -241,7 +241,7 @@ export function SettingsPage() {
                   onChange={(e) => patch({ report_enabled: e.target.checked })}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
-                启用自动周报（每周五 16:00 根据员工本周的使用自动编写本周周报草稿，只发给员工本人，员工可自行关闭）
+                启用自动周报（每周日 16:00 根据员工本周的使用自动编写本周周报草稿，只发给员工本人，员工可自行关闭）
               </label>
               <div className="max-w-md">
                 <label className="mb-1 block text-xs font-medium text-slate-500">
