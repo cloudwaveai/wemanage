@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,6 +79,17 @@ func (f *fakeCPAQuota) server(t *testing.T) *httptest.Server {
 		f.mu.Lock()
 		f.calls = append(f.calls, c)
 		f.mu.Unlock()
+		switch c.URL {
+		case health.CodexResetCreditsURL:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 200, "body": `{"available_count":2,"credits":[
+				{"id":"late","status":"available","title":"Full reset","expires_at":"2026-11-29T18:21:14.580904Z"},
+				{"id":"soon","status":"available","title":"Full reset","expires_at":"2026-10-29T18:21:14.580904Z"},
+				{"id":"used","status":"redeemed","title":"Full reset","expires_at":"2026-10-01T00:00:00Z"}]}`})
+			return
+		case health.CodexResetCreditConsumeURL:
+			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 200, "body": `{"code":"reset","windows_reset":2}`})
+			return
+		}
 		if c.URL == health.KimiUsageURL {
 			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 200, "body": kimiUsageBody})
 			return
@@ -236,5 +248,50 @@ func TestParseKimiUsage(t *testing.T) {
 	}
 	if _, err := health.ParseKimiUsage([]byte(`{}`), now); err == nil {
 		t.Fatal("want error for a body without limits")
+	}
+}
+
+func TestResetCredits(t *testing.T) {
+	st, ctx := newStore(t)
+	box := newBox(t)
+	acc := mkAccount(t, st, ctx, box, "idle.json")
+	until := time.Now().Add(3 * time.Hour)
+	if err := st.SetRateLimitedUntil(ctx, acc.ID, &until); err != nil {
+		t.Fatal(err)
+	}
+	acc, _ = st.GetAccount(ctx, acc.ID)
+	f := &fakeCPAQuota{}
+	srv := f.server(t)
+	p := &health.QuotaProber{Store: st, CPA: cpa.NewClient(srv.URL, "mk", srv.Client()), Settings: settings.NewService(st)}
+
+	c, err := p.ResetCredits(ctx, acc)
+	if err != nil || c.Available != 2 || len(c.Credits) != 2 {
+		t.Fatalf("credits %+v %v (want the 2 available ones)", c, err)
+	}
+	code, err := p.UseResetCredit(ctx, acc)
+	if err != nil || code != health.ResetDone {
+		t.Fatalf("use: %q %v", code, err)
+	}
+	f.mu.Lock()
+	var consume cpa.APICallRequest
+	usageAfter := false
+	for _, call := range f.calls {
+		if call.URL == health.CodexResetCreditConsumeURL {
+			consume = call
+		} else if consume.URL != "" && call.URL == health.CodexUsageURL {
+			usageAfter = true
+		}
+	}
+	f.mu.Unlock()
+	if consume.Method != "POST" || !strings.Contains(consume.Data, `"credit_id":"soon"`) || !strings.Contains(consume.Data, `"redeem_request_id"`) ||
+		consume.AuthIndex != "idx-idle" || consume.Header["ChatGPT-Account-Id"] != "acct-uuid-1" {
+		t.Fatalf("consume call: %+v (want the credit expiring first, as the account)", consume)
+	}
+	if !usageAfter {
+		t.Fatal("quota not refreshed after the reset")
+	}
+	after, _ := st.GetAccount(ctx, acc.ID)
+	if after.RateLimitedUntil != nil {
+		t.Fatalf("account still rate limited until %v", after.RateLimitedUntil)
 	}
 }

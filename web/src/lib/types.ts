@@ -406,3 +406,12 @@ export interface TeamUsageResp {
   members: TeamMember[] | null; // sorted by name
   with_account: number;
 }
+
+// A ChatGPT account's rate-limit reset credits (重置卡).
+export interface ResetCreditsResp {
+  supported: boolean; // the account type has reset credits at all
+  available: number;
+  credits: { id: string; title: string; status: string; expires_at: string | null }[];
+  can_use: boolean;
+  reason: string; // why they cannot be used now
+}

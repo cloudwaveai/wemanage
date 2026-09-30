@@ -91,6 +91,8 @@ func (s *Server) Mount(r chi.Router) {
 			r.Get("/me/reports", s.handleMyReports)
 			r.Post("/me/weekly-report", s.handleWeeklyReportPref)
 			r.Post("/me/quota-alert", s.handleQuotaAlertPref)
+			r.Get("/me/reset-credits", s.handleMyResetCredits)
+			r.Post("/me/reset-credits/use", s.handleUseResetCredit)
 			r.Get("/me/config-snippets", s.handleConfigSnippets)
 			r.Post("/me/install-code", s.handleInstallCode)
 			r.Get("/me/devices", s.handleMyDevices)
