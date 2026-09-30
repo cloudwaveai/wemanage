@@ -11,12 +11,13 @@ import (
 )
 
 // resetCreditMinPct is how much of a window must be used before an employee
-// may spend a reset credit on it: a credit resets both windows to zero, so
-// spending it early throws most of it away.
-const resetCreditMinPct = 80
+// may spend a reset credit on it. Company policy is not to use reset credits
+// unless it cannot be helped (heavy resets can draw attention to an account),
+// so only a window that is used up qualifies.
+const resetCreditMinPct = 100
 
-// resetAllowed reports whether the account is used enough for a reset credit
-// to be worth spending, and if not, why.
+// resetAllowed reports whether the account is out of quota, the one case a
+// reset credit may be spent, and if not, why.
 func (s *Server) resetAllowed(ctx context.Context, acc store.Account) (bool, string) {
 	if acc.RateLimitedUntil != nil && acc.RateLimitedUntil.After(time.Now()) {
 		return true, ""
@@ -28,7 +29,7 @@ func (s *Server) resetAllowed(ctx context.Context, acc store.Account) (bool, str
 			}
 		}
 	}
-	return false, fmt.Sprintf("5 小时或每周额度用到 %d%% 以上（或已用完）时才能使用，避免浪费。", resetCreditMinPct)
+	return false, "为降低账号风险，重置卡原则上不用：5 小时或每周额度用完、确有急需时才能使用。"
 }
 
 // chatgptAccount is the employee's bound account when it can have reset

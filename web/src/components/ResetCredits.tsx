@@ -98,7 +98,9 @@ export function ResetCreditsCard() {
             <span className="text-2xl font-semibold text-indigo-600">{rc.available}</span>
             <span className="text-sm font-normal text-slate-500">张</span>
           </h2>
-          <p className="mt-1 text-xs text-slate-500">用一张，5 小时和每周额度立即清零、重新开始计算。</p>
+          <p className="mt-1 text-xs text-slate-500">
+            用一张，5 小时和每周额度立即清零、重新开始计算。为降低账号风险，重置卡原则上不用，额度用完、确有急需时再用。
+          </p>
         </div>
         <Button variant="primary" disabled={!rc.can_use || spend.isPending} onClick={() => setConfirm(true)}>
           使用一张
@@ -137,7 +139,7 @@ export function ResetCreditsCard() {
         <p className="text-sm leading-relaxed text-slate-600">
           使用后，你的 5 小时和每周额度会立即清零、重新开始计算。
           {list.length > 1 ? "会先用最早到期的那张。" : ""}
-          重置卡用一张少一张，确定现在使用吗？
+          重置卡原则上不用，额度到时会自动恢复；确定现在确有急需吗？
         </p>
       </Modal>
     </Card>

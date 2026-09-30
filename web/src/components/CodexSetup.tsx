@@ -52,6 +52,11 @@ export function CodexSetup({
           <span className="text-xs text-amber-600">还没分配 AI 账号，配好后要等管理员分配才能用。</span>
         )}
       </div>
+      {/astra/i.test(model) && (
+        <p className="-mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Astra 消耗额度最快，不建议设为默认模型。日常任务用 luna、复杂任务用 sol 就够了，确有需要时再在 Codex 里临时切换到 Astra。
+        </p>
+      )}
 
       <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
         <div className="mb-2 text-sm font-medium text-slate-800">一条命令配好 Codex（推荐）</div>

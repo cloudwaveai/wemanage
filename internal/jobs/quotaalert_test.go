@@ -80,7 +80,8 @@ func TestQuotaAlertOncePerWindow(t *testing.T) {
 	}
 	snap(85, reset)
 	msgs := run()
-	if len(msgs) != 1 || !strings.Contains(msgs[0], "5 小时额度已用 85%") || !strings.Contains(msgs[0], "2 张重置卡") ||
+	// Reset credits are a last resort: the 80% reminder does not bring them up.
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "5 小时额度已用 85%") || strings.Contains(msgs[0], "重置卡") ||
 		!strings.Contains(msgs[0], "https://portal/usage") {
 		t.Fatalf("80%% reminder: %q", msgs)
 	}
@@ -90,7 +91,8 @@ func TestQuotaAlertOncePerWindow(t *testing.T) {
 	}
 	snap(100, reset)
 	msgs = run()
-	if len(msgs) != 2 || !strings.Contains(msgs[1], "5 小时额度已用完") || !strings.Contains(msgs[1], "立即重新开始") {
+	if len(msgs) != 2 || !strings.Contains(msgs[1], "5 小时额度已用完") || !strings.Contains(msgs[1], "原则上不用") ||
+		!strings.Contains(msgs[1], "还有 2 张") {
 		t.Fatalf("used-up message: %q", msgs)
 	}
 	if n := len(run()); n != 2 {

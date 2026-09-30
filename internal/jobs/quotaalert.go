@@ -12,7 +12,8 @@ import (
 
 // QuotaAlerter tells employees how their account's quota stands: once when a
 // window (5 hours, weekly) reaches the threshold, and once when it is used
-// up, each with when it resets and whether a reset credit (重置卡) could help.
+// up, each with when it resets. Reset credits (重置卡) are a last resort by
+// company policy, so only the used-up message mentions them.
 // The message goes only to the employee, who can turn it off.
 type QuotaAlerter struct {
 	Store  *store.Store
@@ -80,20 +81,16 @@ func (a *QuotaAlerter) check(ctx context.Context, t store.QuotaAlertTarget, wind
 	}
 	portal := strings.TrimRight(a.PortalURL, "/")
 	when := timefmt.Relative(*reset, now, a.Loc)
-	cards := a.credits(ctx, t.AccountID)
 	var text string
 	if full {
 		text = fmt.Sprintf("【AI 网关】你的账号%s额度已用完，预计 %s 恢复。", label, when)
-		if cards > 0 {
-			text += fmt.Sprintf("\n你还有 %d 张重置卡，急用的话可以在门户「我的用量」里使用，5 小时和每周额度会立即重新开始：%s/usage", cards, portal)
+		if cards := a.credits(ctx, t.AccountID); cards > 0 {
+			text += fmt.Sprintf("\n到时会自动恢复。重置卡原则上不用；确有急需的话，你还有 %d 张，可以在门户「我的用量」里使用：%s/usage", cards, portal)
 		} else {
 			text += "到时会自动恢复，期间可以先处理不需要 AI 的工作。"
 		}
 	} else {
-		text = fmt.Sprintf("【AI 网关】你的账号%s额度已用 %.0f%%，预计 %s 重置。", label, *pct, when)
-		if cards > 0 {
-			text += fmt.Sprintf("你还有 %d 张重置卡，额度用完后可以在门户「我的用量」里使用。", cards)
-		}
+		text = fmt.Sprintf("【AI 网关】你的账号%s额度已用 %.0f%%，预计 %s 重置。日常任务用 luna 模型更省额度。", label, *pct, when)
 		text += fmt.Sprintf("\n不想收到这个提醒，可以在门户「我的用量」里关掉：%s/usage", portal)
 	}
 	if err := a.Sender.SendText(ctx, t.OpenID, text); err != nil {

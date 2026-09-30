@@ -65,6 +65,15 @@ function Cmd({ text }: { text: string }) {
   );
 }
 
+// OpenTerminal: nobody is assumed to know where the terminal is.
+function OpenTerminal() {
+  return (
+    <p className="rounded-md bg-slate-50 px-2.5 py-1.5 text-slate-500">
+      怎么打开终端：macOS 按 ⌘ + 空格，输入“终端”后回车；Windows 点开始菜单，输入“PowerShell”后回车。
+    </p>
+  );
+}
+
 interface Step {
   title: string;
   done: boolean;
@@ -123,7 +132,7 @@ function StepRow({ n, step, current }: { n: number; step: Step; current: boolean
 }
 
 const TIPS: { to: string; title: string; text: string }[] = [
-  { to: "/usage", title: "我的用量", text: "看 5 小时和每周额度用了多少、什么时候恢复；用到 80% 和用完时飞书会提醒你，急用时可以用重置卡。" },
+  { to: "/usage", title: "我的用量", text: "看 5 小时和每周额度用了多少、什么时候恢复；用到 80% 和用完时飞书会提醒你。重置卡原则上不用，额度用完、确有急需时再用。" },
   { to: "/logs", title: "使用日志", text: "每次请求的状态和用量，失败时写明原因，Codex 报错时先来这里看。" },
   { to: "/devices", title: "我的设备", text: "换新电脑第一次用时要在这里确认；不是你本人的设备就点「不是我」，Key 会立即作废。" },
   { to: "/reports", title: "我的周报", text: "每周日下午根据你本周在 Codex 里做的事自动写好周报，飞书发给你，复制后改一改就能交。" },
@@ -145,7 +154,8 @@ function Tips() {
         ))}
       </div>
       <p className="mt-3 text-xs leading-relaxed text-slate-500">
-        省额度：日常任务用 luna 模型；一个任务做完就新建对话；别让 Codex 通读大文件、完整日志或依赖目录。
+        选模型：日常任务用 luna，复杂任务用 sol；Astra 消耗额度最快，确有需要时再临时切换，就像不必请资深专家做基础工作。
+        省额度：一个任务做完就新建对话；别让 Codex 通读大文件、完整日志或依赖目录。
       </p>
     </div>
   );
@@ -178,15 +188,23 @@ function steps(me: Me, installed: boolean, setInstalled: (v: boolean) => void, p
       status: used ? "已检测到 Codex" : "你已确认装好",
       how: (
         <>
+          <OpenTerminal />
+          <p>
+            ① 先装 Node.js：到
+            <a href="https://nodejs.org/zh-cn" target="_blank" rel="noreferrer" className="mx-0.5 text-indigo-600 underline underline-offset-2">
+              nodejs.org
+            </a>
+            下载 LTS 版本，双击安装、一路“下一步”即可。装好后在终端运行 <code className="font-mono">node -v</code>，显示 v18 或更高的版本号就行。
+          </p>
           <div>
-            命令行版（推荐）：先装 Node.js 18 或以上版本，再在终端运行：
+            ② 再装 Codex，在终端运行：
             <Cmd text="npm install -g @openai/codex" />
           </div>
-          <p>也可以用 Codex 桌面版或 VS Code 里的 Codex 插件，它们和命令行读同一份配置。</p>
           <div>
-            检查：在终端运行下面这条，显示出版本号就说明装好了。
+            ③ 检查：在终端运行下面这条，显示出版本号就说明装好了。
             <Cmd text="codex --version" />
           </div>
+          <p>也可以用 Codex 桌面版或 VS Code 里的 Codex 插件，它们和命令行读同一份配置；不过下一步的安装命令仍要在终端里运行一次。</p>
         </>
       ),
       action: (
@@ -213,9 +231,10 @@ function steps(me: Me, installed: boolean, setInstalled: (v: boolean) => void, p
       how: (
         <>
           <p>
-            复制生成 Key 弹窗里的安装命令：macOS 打开「终端」、Windows 打开 PowerShell，粘贴后回车，看到“完成”后重新打开 Codex。
+            复制生成 Key 弹窗里的安装命令，粘贴到终端里回车，看到“完成”后重新打开 Codex。
             命令 10 分钟内有效、只能用一次，里面不含 Key 本身。
           </p>
+          <OpenTerminal />
           <p>弹窗已经关掉了？在「已有 Key，在另一台电脑上配置」里粘贴保存的 Key，就能重新拿到命令；Key 没保存的话只能重置。</p>
         </>
       ),

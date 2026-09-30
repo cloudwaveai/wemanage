@@ -20,7 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestResetCreditsNeedHighUsage(t *testing.T) {
+func TestResetCreditsOnlyWhenUsedUp(t *testing.T) {
 	var consumed atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v0/management/auth-files", func(w http.ResponseWriter, r *http.Request) {
@@ -72,10 +72,17 @@ func TestResetCreditsNeedHighUsage(t *testing.T) {
 		t.Fatalf("use at low usage: %d %s, consumed %d", resp.StatusCode, body, consumed.Load())
 	}
 
+	// Reset credits are for when there is no quota left, not for heavy use.
 	p := 85.0
 	_ = st.InsertQuota(ctx, store.QuotaSnapshot{AccountID: acc.ID, At: time.Now(), PrimaryUsedPct: &p})
+	if resp, body := c.do(http.MethodPost, "/api/me/reset-credits/use", ""); resp.StatusCode != http.StatusConflict || consumed.Load() != 0 {
+		t.Fatalf("use at 85%%: %d %s, consumed %d", resp.StatusCode, body, consumed.Load())
+	}
+
+	full := 100.0
+	_ = st.InsertQuota(ctx, store.QuotaSnapshot{AccountID: acc.ID, At: time.Now().Add(time.Second), SecondaryUsedPct: &full})
 	resp, body := c.do(http.MethodPost, "/api/me/reset-credits/use", "")
 	if resp.StatusCode != 200 || !strings.Contains(string(body), `"code":"reset"`) || consumed.Load() != 1 {
-		t.Fatalf("use at 85%%: %d %s", resp.StatusCode, body)
+		t.Fatalf("use when used up: %d %s", resp.StatusCode, body)
 	}
 }
