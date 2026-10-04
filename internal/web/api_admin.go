@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -262,6 +263,26 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"auth_url": authURL, "state": state})
 }
 
+// oauthCallbackError explains a callback CPA refused. 410 means this login is
+// over and the admin has to start again with a new link.
+func oauthCallbackError(err error) (int, string) {
+	var ae *cpa.APIError
+	if !errors.As(err, &ae) {
+		return http.StatusBadGateway, "回调失败：" + err.Error()
+	}
+	switch {
+	case strings.Contains(ae.Message, "Timeout waiting"), ae.Status == http.StatusNotFound:
+		return http.StatusGone, "登录链接已过期：生成链接后要在 5 分钟内完成登录并粘回回调地址。请点「重新获取登录链接」再来一次。"
+	case strings.Contains(ae.Message, "already completed"):
+		return http.StatusGone, "这个登录已经完成过了。账号列表里没有新账号的话，请点「重新获取登录链接」再登录一次。"
+	case ae.Status == http.StatusConflict:
+		return http.StatusGone, "这次登录已经失败（" + ae.Message + "），请点「重新获取登录链接」再来一次。"
+	case ae.Status == http.StatusBadRequest:
+		return http.StatusBadRequest, "回调地址不对（" + ae.Message + "）：要复制登录后浏览器地址栏里 localhost:1455 开头的完整地址。"
+	}
+	return http.StatusBadGateway, "回调失败：" + err.Error()
+}
+
 func (s *Server) handleOAuthComplete(w http.ResponseWriter, r *http.Request) {
 	if s.deps.CPA == nil {
 		writeErr(w, http.StatusServiceUnavailable, "CPA not configured")
@@ -280,15 +301,29 @@ func (s *Server) handleOAuthComplete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "unknown onboarding state")
 		return
 	}
+	// CPA finds the login by the state inside the pasted URL; one from an
+	// earlier link would land on that link's (long expired) login.
+	if u, perr := url.Parse(strings.TrimSpace(body.RedirectURL)); perr == nil {
+		if st := u.Query().Get("state"); st != "" && st != body.State {
+			writeErr(w, http.StatusBadRequest, "这个回调地址来自之前的另一个登录链接。请用上面「复制登录链接」里的链接重新登录，再粘回新的回调地址。")
+			return
+		}
+	}
 	if err := s.deps.CPA.PostOAuthCallback(r.Context(), "codex", body.RedirectURL); err != nil {
-		writeErr(w, http.StatusBadGateway, "callback failed: "+err.Error())
+		status, msg := oauthCallbackError(err)
+		writeErr(w, status, msg)
 		return
 	}
 	// Poll for completion.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if st, _ := s.deps.CPA.AuthStatus(r.Context(), body.State); st == "ok" {
+		st, msg, _ := s.deps.CPA.AuthStatusDetail(r.Context(), body.State)
+		if st == "ok" {
 			break
+		}
+		if st == "error" {
+			writeErr(w, http.StatusGone, "OpenAI 没有接受这次登录（"+msg+"）。授权码只能用一次、几分钟内有效，请点「重新获取登录链接」再登录一次。")
+			return
 		}
 		time.Sleep(time.Second)
 	}

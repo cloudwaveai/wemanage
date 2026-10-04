@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import type { IPGroupRow } from "../lib/types";
 import { Modal } from "./Modal";
 import { Button } from "./ui";
@@ -9,6 +9,9 @@ import { CopyButton } from "./CopyButton";
 import { useToast } from "./Toast";
 
 type Path = "oauth" | "kimi" | "import";
+
+// CPA waits this long for the callback after making a login link.
+const OAUTH_WINDOW_MS = 5 * 60 * 1000;
 
 const PATH_LABELS: Record<Path, string> = {
   oauth: "ChatGPT 登录",
@@ -35,6 +38,16 @@ export function AddAccountWizard({
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [state, setState] = useState<string | null>(null);
   const [redirectUrl, setRedirectUrl] = useState("");
+  const [linkAt, setLinkAt] = useState(0); // when the login link was made
+  const [linkDead, setLinkDead] = useState(false); // CPA gave up on this login
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!authUrl) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [authUrl]);
+  const leftMs = linkAt ? linkAt + OAUTH_WINDOW_MS - now : OAUTH_WINDOW_MS;
+  const expired = linkDead || leftMs <= 0;
 
   // kimi device-login state
   const [kimi, setKimi] = useState<{ url: string; state: string; code?: string } | null>(null);
@@ -58,6 +71,8 @@ export function AddAccountWizard({
     setAuthUrl(null);
     setState(null);
     setRedirectUrl("");
+    setLinkAt(0);
+    setLinkDead(false);
     setKimi(null);
     setImportJson("");
   };
@@ -76,6 +91,10 @@ export function AddAccountWizard({
     onSuccess: (d) => {
       setAuthUrl(d.auth_url);
       setState(d.state);
+      setRedirectUrl("");
+      setLinkAt(Date.now());
+      setNow(Date.now());
+      setLinkDead(false);
     },
     onError: (e: unknown) =>
       toast(e instanceof Error ? e.message : "启动失败", "error"),
@@ -92,8 +111,11 @@ export function AddAccountWizard({
       onDone();
       close();
     },
-    onError: (e: unknown) =>
-      toast(e instanceof Error ? e.message : "完成失败", "error"),
+    onError: (e: unknown) => {
+      // 410: this login is over, only a new link helps.
+      if (e instanceof ApiError && e.status === 410) setLinkDead(true);
+      toast(e instanceof Error ? e.message : "完成失败", "error");
+    },
   });
 
   const startKimi = useMutation({
@@ -244,6 +266,11 @@ export function AddAccountWizard({
                   <div className="flex flex-wrap items-center gap-2">
                     <CopyButton text={authUrl} label="复制登录链接" />
                     <span className="text-slate-500">粘到浏览器的无痕窗口里打开</span>
+                    <span className={"ml-auto text-xs " + (expired ? "text-rose-600" : leftMs < 60_000 ? "text-amber-600" : "text-slate-400")}>
+                      {expired
+                        ? "链接已失效"
+                        : `${Math.floor(leftMs / 60000)}:${String(Math.floor((leftMs % 60000) / 1000)).padStart(2, "0")} 内有效`}
+                    </span>
                   </div>
                   <p className="mt-2 text-xs leading-relaxed text-slate-500">
                     用无痕窗口，避免登录成你平时浏览器里已登录的账号。登录完成后回调页（localhost:1455）打不开是正常的，复制地址栏的完整 URL 粘回下面。也可以直接
@@ -270,13 +297,29 @@ export function AddAccountWizard({
                     className={inputCls + " font-mono text-xs"}
                   />
                 </div>
-                <Button
-                  variant="primary"
-                  onClick={() => completeOAuth.mutate()}
-                  disabled={!redirectUrl.trim() || completeOAuth.isPending}
-                >
-                  {completeOAuth.isPending ? "处理中…" : "完成"}
-                </Button>
+                {expired && (
+                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                    {linkDead
+                      ? "这次登录已经失效，请重新获取登录链接，用新链接再登录一次。"
+                      : "登录链接生成后 5 分钟内要粘回回调地址，现在已经超时。请重新获取登录链接，用新链接再登录一次。"}
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="primary"
+                    onClick={() => completeOAuth.mutate()}
+                    disabled={!redirectUrl.trim() || expired || completeOAuth.isPending}
+                  >
+                    {completeOAuth.isPending ? "处理中…" : "完成"}
+                  </Button>
+                  <Button
+                    variant={expired ? "primary" : "ghost"}
+                    onClick={() => startOAuth.mutate()}
+                    disabled={startOAuth.isPending}
+                  >
+                    {startOAuth.isPending ? "获取中…" : "重新获取登录链接"}
+                  </Button>
+                </div>
               </>
             )}
           </div>

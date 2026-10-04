@@ -114,6 +114,18 @@ func (c *Client) newRequest(ctx context.Context, method, path string, query url.
 
 // do executes req, enforces a 2xx status, and (when out != nil) decodes the JSON
 // response body into out.
+// APIError is a non-2xx answer from CPA; Message is its "error" field.
+type APIError struct {
+	Method, Path string
+	Status       int
+	Message      string
+	Body         string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("cpa: %s %s: status %d: %s", e.Method, e.Path, e.Status, e.Body)
+}
+
 func (c *Client) do(req *http.Request, out any) error {
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -126,7 +138,14 @@ func (c *Client) do(req *http.Request, out any) error {
 		return fmt.Errorf("cpa: read %s response: %w", req.URL.Path, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("cpa: %s %s: status %d: %s", req.Method, req.URL.Path, resp.StatusCode, string(data))
+		e := &APIError{Method: req.Method, Path: req.URL.Path, Status: resp.StatusCode, Body: string(data)}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(data, &body) == nil {
+			e.Message = body.Error
+		}
+		return e
 	}
 	if out != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
@@ -292,25 +311,31 @@ func (c *Client) PostOAuthCallback(ctx context.Context, provider, redirectURL st
 // It normalizes the CPA response to "ok", "error", or "pending"; any status
 // other than "ok"/"error" (including "pending") maps to "pending".
 func (c *Client) AuthStatus(ctx context.Context, state string) (status string, err error) {
+	status, _, err = c.AuthStatusDetail(ctx, state)
+	return status, err
+}
+
+// AuthStatusDetail is AuthStatus plus CPA's error message when the flow failed.
+func (c *Client) AuthStatusDetail(ctx context.Context, state string) (status, message string, err error) {
 	q := url.Values{}
 	q.Set("state", state)
 	req, reqErr := c.newRequest(ctx, http.MethodGet, managementBase+"/get-auth-status", q, nil)
 	if reqErr != nil {
-		return "", reqErr
+		return "", "", reqErr
 	}
 	var out struct {
 		Status string `json:"status"`
 		Error  string `json:"error"`
 	}
 	if err := c.do(req, &out); err != nil {
-		return "", err
+		return "", "", err
 	}
 	switch out.Status {
 	case "ok":
-		return "ok", nil
+		return "ok", "", nil
 	case "error":
-		return "error", nil
+		return "error", out.Error, nil
 	default:
-		return "pending", nil
+		return "pending", "", nil
 	}
 }
