@@ -283,7 +283,11 @@ func (s *Server) codexSetup(ctx context.Context, employeeID int64) codexSetup {
 	}
 	// Newest first.
 	sort.SliceStable(cs.models, func(i, j int) bool { return cs.models[i].Created > cs.models[j].Created })
-	cs.model = pickDefaultModel(cs.models, cs.chatgpt, set.DefaultCodexModel)
+	preferred := set.DefaultCodexModel
+	if !cs.chatgpt {
+		preferred = providerDefaultModel[cs.provider]
+	}
+	cs.model = pickDefaultModel(cs.models, cs.chatgpt, preferred)
 
 	// ChatGPT accounts use the WebSocket transport like the official client;
 	// other providers (and the kill switch) stay on HTTP.
@@ -368,9 +372,9 @@ experimental_bearer_token = "{{KEY}}"
 	}
 
 	allowed := cs.thirdParty
-	note := "OpenCode、Command Code 等工具都用 OpenAI Responses 接口接入：Base URL 填上面的地址，API Key 填你的 Key。下面有现成的配置。"
+	note := "网关同时提供 OpenAI 接口（Responses、Chat Completions）和 Anthropic 接口（Messages）：Claude Code、OpenCode、Command Code、Cherry Studio、Cline 等工具填上面的 Base URL 和你的 Key 就能用。下面有现成的配置。"
 	if !allowed {
-		note = "你的 AI 账号目前只开放给官方 Codex 客户端，OpenCode、Command Code 等工具的请求会被拦截。确有需要请联系管理员开通。"
+		note = "你的 AI 账号目前只开放给官方 Codex 客户端，Claude Code、OpenCode、Command Code 等工具的请求会被拦截。确有需要请联系管理员开通。"
 	}
 	thirdModels := map[string]map[string]any{}
 	ccModels := map[string]map[string]any{}
@@ -426,8 +430,45 @@ experimental_bearer_token = "{{KEY}}"
 			"opencode_json":    string(opencode),
 			"commandcode_json": string(commandcode),
 			"commandcode_env":  `export AISEAT_API_KEY="{{KEY}}"`,
+			// Claude Code through the gateway's Anthropic endpoint, under its
+			// own command so the plain "claude" (and its login) stays as it is.
+			"claude_code_sh": claudeCodeSh(s.deps.PublicBaseURL),
+			"claude_code_ps": claudeCodePs(s.deps.PublicBaseURL),
 		},
 	})
+}
+
+// claudeCodeSh is a shell alias starting Claude Code on the gateway: every
+// Claude model tier maps to the chosen model, and nothing is written into
+// Claude Code's own settings. The browser fills in {{KEY}} and {{MODEL}}.
+func claudeCodeSh(portal string) string {
+	return `# 公司 AI 网关上的 Claude Code：用 claude-gw 启动，原来的 claude 不受影响
+alias claude-gw='ANTHROPIC_BASE_URL="` + portal + `" ANTHROPIC_AUTH_TOKEN="{{KEY}}" ANTHROPIC_MODEL="{{MODEL}}" ANTHROPIC_DEFAULT_OPUS_MODEL="{{MODEL}}" ANTHROPIC_DEFAULT_SONNET_MODEL="{{MODEL}}" ANTHROPIC_DEFAULT_HAIKU_MODEL="{{MODEL}}" CLAUDE_CODE_SUBAGENT_MODEL="{{MODEL}}" CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 claude'`
+}
+
+// claudeCodePs is claudeCodeSh for a PowerShell profile.
+func claudeCodePs(portal string) string {
+	return `# 公司 AI 网关上的 Claude Code：用 claude-gw 启动，原来的 claude 不受影响
+function claude-gw {
+  $vars = @{
+    ANTHROPIC_BASE_URL = '` + portal + `'; ANTHROPIC_AUTH_TOKEN = '{{KEY}}'; ANTHROPIC_MODEL = '{{MODEL}}'
+    ANTHROPIC_DEFAULT_OPUS_MODEL = '{{MODEL}}'; ANTHROPIC_DEFAULT_SONNET_MODEL = '{{MODEL}}'
+    ANTHROPIC_DEFAULT_HAIKU_MODEL = '{{MODEL}}'; CLAUDE_CODE_SUBAGENT_MODEL = '{{MODEL}}'
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1'
+  }
+  $old = @{}
+  foreach ($k in $vars.Keys) { $old[$k] = [Environment]::GetEnvironmentVariable($k, 'Process'); Set-Item "env:$k" $vars[$k] }
+  try { claude @args } finally { foreach ($k in $vars.Keys) { if ($old[$k]) { Set-Item "env:$k" $old[$k] } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue } } }
+}`
+}
+
+// providerDefaultModel is the everyday model of providers whose lists do not
+// make it obvious.
+var providerDefaultModel = map[string]string{
+	"antigravity": "gemini-3.1-pro-low",
+	"xai":         "grok-4.7",
+	"meta":        "muse-spark-1.3",
+	"devin":       "devin/swe-2",
 }
 
 // pickDefaultModel chooses the model one-click setup recommends.
@@ -437,8 +478,9 @@ experimental_bearer_token = "{{KEY}}"
 // else the newest model that is not a review helper; with no list, the
 // configured model itself.
 //
-// Others (e.g. Kimi): the newest "-code" model, skipping speed/size variants,
-// else the first listed; with no list, "" (their ids are unknown).
+// Others: the provider's everyday model (providerDefaultModel) when listed,
+// else the newest "-code" model, skipping speed/size variants (Kimi), else
+// the first listed; with no list, "" (their ids are unknown).
 func pickDefaultModel(models []store.ModelInfo, chatgpt bool, preferred string) string {
 	if chatgpt {
 		if len(models) == 0 {
@@ -468,6 +510,11 @@ func pickDefaultModel(models []store.ModelInfo, chatgpt bool, preferred string) 
 			return any.ID
 		default:
 			return models[0].ID
+		}
+	}
+	for _, m := range models {
+		if preferred != "" && m.ID == preferred {
+			return preferred
 		}
 	}
 	best := ""

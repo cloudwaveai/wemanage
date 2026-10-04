@@ -100,7 +100,7 @@ func (h *Handler) pickAccount(prin store.KeyPrincipal, n need, set settings.Sett
 		return best, no(http.StatusForbidden, "model_not_allowed", modelNotAllowed(n.model, prin.Accounts))
 	case blockClient:
 		return best, no(http.StatusForbidden, "client_not_allowed",
-			"你的 AI 账号只能在官方 Codex 客户端里使用。需要用 OpenCode、Command Code 等工具，请联系管理员开通。")
+			"你的 AI 账号只能在官方 Codex 客户端里使用。需要用 Claude Code、OpenCode、Command Code 等工具，请联系管理员开通。")
 	case blockDisabled:
 		return best, no(http.StatusForbidden, "account_disabled", "你的 AI 账号已被管理员停用，请联系管理员。")
 	}

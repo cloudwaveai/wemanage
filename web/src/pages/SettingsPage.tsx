@@ -311,7 +311,7 @@ export function SettingsPage() {
                   label="所有账号都允许非 Codex 客户端"
                   checked={form.allow_non_codex}
                   onChange={(v) => patch({ allow_non_codex: v })}
-                  hint="总开关（推荐关闭）。只想给个别账号开放 OpenCode、Command Code 等工具，到「账号 → 编辑」里单独打开"
+                  hint="总开关（推荐关闭）。只想给个别账号开放 Claude Code、OpenCode、Command Code 等工具，到「账号 → 编辑」里单独打开"
                 />
                 <ToggleField
                   label="要求 Codex 安装 ID"

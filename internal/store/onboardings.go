@@ -16,15 +16,17 @@ type Onboarding struct {
 	KnownAuthNames     []string
 	CreatedBy          *int64
 	CompletedAccountID *int64
+	// Provider is the CPA login this onboarding started (default "codex").
+	Provider string
 }
 
 // CreateOnboarding records a new account onboarding session.
 func (s *Store) CreateOnboarding(ctx context.Context, o Onboarding) error {
 	osp, _ := json.Marshal(o.OSProfile)
 	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO account_onboardings (state, ip_group_id, os_profile, known_auth_names, created_by)
-		VALUES ($1,$2,$3,$4,$5)`,
-		o.State, o.IPGroupID, osp, o.KnownAuthNames, o.CreatedBy)
+		INSERT INTO account_onboardings (state, ip_group_id, os_profile, known_auth_names, created_by, provider)
+		VALUES ($1,$2,$3,$4,$5,COALESCE(NULLIF($6,''),'codex'))`,
+		o.State, o.IPGroupID, osp, o.KnownAuthNames, o.CreatedBy, o.Provider)
 	return err
 }
 
@@ -33,9 +35,9 @@ func (s *Store) GetOnboarding(ctx context.Context, state string) (Onboarding, er
 	var o Onboarding
 	var osp []byte
 	err := s.Pool.QueryRow(ctx, `
-		SELECT state, ip_group_id, os_profile, known_auth_names, created_by, completed_account_id
+		SELECT state, ip_group_id, os_profile, known_auth_names, created_by, completed_account_id, provider
 		FROM account_onboardings WHERE state=$1`, state).
-		Scan(&o.State, &o.IPGroupID, &osp, &o.KnownAuthNames, &o.CreatedBy, &o.CompletedAccountID)
+		Scan(&o.State, &o.IPGroupID, &osp, &o.KnownAuthNames, &o.CreatedBy, &o.CompletedAccountID, &o.Provider)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Onboarding{}, ErrNotFound
 	}

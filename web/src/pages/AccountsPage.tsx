@@ -15,13 +15,8 @@ import { fmtCompact, fmtDateTime, fmtNum } from "../lib/format";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { AddAccountWizard } from "../components/AddAccountWizard";
+import { accountName, hasQuota as providerHasQuota, isChatGPT, providerName } from "../lib/providers";
 
-// accountName is the account's email, else a name derived from its provider
-// (Kimi Code logins carry no email; admins can set one via 编辑).
-function accountName(a: AccountRow): string {
-  if (a.email) return a.email;
-  return `${a.provider === "kimi" ? "Kimi Code" : "ChatGPT"} #${a.id}`;
-}
 
 // QuotaRow is one compact quota window: label, bar, percent; times on hover.
 function QuotaRow({
@@ -62,7 +57,7 @@ function QuotaRow({
 
 // ChatGPT and Kimi Code expose 5-hour / weekly quota; other providers do not.
 function hasQuota(a: AccountRow): boolean {
-  return !a.provider || a.provider === "codex" || a.provider === "kimi";
+  return providerHasQuota(a.provider);
 }
 
 export function AccountsPage() {
@@ -112,7 +107,7 @@ export function AccountsPage() {
     <div>
       <PageHeader
         title="账号"
-        desc={`上游账号的使用人、可用模型、额度与用量。一个账号最多 ${maxMembers} 人共用，一个人也可以有多个账号（额度用完时自动换下一个）。5 小时 / 每周额度来自 ChatGPT / Kimi 官方接口：有请求时随请求更新，闲置时网关每 30 分钟查询一次；Token 为经过网关的用量。`}
+        desc={`上游账号的使用人、可用模型、额度与用量。一个账号最多 ${maxMembers} 人共用，一个人也可以有多个账号（额度用完时自动换下一个）。5 小时 / 每周额度来自 ChatGPT / Kimi Code 官方接口（其它账号类型没有额度显示）：有请求时随请求更新，闲置时网关每 30 分钟查询一次；Token 为经过网关的用量。`}
         right={
           <Button variant="primary" onClick={() => setWizardOpen(true)}>
             添加账号
@@ -155,12 +150,12 @@ export function AccountsPage() {
                         <span
                           className={
                             "rounded px-1.5 py-0.5 text-[10px] font-medium " +
-                            (a.provider === "kimi"
-                              ? "bg-violet-100 text-violet-700"
-                              : "bg-emerald-50 text-emerald-700")
+                            (isChatGPT(a.provider)
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-violet-100 text-violet-700")
                           }
                         >
-                          {a.provider === "kimi" ? "Kimi Code" : "ChatGPT"}
+                          {providerName(a.provider)}
                         </span>
                         {a.plan_type && <span>{a.plan_type}</span>}
                         <span>{a.owner_type === "employee" ? "员工自有" : "公司账号"}</span>
@@ -219,7 +214,7 @@ export function AccountsPage() {
                         )}
                         {a.allow_third_party && (
                           <span
-                            title="允许 OpenCode、Command Code 等第三方客户端"
+                            title="允许 Claude Code、OpenCode、Command Code 等第三方客户端"
                             className="whitespace-nowrap rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700"
                           >
                             第三方
@@ -508,11 +503,11 @@ function EditModal({
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder={account?.provider === "kimi" ? "如 kimi-研发1 或登录用的手机号/邮箱" : "ChatGPT 登录邮箱"}
+            placeholder={isChatGPT(account?.provider) ? "ChatGPT 登录邮箱" : `如 ${providerName(account?.provider)}-研发1 或登录用的手机号/邮箱`}
             className={inputCls}
           />
           <p className="mt-1 text-xs text-slate-400">
-            只用于在后台辨认账号。ChatGPT 账号登录时会自动填入邮箱；Kimi 登录不提供邮箱，可以在这里起个名字。
+            只用于在后台辨认账号。登录时拿得到邮箱的会自动填入；Kimi 等登录不提供邮箱，可以在这里起个名字。
           </p>
         </div>
         <div>
@@ -571,7 +566,7 @@ function EditModal({
               className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
             />
             <span>
-              允许 OpenCode、Command Code 等第三方客户端
+              允许 Claude Code、OpenCode、Command Code 等第三方客户端
               <span className="mt-0.5 block text-xs text-slate-400">
                 它们走同样的 OpenAI Responses 接口。请求特征和官方 Codex 不同，账号被风控的可能更大，只给确有需要的账号打开。
               </span>

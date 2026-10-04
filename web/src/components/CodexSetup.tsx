@@ -65,7 +65,7 @@ export function CodexSetup({
 
       <details className="rounded-lg border border-slate-200 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-slate-700">
-          其他方式：CC Switch、手动配置、OpenCode、Command Code
+          其他方式：CC Switch、手动配置、Claude Code、OpenCode、Command Code 等
         </summary>
 
         <div className="mt-3 space-y-4 text-xs leading-relaxed text-slate-500">
@@ -105,18 +105,34 @@ export function CodexSetup({
           </div>
 
           <div>
-            <div className="mb-1 font-medium text-slate-700">第三方客户端（OpenCode、Command Code 等）</div>
+            <div className="mb-1 font-medium text-slate-700">其他客户端（Claude Code、OpenCode、Command Code、Cherry Studio 等）</div>
             <div className="flex flex-wrap items-center gap-2">
               <span>Base URL</span>
               <code className="rounded bg-slate-100 px-2 py-0.5 font-mono text-slate-700">
                 {data.third_party.base_url}
               </code>
               <CopyButton text={data.third_party.base_url} />
-              <span className="text-slate-400">接口类型选 OpenAI Responses</span>
+              <span className="text-slate-400">接口选 OpenAI（Responses 或 Chat Completions）；Anthropic 格式的工具 Base URL 去掉末尾的 /v1</span>
             </div>
             <p className={"mt-1 " + (data.third_party.allowed ? "" : "text-amber-700")}>{data.third_party.note}</p>
             {data.third_party.allowed && (
               <div className="mt-3 space-y-3">
+                <div>
+                  <div className="mb-1 font-medium text-slate-700">Claude Code</div>
+                  <p className="mb-1">
+                    把下面这段加到 <code className="font-mono">~/.zshrc</code>（bash 用 <code className="font-mono">~/.bashrc</code>），新开终端后用
+                    <code className="font-mono"> claude-gw </code>
+                    启动，用的是你在公司网关上的账号和上面选的模型；原来的 <code className="font-mono">claude</code> 和它的登录不受影响。Key 已经填在里面，别发给别人。
+                  </p>
+                  <CodeBlock code={fill(data.third_party.claude_code_sh)} />
+                  <details className="mt-2">
+                    <summary className="cursor-pointer">Windows（PowerShell）</summary>
+                    <p className="my-1">
+                      运行 <code className="font-mono">notepad $PROFILE</code>，把下面这段粘进去保存，新开 PowerShell 后用 claude-gw 启动。
+                    </p>
+                    <CodeBlock code={fill(data.third_party.claude_code_ps)} />
+                  </details>
+                </div>
                 <div>
                   <div className="mb-1 font-medium text-slate-700">OpenCode</div>
                   <p className="mb-1">

@@ -52,7 +52,7 @@ func ExtractTexts(endpoint string, reqSegs []Segment, inputStart, prevInputCount
 // extractInputText pulls human-readable text from a single request input
 // element.
 func extractInputText(endpoint string, data []byte) string {
-	if endpoint == "chat" {
+	if endpoint == "chat" || endpoint == "messages" {
 		return chatMessageText(gjson.ParseBytes(data))
 	}
 	return responsesInputText(gjson.ParseBytes(data))
@@ -62,7 +62,7 @@ func extractInputText(endpoint string, data []byte) string {
 // item.
 func extractOutputText(endpoint string, item json.RawMessage) string {
 	root := gjson.ParseBytes(item)
-	if endpoint == "chat" {
+	if endpoint == "chat" || endpoint == "messages" {
 		return chatMessageText(root)
 	}
 	// responses: gather output_text parts, else a message's top-level text.

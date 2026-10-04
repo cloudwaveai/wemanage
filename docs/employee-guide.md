@@ -66,7 +66,7 @@ export no_proxy="$no_proxy,.cloudwaveai.cn"
 
 之后照常使用 `codex` 即可。请求会经公司网关转发到你的专属账号。
 
-## 三、其它客户端（OpenCode、Command Code 等）
+## 三、其它客户端（Claude Code、OpenCode、Command Code 等）
 
 **默认只允许官方 Codex 客户端**。第三方工具发来的请求会被网关拦截，返回 `client_not_allowed`，同时你会收到一条飞书提醒。
 
@@ -74,9 +74,10 @@ export no_proxy="$no_proxy,.cloudwaveai.cn"
 
 如果工作上确实需要，请联系管理员给你的账号打开"第三方客户端"。打开后，生成 Key 的弹窗里"其他方式"会给出现成配置（Key 和模型已经填好）：
 
+- **Claude Code**：把弹窗里那行 `alias claude-gw=...` 加到 `~/.zshrc`（Windows 是一段 PowerShell 函数，加到 `$PROFILE`），新开终端后用 `claude-gw` 启动。走网关的 Anthropic 接口（`/v1/messages`），用的是你在公司网关上的账号（ChatGPT、Kimi 等）和选的模型，不是 Claude 订阅；原来的 `claude` 命令和它的登录不受影响。
 - **OpenCode**：写入 `~/.config/opencode/opencode.json`（用 `@ai-sdk/openai`，走 Responses 接口）。
 - **Command Code**：写入 `~/.commandcode/providers.json`（`api` 为 `openai-responses`），再把 `export AISEAT_API_KEY="你的 Key"` 加到 `~/.zshrc`，新开终端后在 Command Code 里用 `/model` 选"公司 AI 网关"的模型。
-- 其他支持 OpenAI Responses 接口的工具：Base URL 填 `https://ai.cloudwaveai.cn/v1`，API Key 填你的 Key。
+- 其他工具（Cherry Studio、Cline、Roo Code、Continue、Cursor 自定义模型等）：选 OpenAI 兼容接口（Responses 或 Chat Completions 都行），Base URL 填 `https://ai.cloudwaveai.cn/v1`，API Key 填你的 Key；只支持 Anthropic 格式的工具，Base URL 填 `https://ai.cloudwaveai.cn`（不带 /v1）。
 
 **多个账号**：管理员可能给你分配了不止一个 AI 账号（"我的用量"里能看到每个账号的额度）。不用做任何设置：同一段对话固定用一个账号，一个账号额度用完时网关会自动换到另一个。
 

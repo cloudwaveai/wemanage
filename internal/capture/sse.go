@@ -68,6 +68,8 @@ type StreamParser struct {
 	chatTools   map[int]*toolCallAcc
 	chatUsage   Usage
 	haveUsage   bool
+
+	msg msgState // messages-specific
 }
 
 type toolCallAcc struct {
@@ -75,8 +77,8 @@ type toolCallAcc struct {
 	args          strings.Builder
 }
 
-// NewStreamParser returns a parser for the given endpoint ("responses" or
-// "chat"). start is used to compute TTFT.
+// NewStreamParser returns a parser for the given endpoint ("responses",
+// "chat" or "messages"). start is used to compute TTFT.
 func NewStreamParser(endpoint string, start time.Time) *StreamParser {
 	return &StreamParser{endpoint: endpoint, start: start}
 }
@@ -130,6 +132,9 @@ func (p *StreamParser) Write(b []byte) (int, error) {
 func (p *StreamParser) Finish() Outcome {
 	if p.endpoint == "chat" {
 		return p.finishChat()
+	}
+	if p.endpoint == "messages" {
+		return p.finishMessages()
 	}
 	// Flush a pending, fully-buffered event block that was not terminated by a
 	// trailing blank line.
@@ -253,6 +258,10 @@ type respEventJSON struct {
 }
 
 func (p *StreamParser) dispatchRespBlock() {
+	if p.endpoint == "messages" {
+		p.dispatchMsgBlock()
+		return
+	}
 	if len(p.curData) == 0 {
 		return
 	}
@@ -440,6 +449,9 @@ type chatJSONBody struct {
 
 // ParseJSONResponse parses a complete (non-streaming) JSON body.
 func ParseJSONResponse(endpoint string, body []byte) Outcome {
+	if endpoint == "messages" {
+		return parseMessagesJSON(body)
+	}
 	if endpoint == "chat" {
 		var j chatJSONBody
 		_ = json.Unmarshal(body, &j)

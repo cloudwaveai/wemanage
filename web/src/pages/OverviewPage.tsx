@@ -12,6 +12,7 @@ import {
   Meter,
 } from "../components/ui";
 import { fmtNum, fmtCompact, fmtDateTime } from "../lib/format";
+import { accountName, hasQuota, isChatGPT, providerName } from "../lib/providers";
 
 export function OverviewPage() {
   const { data, isLoading, error } = useQuery({
@@ -128,14 +129,14 @@ function AccountQuotaCard({
         </div>
       </div>
       <p className="mb-4 text-xs text-slate-400">
-        5 小时 / 每周额度来自 ChatGPT、Kimi 官方接口；Token 为经过网关的用量。详情和手动刷新在「账号」页。
+        5 小时 / 每周额度来自 ChatGPT、Kimi Code 官方接口（其它账号类型没有额度显示）；Token 为经过网关的用量。详情和手动刷新在「账号」页。
       </p>
       {rows.length === 0 ? (
         <Empty label="暂无账号" />
       ) : (
         <div className="divide-y divide-slate-100">
           {rows.map((a) => {
-            const quota = !a.provider || a.provider === "codex" || a.provider === "kimi";
+            const quota = hasQuota(a.provider);
             return (
               <div
                 key={a.id}
@@ -143,10 +144,10 @@ function AccountQuotaCard({
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium text-slate-800">
-                    {a.email || `${a.provider === "kimi" ? "Kimi Code" : "ChatGPT"} #${a.id}`}
-                    {a.provider === "kimi" && (
+                    {accountName(a)}
+                    {!isChatGPT(a.provider) && (
                       <span className="ml-1.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
-                        Kimi
+                        {providerName(a.provider)}
                       </span>
                     )}
                   </div>

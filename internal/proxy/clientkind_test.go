@@ -75,3 +75,18 @@ func TestClassifyFirstMatchWins(t *testing.T) {
 		t.Errorf("first match wins: got %q, want %q", got, "other")
 	}
 }
+
+func TestStripPrefixKeepsModelNamespaces(t *testing.T) {
+	for in, want := range map[string]string{
+		"gpt-6-luna":              "gpt-6-luna",
+		"acct-3/gpt-6-luna":       "gpt-6-luna",
+		"aiseat/gpt-6-luna":       "gpt-6-luna",
+		"acct-3/devin/swe-2":      "devin/swe-2",
+		"devin/swe-2":             "devin/swe-2",
+		"aiseat/acct-1/kimi-k2.8": "kimi-k2.8",
+	} {
+		if got := stripPrefix(in); got != want {
+			t.Errorf("stripPrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

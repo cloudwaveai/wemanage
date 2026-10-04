@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -229,11 +228,8 @@ func quotaJSON(q store.QuotaSnapshot) map[string]any {
 	}
 }
 
+// handleOAuthStart and handleOAuthComplete are the ChatGPT login (login.go).
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
-	if s.deps.CPA == nil {
-		writeErr(w, http.StatusServiceUnavailable, "CPA not configured")
-		return
-	}
 	var body struct {
 		IPGroupID int64               `json:"ip_group_id"`
 		OS        store.DeviceProfile `json:"os_profile"`
@@ -242,120 +238,11 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "ip_group_id required")
 		return
 	}
-	authURL, state, err := s.deps.CPA.RequestCodexAuthURL(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "cannot start CPA OAuth: "+err.Error())
-		return
-	}
-	known, _ := s.deps.CPA.ListAuthFiles(r.Context())
-	names := make([]string, 0, len(known))
-	for _, f := range known {
-		names = append(names, f.Name)
-	}
-	emp := currentEmployee(r)
-	if err := s.deps.Store.CreateOnboarding(r.Context(), store.Onboarding{
-		State: state, IPGroupID: body.IPGroupID, OSProfile: body.OS, KnownAuthNames: names, CreatedBy: &emp.ID,
-	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, "cannot record onboarding")
-		return
-	}
-	s.audit(r, "account_oauth_start", "ip_group", fmt.Sprint(body.IPGroupID), nil)
-	writeJSON(w, http.StatusOK, map[string]any{"auth_url": authURL, "state": state})
-}
-
-// oauthCallbackError explains a callback CPA refused. 410 means this login is
-// over and the admin has to start again with a new link.
-func oauthCallbackError(err error) (int, string) {
-	var ae *cpa.APIError
-	if !errors.As(err, &ae) {
-		return http.StatusBadGateway, "回调失败：" + err.Error()
-	}
-	switch {
-	case strings.Contains(ae.Message, "Timeout waiting"), ae.Status == http.StatusNotFound:
-		return http.StatusGone, "登录链接已过期：生成链接后要在 5 分钟内完成登录并粘回回调地址。请点「重新获取登录链接」再来一次。"
-	case strings.Contains(ae.Message, "already completed"):
-		return http.StatusGone, "这个登录已经完成过了。账号列表里没有新账号的话，请点「重新获取登录链接」再登录一次。"
-	case ae.Status == http.StatusConflict:
-		return http.StatusGone, "这次登录已经失败（" + ae.Message + "），请点「重新获取登录链接」再来一次。"
-	case ae.Status == http.StatusBadRequest:
-		return http.StatusBadRequest, "回调地址不对（" + ae.Message + "）：要复制登录后浏览器地址栏里 localhost:1455 开头的完整地址。"
-	}
-	return http.StatusBadGateway, "回调失败：" + err.Error()
+	s.startLogin(w, r, store.ProviderCodex, body.IPGroupID, body.OS)
 }
 
 func (s *Server) handleOAuthComplete(w http.ResponseWriter, r *http.Request) {
-	if s.deps.CPA == nil {
-		writeErr(w, http.StatusServiceUnavailable, "CPA not configured")
-		return
-	}
-	var body struct {
-		State       string `json:"state"`
-		RedirectURL string `json:"redirect_url"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.State == "" || body.RedirectURL == "" {
-		writeErr(w, http.StatusBadRequest, "state and redirect_url required")
-		return
-	}
-	ob, err := s.deps.Store.GetOnboarding(r.Context(), body.State)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "unknown onboarding state")
-		return
-	}
-	// CPA finds the login by the state inside the pasted URL; one from an
-	// earlier link would land on that link's (long expired) login.
-	if u, perr := url.Parse(strings.TrimSpace(body.RedirectURL)); perr == nil {
-		if st := u.Query().Get("state"); st != "" && st != body.State {
-			writeErr(w, http.StatusBadRequest, "这个回调地址来自之前的另一个登录链接。请用上面「复制登录链接」里的链接重新登录，再粘回新的回调地址。")
-			return
-		}
-	}
-	if err := s.deps.CPA.PostOAuthCallback(r.Context(), "codex", body.RedirectURL); err != nil {
-		status, msg := oauthCallbackError(err)
-		writeErr(w, status, msg)
-		return
-	}
-	// Poll for completion.
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		st, msg, _ := s.deps.CPA.AuthStatusDetail(r.Context(), body.State)
-		if st == "ok" {
-			break
-		}
-		if st == "error" {
-			writeErr(w, http.StatusGone, "OpenAI 没有接受这次登录（"+msg+"）。授权码只能用一次、几分钟内有效，请点「重新获取登录链接」再登录一次。")
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	// Find the newly-added codex auth file.
-	files, err := s.deps.CPA.ListAuthFiles(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "cannot list auth files")
-		return
-	}
-	known := map[string]bool{}
-	for _, n := range ob.KnownAuthNames {
-		known[n] = true
-	}
-	var newFile *cpa.AuthFile
-	for i := range files {
-		if files[i].Type == "codex" && !known[files[i].Name] {
-			newFile = &files[i]
-			break
-		}
-	}
-	if newFile == nil {
-		writeErr(w, http.StatusBadGateway, "no new codex account detected; check the pasted URL")
-		return
-	}
-	acc, err := s.finishAccount(r, ob, newFile.Name, newFile.Email, store.ProviderCodex)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_ = s.deps.Store.CompleteOnboarding(r.Context(), body.State, acc.ID)
-	s.audit(r, "account_added", "account", fmt.Sprint(acc.ID), map[string]any{"email": acc.Email, "via": "oauth"})
-	writeJSON(w, http.StatusOK, map[string]any{"account_id": acc.ID, "email": acc.Email})
+	s.handleLoginComplete(w, r)
 }
 
 func (s *Server) handleImportAccount(w http.ResponseWriter, r *http.Request) {

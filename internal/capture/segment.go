@@ -37,9 +37,12 @@ func SplitRequest(endpoint string, body []byte, r *Redactor) (segs []Segment, in
 		return nil, 0, fmt.Errorf("capture: invalid request JSON")
 	}
 
-	arrKey := "input"
-	if endpoint == "chat" {
+	arrKey, instrKey := "input", "instructions"
+	switch endpoint {
+	case "chat":
 		arrKey = "messages"
+	case "messages": // Anthropic: the system prompt is a top-level "system"
+		arrKey, instrKey = "messages", "system"
 	}
 
 	add := func(kind, raw string) error {
@@ -52,7 +55,7 @@ func SplitRequest(endpoint string, body []byte, r *Redactor) (segs []Segment, in
 	}
 
 	params := body
-	for _, key := range []string{"instructions", "tools", arrKey} {
+	for _, key := range []string{instrKey, "tools", arrKey} {
 		params, err = sjson.DeleteBytes(params, key)
 		if err != nil {
 			return nil, 0, fmt.Errorf("capture: strip %q from params: %w", key, err)
@@ -62,7 +65,7 @@ func SplitRequest(endpoint string, body []byte, r *Redactor) (segs []Segment, in
 		return nil, 0, err
 	}
 
-	if res := gjson.GetBytes(body, "instructions"); res.Exists() {
+	if res := gjson.GetBytes(body, instrKey); res.Exists() {
 		if err := add("instructions", res.Raw); err != nil {
 			return nil, 0, err
 		}

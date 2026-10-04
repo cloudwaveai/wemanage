@@ -131,6 +131,8 @@ export interface ConfigSnippets {
     opencode_json: string; // ~/.config/opencode/opencode.json
     commandcode_json: string; // ~/.commandcode/providers.json
     commandcode_env: string; // shell line exporting the key
+    claude_code_sh: string; // ~/.zshrc alias "claude-gw"
+    claude_code_ps: string; // PowerShell profile function "claude-gw"
   };
 }
 
@@ -451,4 +453,13 @@ export interface AccountModelsResp {
     offered: boolean; // CPA lists it for the account
     requests_7d: number;
   }[];
+}
+
+// --- account logins CPA offers (admin) ---
+export interface LoginProvider {
+  id: string; // CPA auth-file type: codex, kimi, antigravity, xai, ...
+  label: string;
+  note: string;
+  paste: boolean; // redirect login: paste the final URL back
+  callback?: string;
 }

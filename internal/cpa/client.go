@@ -274,6 +274,30 @@ func (c *Client) RequestKimiAuthURL(ctx context.Context) (url, state, userCode s
 	return out.URL, out.State, out.UserCode, nil
 }
 
+// LoginStart is CPA's answer to starting an account login.
+type LoginStart struct {
+	URL       string `json:"url"`
+	State     string `json:"state"`
+	UserCode  string `json:"user_code"`  // device flows that ask for a code
+	ExpiresIn int    `json:"expires_in"` // device flows: seconds the code lives
+	Flow      string `json:"flow"`       // "device" for device-code logins
+}
+
+// StartLogin starts a login at one of CPA's "<provider>-auth-url" paths
+// (e.g. "/xai-auth-url"); finish it with PostOAuthCallback (redirect flows)
+// or by polling AuthStatusDetail (device flows, which CPA completes itself).
+func (c *Client) StartLogin(ctx context.Context, path string) (LoginStart, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, managementBase+path, nil, nil)
+	if err != nil {
+		return LoginStart{}, err
+	}
+	var out LoginStart
+	if err := c.do(req, &out); err != nil {
+		return LoginStart{}, err
+	}
+	return out, nil
+}
+
 func (c *Client) RequestCodexAuthURL(ctx context.Context) (url, state string, err error) {
 	req, reqErr := c.newRequest(ctx, http.MethodGet, managementBase+"/codex-auth-url", nil, nil)
 	if reqErr != nil {

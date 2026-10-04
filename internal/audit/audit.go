@@ -87,11 +87,12 @@ func (a *Auditor) Check(set settings.Settings, endpoint string, body []byte) (Hi
 
 // LatestUserText extracts the text of the newest user message: the last
 // role=user item of a Responses API `input` (or the input string itself), or
-// the last user message of a Chat Completions `messages` array. Tool outputs
+// the last user message of a Chat Completions or Anthropic Messages
+// `messages` array. Tool outputs
 // and earlier turns are ignored, so a flagged turn is reported once.
 func LatestUserText(endpoint string, body []byte) string {
 	var items gjson.Result
-	if endpoint == "chat" {
+	if endpoint == "chat" || endpoint == "messages" {
 		items = gjson.GetBytes(body, "messages")
 	} else {
 		items = gjson.GetBytes(body, "input")

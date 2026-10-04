@@ -16,14 +16,8 @@ import { Modal } from "../components/Modal";
 import { CodeBlock } from "../components/CopyButton";
 import { useToast } from "../components/Toast";
 import { useAuth } from "../context/AuthContext";
+import { accountName } from "../lib/providers";
 
-// accountLabel names a bound account: its email, else its provider and id
-// (Kimi Code logins carry no email).
-function accountLabel(a: EmployeeRow["accounts"][number]): string {
-  if (a.email) return a.email;
-  const kind = a.provider === "kimi" ? "Kimi Code" : "ChatGPT";
-  return `${kind} #${a.id}`;
-}
 
 export function EmployeesPage() {
   const { me } = useAuth();
@@ -180,7 +174,7 @@ export function EmployeesPage() {
                         <div className="space-y-1">
                           {e.accounts.map((a) => (
                             <div key={a.id} className="flex items-center gap-2">
-                              <span>{accountLabel(a)}</span>
+                              <span>{accountName(a)}</span>
                               <StatusBadge status={a.status} />
                             </div>
                           ))}

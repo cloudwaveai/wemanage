@@ -115,6 +115,10 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/v1/responses", h.handleResponsesWS) // Responses WebSocket transport
 	r.Post("/v1/responses/compact", h.handleProxy("responses"))
 	r.Post("/v1/chat/completions", h.handleProxy("chat"))
+	// Anthropic Messages, for Claude Code and other Claude-format clients;
+	// CPA translates them for whatever account serves the model.
+	r.Post("/v1/messages", h.handleProxy("messages"))
+	r.Post("/v1/messages/count_tokens", h.handleProxy("count_tokens"))
 	r.Get("/v1/models", h.handleModels)
 	r.Post("/v1/images/generations", h.handleImages("generations"))
 	r.Post("/v1/images/edits", h.handleImages("edits"))
@@ -158,20 +162,31 @@ func oaError(w http.ResponseWriter, status int, msg, typ, code string) {
 	})
 }
 
+// bearer is the key a request carries: "Authorization: Bearer", or the
+// "x-api-key" header Anthropic clients send.
 func bearer(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {
 		return strings.TrimSpace(h[7:])
 	}
-	return ""
+	return strings.TrimSpace(r.Header.Get("X-Api-Key"))
 }
 
+// stripPrefix drops routing prefixes from a requested model: the gateway's
+// own "acct-N/" and a client's provider name ("aiseat/gpt-6-luna"). Model
+// namespaces that are part of the id itself ("devin/swe-2") stay.
 func stripPrefix(model string) string {
-	if i := strings.LastIndex(model, "/"); i >= 0 {
-		return model[i+1:]
+	for {
+		i := strings.Index(model, "/")
+		if i < 0 || modelNamespaces[model[:i]] {
+			return model
+		}
+		model = model[i+1:]
 	}
-	return model
 }
+
+// modelNamespaces are the "<ns>/" a provider's model ids start with.
+var modelNamespaces = map[string]bool{"devin": true}
 
 func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -504,6 +519,13 @@ func (h *Handler) sessionSeed(kind string, hdr http.Header, body []byte, empID i
 			return k
 		}
 	}
+	// Claude Code names its session in the request.
+	if s := hdr.Get("X-Claude-Code-Session-Id"); s != "" {
+		return s
+	}
+	if k := gjson.GetBytes(body, "metadata.user_id").String(); strings.Contains(k, "session") {
+		return k
+	}
 	// Fall back to employee + first user text so a conversation is stable.
 	first := gjson.GetBytes(body, "input.0").Raw
 	if first == "" {
@@ -732,8 +754,13 @@ func firstNonEmpty(a, b string) string {
 
 // endpointPath maps the logical endpoint back to the CPA path suffix.
 func endpointPath(endpoint, reqPath string) string {
-	if endpoint == "chat" {
+	switch endpoint {
+	case "chat":
 		return "chat/completions"
+	case "messages":
+		return "messages"
+	case "count_tokens":
+		return "messages/count_tokens"
 	}
 	if strings.HasSuffix(reqPath, "/compact") {
 		return "responses/compact"
