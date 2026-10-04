@@ -21,6 +21,12 @@
 - 终端里设了代理（`HTTPS_PROXY` 等）时，把网关域名加进直连名单（`NO_PROXY`），避免每次请求多绕几秒；
 - 命令里不含 Key 本身，只有一个 10 分钟内有效、只能用一次的安装码，贴到哪里都不会泄露 Key。
 
+### 切回官方登录
+
+不用公司网关了、想换回自己的 ChatGPT 账号时，在「我的 Key」页展开"切回官方登录"，复制命令运行（macOS / Linux：`curl -fsSL https://ai.cloudwaveai.cn/restore | sh`；Windows：`irm https://ai.cloudwaveai.cn/restore.ps1 | iex`）。它只去掉网关写进去的那几行，其它设置不动，改之前先备份。
+
+**用 CC Switch 的人注意**：上面的一条命令安装是直接改 `config.toml` 的，CC Switch 不知道。之后在 CC Switch 里切换时，它会把这份网关配置存进它当时认为在用的供应商（通常是「OpenAI Official」），于是"切回官方"切回来的还是网关。遇到这种情况运行上面的命令即可，它会把 CC Switch 里存进去的网关配置一并清掉（要先退出 CC Switch）。
+
 ### 用 CC Switch 导入（经常切换服务商的人）
 
 1. 装好 [CC Switch](https://github.com/farion1231/cc-switch/releases/latest)。

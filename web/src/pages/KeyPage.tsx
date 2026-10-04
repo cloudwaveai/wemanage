@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 import { Card, PageHeader, Button } from "../components/ui";
-import { CopyButton } from "../components/CopyButton";
+import { CodeBlock, CopyButton } from "../components/CopyButton";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { fmtDateTime } from "../lib/format";
@@ -124,6 +124,25 @@ export function KeyPage() {
           </details>
         </Card>
       )}
+
+      <Card className="mt-5 p-5">
+        <details>
+          <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+            切回官方登录（不用公司网关了）
+          </summary>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500">
+            把 Codex 的配置恢复成你自己的 ChatGPT 账号：只去掉网关那几行，其它设置不动，改之前先备份。用 CC Switch 的话，
+            它的「OpenAI Official」等供应商里可能也存了网关配置，这条命令一并清掉（要先退出 CC Switch）。只在 CC Switch
+            里切换是切不回去的。
+          </p>
+          <div className="mt-3 space-y-2">
+            <div className="text-xs text-slate-500">macOS / Linux（终端）</div>
+            <CodeBlock code={`curl -fsSL ${window.location.origin}/restore | sh`} />
+            <div className="text-xs text-slate-500">Windows（PowerShell）</div>
+            <CodeBlock code={`irm ${window.location.origin}/restore.ps1 | iex`} />
+          </div>
+        </details>
+      </Card>
 
       {/* Confirm reset */}
       <Modal

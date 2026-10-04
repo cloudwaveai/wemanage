@@ -67,6 +67,8 @@ func NewServer(deps Deps) *Server {
 func (s *Server) Mount(r chi.Router) {
 	// Install scripts: public, the single-use code is the credential.
 	r.Get("/i/{code}", s.handleInstallScript)
+	r.Get("/restore", s.handleRestoreScript)
+	r.Get("/restore.ps1", s.handleRestoreScript)
 	r.Route("/api", func(r chi.Router) {
 		// Public auth endpoints.
 		r.Get("/auth/feishu/login", s.handleFeishuLogin)

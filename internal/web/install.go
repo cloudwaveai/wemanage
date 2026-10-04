@@ -137,9 +137,9 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 		host = u.Hostname()
 	}
 	if ps {
-		fmt.Fprint(w, psScript(e, host))
+		fmt.Fprint(w, psScript(e, host, portal))
 	} else {
-		fmt.Fprint(w, shScript(e, host))
+		fmt.Fprint(w, shScript(e, host, portal))
 	}
 }
 
@@ -149,8 +149,8 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 // and our provider table. The config is written in place (a symlinked
 // config stays a symlink) and made private, since it holds the key. With a
 // proxy in the environment, the gateway host is added to NO_PROXY in the
-// shell's rc file.
-func shScript(e installEntry, host string) string {
+// shell's rc file. CC Switch users are told the way back (see restore.go).
+func shScript(e installEntry, host, portal string) string {
 	return `#!/bin/sh
 # AI 订阅网关：把公司网关写进 Codex 的配置（一次性安装脚本）
 set -eu
@@ -196,6 +196,9 @@ AISEAT_RC
   fi
 fi
 
+if [ -d "$HOME/.cc-switch" ]; then
+  echo "注意：你装了 CC Switch。以后要切回官方登录，请运行 curl -fsSL ` + "` + portal + `" + `/restore | sh ，不要只在 CC Switch 里切换（CC Switch 会把这份网关配置存进它当前的供应商，切回去还是网关）。"
+fi
 if command -v codex >/dev/null 2>&1; then
   echo "完成。重新打开 Codex 就会用公司网关。"
 else
@@ -207,7 +210,7 @@ echo "提示：用 Clash 等代理软件的话，请把 ` + host + ` 设为直�
 
 // psScript is shScript for Windows PowerShell (5.1 and later), run with
 // irm | iex: it must not call exit, which would close the window.
-func psScript(e installEntry, host string) string {
+func psScript(e installEntry, host, portal string) string {
 	return `# AI 订阅网关：把公司网关写进 Codex 的配置（一次性安装脚本）
 $ErrorActionPreference = 'Stop'
 $dir = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
@@ -243,6 +246,9 @@ if ($env:HTTPS_PROXY -or $env:ALL_PROXY) {
   }
 }
 
+if (Test-Path (Join-Path $HOME '.cc-switch')) {
+  Write-Host "注意：你装了 CC Switch。以后要切回官方登录，请运行 irm ` + portal + `/restore.ps1 | iex ，不要只在 CC Switch 里切换（CC Switch 会把这份网关配置存进它当前的供应商，切回去还是网关）。"
+}
 if (Get-Command codex -ErrorAction SilentlyContinue) {
   Write-Host '完成。重新打开 Codex 就会用公司网关。'
 } else {
