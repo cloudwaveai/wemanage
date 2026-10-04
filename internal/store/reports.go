@@ -94,7 +94,7 @@ func scanReports(rows pgx.Rows) ([]Report, error) {
 func (s *Store) ReportRecipients(ctx context.Context, from, to time.Time) ([]int64, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT e.id FROM employees e
-		WHERE e.status = 'active' AND NOT e.weekly_report_off
+		WHERE e.status = 'active' AND NOT e.weekly_report_off AND NOT e.is_service
 		  AND EXISTS (SELECT 1 FROM requests r WHERE r.employee_id = e.id AND r.started_at >= $1 AND r.started_at < $2)
 		ORDER BY e.id`, from, to)
 	if err != nil {

@@ -61,7 +61,7 @@ func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 	for _, e := range rows {
 		out = append(out, map[string]any{
 			"id": e.ID, "name": e.Name, "email": e.Email, "status": e.Status,
-			"is_super_admin":    e.IsSuperAdmin,
+			"is_super_admin": e.IsSuperAdmin, "is_service": e.IsService,
 			"accounts":          employeeAccountsJSON(e.Accounts),
 			"active_key_prefix": e.ActiveKeyPrefix, "department_names": e.DepartmentNames,
 			"frozen": e.FrozenAt != nil, "frozen_reason": e.FrozenReason, "open_risk_events": e.OpenRiskEvents,

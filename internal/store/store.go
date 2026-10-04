@@ -74,6 +74,9 @@ type Employee struct {
 	WeeklyReportOff bool
 	// QuotaAlert: the employee asked to be told when their quota reaches 80%.
 	QuotaAlert bool
+	// IsService: not a person but a service (e.g. the New API platform),
+	// created by administrators; no Feishu, devices or weekly report.
+	IsService bool
 }
 
 // Account is an upstream ChatGPT subscription account.
@@ -161,6 +164,7 @@ type KeyPrincipal struct {
 	Frozen           bool
 	FrozenReason     string
 	RemoteAllowed    bool
+	IsService        bool // a service account (see Employee.IsService)
 	// Accounts are the employee's accounts, oldest binding first.
 	Accounts []Account
 }

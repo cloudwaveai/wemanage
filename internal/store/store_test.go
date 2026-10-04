@@ -317,3 +317,23 @@ func itoa(v int64) string {
 	}
 	return string(buf[i:])
 }
+
+func TestServiceAccountsGetNoWeeklyReport(t *testing.T) {
+	s, ctx := newStore(t)
+	svc, err := s.CreateServiceAccount(ctx, "New API 平台")
+	if err != nil || !svc.IsService || !svc.RemoteAllowed || svc.QuotaAlert {
+		t.Fatalf("service account: %+v %v", svc, err)
+	}
+	if _, err := s.Pool.Exec(ctx, `INSERT INTO requests (id, started_at, employee_id, client_kind, endpoint, status_code) VALUES (gen_random_uuid(), now(), $1, 'other', 'chat', 200)`, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := s.ReportRecipients(ctx, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if id == svc.ID {
+			t.Fatal("a service account gets no weekly report")
+		}
+	}
+}

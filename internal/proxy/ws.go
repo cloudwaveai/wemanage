@@ -423,7 +423,7 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 		obs.ContentRule, obs.ContentSnippet = hit.Rule, hit.Snippet
 		obs.ContentBlocked = set.ContentAuditMode == settings.AuditBlock
 	}
-	if h.deps.Risk != nil {
+	if h.deps.Risk != nil && !prin.IsService { // service accounts register no devices
 		dev, created, err := h.deps.Risk.Device(ctx, prin.EmployeeID, devInfo, s.kind, s.ip)
 		if err != nil {
 			h.deps.Log.Warn("risk: device lookup failed", "employee", prin.EmployeeID, "err", err)

@@ -137,6 +137,8 @@ func (s *Server) Mount(r chi.Router) {
 				r.Post("/admin/employees/{id}/unfreeze", s.handleFreezeEmployee(false))
 				r.Post("/admin/employees/{id}/remote", s.handleRemoteAllowed)
 				r.Post("/admin/employees/{id}/super-admin", s.handleSuperAdmin)
+				r.Post("/admin/service-accounts", s.handleCreateServiceAccount)
+				r.Post("/admin/employees/{id}/key", s.handleIssueServiceKey)
 				r.Post("/admin/devices/{id}/trust", s.handleAdminDevice("trust"))
 				r.Post("/admin/devices/{id}/block", s.handleAdminDevice("block"))
 				r.Post("/admin/devices/{id}/unblock", s.handleAdminDevice("unblock"))

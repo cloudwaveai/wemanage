@@ -206,6 +206,7 @@ export interface EmployeeRow {
   open_risk_events: number;
   remote_allowed: boolean;
   super_admin_pinned: boolean;
+  is_service: boolean; // a platform caller, not a Feishu employee
 }
 
 // --- accounts (snake_case) ---

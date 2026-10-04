@@ -256,7 +256,9 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			obs.ContentRule, obs.ContentSnippet = hit.Rule, hit.Snippet
 			obs.ContentBlocked = set.ContentAuditMode == settings.AuditBlock
 		}
-		if h.deps.Risk != nil {
+		// A service account (e.g. the New API platform) is not a person on a
+		// device: nothing to register or confirm.
+		if h.deps.Risk != nil && !prin.IsService {
 			dev, created, err := h.deps.Risk.Device(ctx, prin.EmployeeID, devInfo, kind, clientIP)
 			if err != nil {
 				// Fail open: detection must not take the service down with the DB.

@@ -40,14 +40,24 @@ func scanEmployee(r pgx.Row) (Employee, error) {
 	var openID *string
 	err := r.Scan(&e.ID, &openID, &e.FeishuUnionID, &e.FeishuUserID, &e.Name,
 		&e.Email, &e.AvatarURL, &e.Status, &e.IsSuperAdmin, &e.NoticeAckAt, &e.CreatedAt,
-		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason, &e.RemoteAllowed, &e.WeeklyReportOff, &e.QuotaAlert)
+		&e.NoticeAckVersion, &e.FrozenAt, &e.FrozenReason, &e.RemoteAllowed, &e.WeeklyReportOff, &e.QuotaAlert, &e.IsService)
 	if openID != nil {
 		e.FeishuOpenID = *openID
 	}
 	return e, err
 }
 
-const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason, remote_allowed, weekly_report_off, quota_alert`
+const employeeCols = `id, feishu_open_id, feishu_union_id, feishu_user_id, name, email, avatar_url, status, is_super_admin, notice_ack_at, created_at, notice_ack_version, frozen_at, frozen_reason, remote_allowed, weekly_report_off, quota_alert, is_service`
+
+// CreateServiceAccount adds a service account: active, usable from any
+// network, without weekly report or quota reminders.
+func (s *Store) CreateServiceAccount(ctx context.Context, name string) (Employee, error) {
+	row := s.Pool.QueryRow(ctx, `
+		INSERT INTO employees (name, status, is_service, remote_allowed, weekly_report_off, quota_alert)
+		VALUES ($1, 'active', true, true, true, false)
+		RETURNING `+employeeCols, name)
+	return scanEmployee(row)
+}
 
 // GetEmployee returns one employee by id.
 func (s *Store) GetEmployee(ctx context.Context, id int64) (Employee, error) {
@@ -192,7 +202,7 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 			COALESCE(ARRAY_AGG(d.name) FILTER (WHERE d.name IS NOT NULL), '{}'),
 			e.frozen_at, e.frozen_reason,
 			(SELECT COUNT(*) FROM risk_events r WHERE r.employee_id = e.id AND r.resolved_at IS NULL),
-			e.remote_allowed
+			e.remote_allowed, e.is_service
 		FROM employees e
 		LEFT JOIN api_keys k ON k.employee_id = e.id AND k.revoked_at IS NULL
 		LEFT JOIN employee_departments ed ON ed.employee_id = e.id
@@ -214,7 +224,7 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 		err := rows.Scan(&er.ID, &openID, &er.FeishuUnionID, &er.FeishuUserID, &er.Name,
 			&er.Email, &er.AvatarURL, &er.Status, &er.IsSuperAdmin, &er.NoticeAckAt, &er.CreatedAt,
 			&accounts, &er.ActiveKeyPrefix, &er.DepartmentNames,
-			&er.FrozenAt, &er.FrozenReason, &er.OpenRiskEvents, &er.RemoteAllowed)
+			&er.FrozenAt, &er.FrozenReason, &er.OpenRiskEvents, &er.RemoteAllowed, &er.IsService)
 		if err != nil {
 			return nil, err
 		}

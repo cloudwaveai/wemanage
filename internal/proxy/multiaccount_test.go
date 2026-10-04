@@ -25,7 +25,7 @@ type prefixCPA struct {
 
 func (p *prefixCPA) fake() *fakeCPA {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
+	answer := func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		model := gjsonModel(body)
 		prefix, _, _ := strings.Cut(model, "/")
@@ -40,7 +40,9 @@ func (p *prefixCPA) fake() *fakeCPA {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, defaultSSE)
-	})
+	}
+	mux.HandleFunc("/v1/responses", answer)
+	mux.HandleFunc("/v1/chat/completions", answer)
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
 		data := []map[string]any{}
 		for i, id := range p.models {
@@ -208,5 +210,33 @@ func TestModelsListFollowsThePolicy(t *testing.T) {
 	}
 	if strings.Join(ids, ",") != "gpt-6-sol,gpt-6-luna" {
 		t.Fatalf("models = %v (%s)", ids, w.Body.String())
+	}
+}
+
+func TestServiceAccountSkipsDevicesAndUsesOpenedAccount(t *testing.T) {
+	p := &prefixCPA{usedUp: map[string]bool{}}
+	// Strict mode refuses any unconfirmed device of a person.
+	h := newRig(t, p.fake(), settings.RiskStrict)
+	accs, _ := h.st.AccountsOf(h.ctx, h.empID)
+	svc, err := h.st.CreateServiceAccount(h.ctx, "New API 平台")
+	if err != nil || !svc.IsService || svc.FeishuOpenID != "" {
+		t.Fatalf("service account: %+v %v", svc, err)
+	}
+	on := true
+	_ = h.st.UpdateAccount(h.ctx, accs[0].ID, store.AccountPatch{AllowThirdParty: &on})
+	_ = h.st.BindAccount(h.ctx, accs[0].ID, svc.ID, 3)
+	key, _, _ := h.st.IssueKey(h.ctx, svc.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-6-luna","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Go-http-client/2.0")
+	w := httptest.NewRecorder()
+	h.r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("service request: %d %s", w.Code, w.Body.String())
+	}
+	if devs, _ := h.st.ListDevices(h.ctx, svc.ID); len(devs) != 0 {
+		t.Fatalf("a service account registers no devices: %d", len(devs))
 	}
 }

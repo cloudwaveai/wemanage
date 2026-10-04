@@ -401,7 +401,7 @@ function BindModal({
           .filter((e) => e.status === "active" && !account?.members.some((m) => m.id === e.id))
           .map((e) => (
             <option key={e.id} value={e.id}>
-              {e.name}（{e.email || e.id}）{e.accounts.length > 0 ? ` · 已有 ${e.accounts.length} 个账号` : ""}
+              {e.name}（{e.is_service ? "服务账号" : e.email || e.id}）{e.accounts.length > 0 ? ` · 已有 ${e.accounts.length} 个账号` : ""}
             </option>
           ))}
       </select>
