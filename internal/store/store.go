@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,6 +16,8 @@ import (
 var (
 	ErrNotFound = errors.New("store: not found")
 	ErrConflict = errors.New("store: conflict")
+	// ErrAccountFull: the account already has as many employees as allowed.
+	ErrAccountFull = errors.New("store: account full")
 )
 
 // BlobBackend stores opaque (already-compressed) blob bytes outside Postgres,
@@ -80,7 +83,6 @@ type Account struct {
 	Email            string
 	PlanType         string
 	OwnerType        string
-	EmployeeID       *int64
 	IPGroupID        int64
 	Status           string
 	NeedsLogin       bool
@@ -91,6 +93,25 @@ type Account struct {
 	CreatedAt        time.Time
 	// Provider is the CPA auth-file type: "codex" (ChatGPT) or e.g. "kimi".
 	Provider string
+	// AllowedModels lists the models the account may be used with; nil
+	// means all of them.
+	AllowedModels []string
+	// AllowThirdParty lets clients other than Codex (OpenCode, Command
+	// Code, …) use the account.
+	AllowThirdParty bool
+}
+
+// AllowsModel reports whether the account may be used with model ("" is any).
+func (a Account) AllowsModel(model string) bool {
+	if a.AllowedModels == nil || model == "" {
+		return true
+	}
+	for _, m := range a.AllowedModels {
+		if strings.EqualFold(m, model) {
+			return true
+		}
+	}
+	return false
 }
 
 // Provider values.
@@ -140,7 +161,18 @@ type KeyPrincipal struct {
 	Frozen           bool
 	FrozenReason     string
 	RemoteAllowed    bool
-	Account          *Account
+	// Accounts are the employee's accounts, oldest binding first.
+	Accounts []Account
+}
+
+// Account returns the employee's account with the given id.
+func (p KeyPrincipal) Account(id int64) (Account, bool) {
+	for _, a := range p.Accounts {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return Account{}, false
 }
 
 // AuditEntry is a single append-only audit record.

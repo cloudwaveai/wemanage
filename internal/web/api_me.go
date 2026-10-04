@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -58,11 +57,14 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		resp["key_prefix"] = k.KeyPrefix
 		resp["key_created_at"] = k.CreatedAt
 	}
-	if acc, err := s.boundAccount(r.Context(), emp.ID); err == nil {
-		resp["account"] = map[string]any{
-			"email": acc.Email, "plan_type": acc.PlanType, "status": accountStatus(acc),
-		}
+	accs, _ := s.deps.Store.AccountsOf(r.Context(), emp.ID)
+	list := make([]map[string]any, 0, len(accs))
+	for _, acc := range accs {
+		list = append(list, map[string]any{
+			"id": acc.ID, "email": acc.Email, "plan_type": acc.PlanType, "provider": acc.Provider, "status": accountStatus(acc),
+		})
 	}
+	resp["accounts"] = list
 	// The getting-started guide checks Codex off once a request got through,
 	// and says which client and version it came from.
 	if l, err := s.deps.Store.LastSuccess(r.Context(), emp.ID); err == nil {
@@ -172,21 +174,24 @@ func seriesBucket(span time.Duration) time.Duration {
 	}
 }
 
+// handleMyQuota lists the employee's accounts with their latest quota.
 func (s *Server) handleMyQuota(w http.ResponseWriter, r *http.Request) {
 	emp := currentEmployee(r)
-	acc, err := s.boundAccount(r.Context(), emp.ID)
+	accs, err := s.deps.Store.AccountsOf(r.Context(), emp.ID)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "no account bound")
+		writeErr(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	resp := map[string]any{"status": accountStatus(acc)}
-	if acc.RateLimitedUntil != nil {
-		resp["rate_limited_until"] = acc.RateLimitedUntil
+	out := make([]map[string]any, 0, len(accs))
+	for _, acc := range accs {
+		a := map[string]any{"id": acc.ID, "email": acc.Email, "plan_type": acc.PlanType, "provider": acc.Provider,
+			"status": accountStatus(acc), "rate_limited_until": acc.RateLimitedUntil}
+		if q, err := s.deps.Store.LatestQuota(r.Context(), acc.ID); err == nil {
+			a["quota"] = q
+		}
+		out = append(out, a)
 	}
-	if q, err := s.deps.Store.LatestQuota(r.Context(), acc.ID); err == nil {
-		resp["quota"] = q
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, map[string]any{"accounts": out})
 }
 
 // handleWeeklyReportPref lets an employee turn their weekly recap off or on.
@@ -240,31 +245,44 @@ type codexSetup struct {
 	base, provider, source, model string
 	models                        []store.ModelInfo
 	chatgpt                       bool
-	acc                           store.Account
+	accs                          []store.Account
+	thirdParty                    bool // some account is open to clients other than Codex
 	wsLine, toolsLine             string
 }
 
 func (s *Server) codexSetup(ctx context.Context, employeeID int64) codexSetup {
 	cs := codexSetup{base: s.deps.PublicBaseURL + "/v1", source: "account"}
-	acc, accErr := s.boundAccount(ctx, employeeID)
-	if accErr == nil {
-		cs.acc, cs.provider = acc, acc.Provider
-		if s.deps.Models != nil {
-			if ms, err := s.deps.Models(ctx, acc); err == nil {
-				cs.models = ms
+	accs, _ := s.deps.Store.AccountsOf(ctx, employeeID)
+	cs.accs = accs
+	set := s.deps.Settings.Get(ctx)
+	cs.thirdParty = set.AllowNonCodex
+	for _, a := range accs {
+		cs.thirdParty = cs.thirdParty || a.AllowThirdParty
+	}
+	if len(accs) > 0 {
+		// Settings follow the first ChatGPT account (else the first account);
+		// models are every account's, as their policies allow.
+		cs.provider = accs[0].Provider
+		cs.chatgpt = false
+		for _, a := range accs {
+			if a.IsChatGPT() {
+				cs.provider, cs.chatgpt = a.Provider, true
+				break
 			}
 		}
-	} else if s.deps.ModelCatalog != nil {
-		// No account yet: show what a ChatGPT account typically offers.
-		cs.source = "catalog"
-		if ms, err := s.deps.ModelCatalog(ctx, "codex"); err == nil {
-			cs.models = ms
+		cs.models = s.employeeModels(ctx, accs)
+	} else {
+		cs.chatgpt = true
+		if s.deps.ModelCatalog != nil {
+			// No account yet: show what a ChatGPT account typically offers.
+			cs.source = "catalog"
+			if ms, err := s.deps.ModelCatalog(ctx, "codex"); err == nil {
+				cs.models = ms
+			}
 		}
 	}
 	// Newest first.
 	sort.SliceStable(cs.models, func(i, j int) bool { return cs.models[i].Created > cs.models[j].Created })
-	cs.chatgpt = accErr != nil || acc.IsChatGPT()
-	set := s.deps.Settings.Get(ctx)
 	cs.model = pickDefaultModel(cs.models, cs.chatgpt, set.DefaultCodexModel)
 
 	// ChatGPT accounts use the WebSocket transport like the official client;
@@ -307,7 +325,7 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	cs := s.codexSetup(ctx, currentEmployee(r).ID)
 	base, provider, source, model, models := cs.base, cs.provider, cs.source, cs.model, cs.models
-	chatgpt, acc, wsLine, toolsLine := cs.chatgpt, cs.acc, cs.wsLine, cs.toolsLine
+	chatgpt, wsLine, toolsLine := cs.chatgpt, cs.wsLine, cs.toolsLine
 	ids := make([]string, len(models))
 	modelList := make([]map[string]any, len(models))
 	for i, m := range models {
@@ -320,12 +338,12 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	modelLine := `model = "{{MODEL}}"`
 	if !chatgpt {
 		if model != "" {
-			modelLine = fmt.Sprintf("# 你的账号是 %s，可用模型：%s\n%s", acc.Provider, strings.Join(ids, "、"), modelLine)
+			modelLine = fmt.Sprintf("# 你的账号是 %s，可用模型：%s\n%s", provider, strings.Join(ids, "、"), modelLine)
 		} else {
 			modelLine = fmt.Sprintf(`# 你的账号不是 ChatGPT（%s）。查看可用模型：
 #   curl -s %s/models -H "Authorization: Bearer 你的 Key"
 # 然后把下面改成其中一个 id
-model = "填入模型 id"`, acc.Provider, base)
+model = "填入模型 id"`, provider, base)
 		}
 	}
 	codex := "model_provider = \"aiseat\"\n" + modelLine + "\n\n" + cs.providerTable("{{KEY}}")
@@ -349,11 +367,40 @@ experimental_bearer_token = "{{KEY}}"
 %s%s`, base, wsLine, toolsLine)
 	}
 
-	note := "在 Cursor / Cherry Studio 等工具中把 Base URL 设为上面地址，API Key 填你的 sk-emp- key。第三方客户端风险较高，建议优先使用 Codex。"
-	allowed := s.deps.Settings.Get(ctx).AllowNonCodex
+	allowed := cs.thirdParty
+	note := "OpenCode、Command Code 等工具都用 OpenAI Responses 接口接入：Base URL 填上面的地址，API Key 填你的 Key。下面有现成的配置。"
 	if !allowed {
-		note = "公司目前只允许官方 Codex 客户端，Cursor / Cherry Studio 等第三方工具的请求会被拦截（client_not_allowed）。确有需要请联系管理员。"
+		note = "你的 AI 账号目前只开放给官方 Codex 客户端，OpenCode、Command Code 等工具的请求会被拦截。确有需要请联系管理员开通。"
 	}
+	thirdModels := map[string]map[string]any{}
+	ccModels := map[string]map[string]any{}
+	for _, id := range ids {
+		thirdModels[id] = map[string]any{"name": id}
+		ccModels[id] = map[string]any{}
+	}
+	if len(ids) == 0 && model != "" {
+		thirdModels[model] = map[string]any{"name": model}
+		ccModels[model] = map[string]any{}
+	}
+	// OpenCode: ~/.config/opencode/opencode.json, the Responses API via
+	// @ai-sdk/openai; the browser fills in {{KEY}} and {{MODEL}}.
+	opencode, _ := json.MarshalIndent(map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": map[string]any{"aiseat": map[string]any{
+			"npm": "@ai-sdk/openai", "name": "公司 AI 网关",
+			"options": map[string]any{"baseURL": base, "apiKey": "{{KEY}}"},
+			"models":  thirdModels,
+		}},
+		"model": "aiseat/{{MODEL}}",
+	}, "", "  ")
+	// Command Code: ~/.commandcode/providers.json, wire "openai-responses";
+	// the key comes from an environment variable.
+	commandcode, _ := json.MarshalIndent(map[string]any{
+		"provider": map[string]any{"aiseat": map[string]any{
+			"name": "公司 AI 网关", "baseURL": base, "api": "openai-responses",
+			"apiKey": "$AISEAT_API_KEY", "models": ccModels,
+		}},
+	}, "", "  ")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"base_url":      base,
 		"provider":      provider,
@@ -373,9 +420,12 @@ experimental_bearer_token = "{{KEY}}"
 			"config_toml": ccToml,
 		},
 		"third_party": map[string]any{
-			"base_url": base,
-			"allowed":  allowed,
-			"note":     note,
+			"base_url":         base,
+			"allowed":          allowed,
+			"note":             note,
+			"opencode_json":    string(opencode),
+			"commandcode_json": string(commandcode),
+			"commandcode_env":  `export AISEAT_API_KEY="{{KEY}}"`,
 		},
 	})
 }
@@ -486,16 +536,6 @@ func modelVersion(id string) []int {
 }
 
 // --- helpers ---
-
-func (s *Server) boundAccount(ctx context.Context, employeeID int64) (store.Account, error) {
-	var accID int64
-	err := s.deps.Store.Pool.QueryRow(ctx,
-		`SELECT id FROM upstream_accounts WHERE employee_id=$1`, employeeID).Scan(&accID)
-	if err != nil {
-		return store.Account{}, errors.New("no account")
-	}
-	return s.deps.Store.GetAccount(ctx, accID)
-}
 
 func accountStatus(a store.Account) string {
 	switch {

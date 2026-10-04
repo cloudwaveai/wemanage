@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -16,13 +18,21 @@ type EmployeeFilter struct {
 // EmployeeRow is an employee joined with binding/key/department summary.
 type EmployeeRow struct {
 	Employee
-	AccountID       *int64
-	AccountEmail    string
-	AccountProvider string
-	AccountStatus   string
+	Accounts        []EmployeeAccount
 	ActiveKeyPrefix string
 	DepartmentNames []string
 	OpenRiskEvents  int
+}
+
+// EmployeeAccount summarizes one of an employee's accounts.
+type EmployeeAccount struct {
+	ID               int64      `json:"id"`
+	Email            string     `json:"email"`
+	Provider         string     `json:"provider"`
+	PlanType         string     `json:"plan_type"`
+	Status           string     `json:"status"`
+	NeedsLogin       bool       `json:"needs_login"`
+	RateLimitedUntil *time.Time `json:"rate_limited_until"`
 }
 
 func scanEmployee(r pgx.Row) (Employee, error) {
@@ -174,20 +184,22 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 	sql := `
 		SELECT e.id, e.feishu_open_id, e.feishu_union_id, e.feishu_user_id, e.name,
 			e.email, e.avatar_url, e.status, e.is_super_admin, e.notice_ack_at, e.created_at,
-			a.id, COALESCE(a.email,''), COALESCE(a.provider,''), COALESCE(a.status,''),
+			COALESCE((SELECT json_agg(json_build_object('id', a.id, 'email', a.email, 'provider', a.provider,
+					'plan_type', a.plan_type, 'status', a.status, 'needs_login', a.needs_login,
+					'rate_limited_until', a.rate_limited_until) ORDER BY m.created_at, a.id)
+				FROM account_members m JOIN upstream_accounts a ON a.id = m.account_id WHERE m.employee_id = e.id), '[]'),
 			COALESCE(k.key_prefix,''),
 			COALESCE(ARRAY_AGG(d.name) FILTER (WHERE d.name IS NOT NULL), '{}'),
 			e.frozen_at, e.frozen_reason,
 			(SELECT COUNT(*) FROM risk_events r WHERE r.employee_id = e.id AND r.resolved_at IS NULL),
 			e.remote_allowed
 		FROM employees e
-		LEFT JOIN upstream_accounts a ON a.employee_id = e.id
 		LEFT JOIN api_keys k ON k.employee_id = e.id AND k.revoked_at IS NULL
 		LEFT JOIN employee_departments ed ON ed.employee_id = e.id
 		LEFT JOIN departments d ON d.id = ed.department_id
 		WHERE ($1::bigint[] IS NULL OR e.id = ANY($1))
 		  AND ($2 = '' OR e.status = $2)
-		GROUP BY e.id, a.id, a.email, a.provider, a.status, k.key_prefix
+		GROUP BY e.id, k.key_prefix
 		ORDER BY e.id`
 	rows, err := s.Pool.Query(ctx, sql, nullableIDs(f.IDs), f.Status)
 	if err != nil {
@@ -198,11 +210,15 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 	for rows.Next() {
 		var er EmployeeRow
 		var openID *string
+		var accounts []byte
 		err := rows.Scan(&er.ID, &openID, &er.FeishuUnionID, &er.FeishuUserID, &er.Name,
 			&er.Email, &er.AvatarURL, &er.Status, &er.IsSuperAdmin, &er.NoticeAckAt, &er.CreatedAt,
-			&er.AccountID, &er.AccountEmail, &er.AccountProvider, &er.AccountStatus, &er.ActiveKeyPrefix, &er.DepartmentNames,
+			&accounts, &er.ActiveKeyPrefix, &er.DepartmentNames,
 			&er.FrozenAt, &er.FrozenReason, &er.OpenRiskEvents, &er.RemoteAllowed)
 		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(accounts, &er.Accounts); err != nil {
 			return nil, err
 		}
 		if openID != nil {

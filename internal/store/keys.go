@@ -49,20 +49,18 @@ func (s *Store) ActiveKey(ctx context.Context, employeeID int64) (APIKey, error)
 	return k, err
 }
 
-// LookupKey resolves an active key hash to its principal (employee + bound account).
+// LookupKey resolves an active key hash to its principal (employee + accounts).
 func (s *Store) LookupKey(ctx context.Context, hash []byte) (KeyPrincipal, error) {
 	var kp KeyPrincipal
-	var acctID *int64
 	var openID *string
 	err := s.Pool.QueryRow(ctx, `
 		SELECT k.id, e.id, e.feishu_open_id, e.status, (e.notice_ack_at IS NOT NULL), e.notice_ack_version,
-			(e.frozen_at IS NOT NULL), e.frozen_reason, e.remote_allowed, a.id
+			(e.frozen_at IS NOT NULL), e.frozen_reason, e.remote_allowed
 		FROM api_keys k
 		JOIN employees e ON e.id = k.employee_id
-		LEFT JOIN upstream_accounts a ON a.employee_id = e.id
 		WHERE k.key_hash=$1 AND k.revoked_at IS NULL`, hash).
 		Scan(&kp.KeyID, &kp.EmployeeID, &openID, &kp.EmployeeStatus, &kp.NoticeAcked, &kp.NoticeAckVersion,
-			&kp.Frozen, &kp.FrozenReason, &kp.RemoteAllowed, &acctID)
+			&kp.Frozen, &kp.FrozenReason, &kp.RemoteAllowed)
 	if openID != nil {
 		kp.EmployeeOpenID = *openID
 	}
@@ -72,12 +70,8 @@ func (s *Store) LookupKey(ctx context.Context, hash []byte) (KeyPrincipal, error
 	if err != nil {
 		return KeyPrincipal{}, err
 	}
-	if acctID != nil {
-		acc, err := s.GetAccount(ctx, *acctID)
-		if err != nil {
-			return KeyPrincipal{}, err
-		}
-		kp.Account = &acc
+	if kp.Accounts, err = s.AccountsOf(ctx, kp.EmployeeID); err != nil {
+		return KeyPrincipal{}, err
 	}
 	return kp, nil
 }

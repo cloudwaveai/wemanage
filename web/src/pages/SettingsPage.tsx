@@ -308,10 +308,10 @@ export function SettingsPage() {
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <ToggleField
-                  label="允许非 Codex 客户端"
+                  label="所有账号都允许非 Codex 客户端"
                   checked={form.allow_non_codex}
                   onChange={(v) => patch({ allow_non_codex: v })}
-                  hint="关闭时只允许官方 Codex 客户端，第三方工具会被拦截（推荐关闭）"
+                  hint="总开关（推荐关闭）。只想给个别账号开放 OpenCode、Command Code 等工具，到「账号 → 编辑」里单独打开"
                 />
                 <ToggleField
                   label="要求 Codex 安装 ID"
@@ -353,6 +353,14 @@ export function SettingsPage() {
                   min={1}
                   max={50}
                   hint="1 – 50，超过会产生警告"
+                />
+                <NumberField
+                  label="一个账号最多几人共用"
+                  value={form.max_account_members}
+                  onChange={(v) => patch({ max_account_members: v })}
+                  min={1}
+                  max={10}
+                  hint="1 – 10，默认 3；已经超出的账号不受影响，只是不能再加人"
                 />
               </div>
             </div>

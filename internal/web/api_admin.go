@@ -61,9 +61,8 @@ func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 	for _, e := range rows {
 		out = append(out, map[string]any{
 			"id": e.ID, "name": e.Name, "email": e.Email, "status": e.Status,
-			"is_super_admin": e.IsSuperAdmin,
-			"account_id":     e.AccountID, "account_email": e.AccountEmail, "account_provider": e.AccountProvider,
-			"account_status":    e.AccountStatus,
+			"is_super_admin":    e.IsSuperAdmin,
+			"accounts":          employeeAccountsJSON(e.Accounts),
 			"active_key_prefix": e.ActiveKeyPrefix, "department_names": e.DepartmentNames,
 			"frozen": e.FrozenAt != nil, "frozen_reason": e.FrozenReason, "open_risk_events": e.OpenRiskEvents,
 			"remote_allowed": e.RemoteAllowed, "super_admin_pinned": s.pinnedSuperAdmin(e.FeishuOpenID),
@@ -147,13 +146,18 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, a := range rows {
+		members := a.Members
+		if members == nil {
+			members = []store.AccountMember{}
+		}
 		m := map[string]any{
 			"id": a.ID, "email": a.Email, "plan_type": a.PlanType, "owner_type": a.OwnerType,
-			"employee_id": a.EmployeeID, "employee_name": a.EmployeeName,
+			"members":     members,
 			"ip_group_id": a.IPGroupID, "ip_group_name": a.IPGroupName,
 			"status": accountStatus(a.Account), "needs_login": a.NeedsLogin, "provider": a.Provider,
 			"rate_limited_until": a.RateLimitedUntil, "max_concurrency": a.MaxConcurrency,
 			"device_profile": a.DeviceProfile, "cpa_drift": a.CPADrift,
+			"allowed_models": a.AllowedModels, "allow_third_party": a.AllowThirdParty,
 		}
 		if q, ok := quotas[a.ID]; ok {
 			m["quota"] = quotaJSON(q)
@@ -167,7 +171,20 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, m)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"accounts": out})
+	writeJSON(w, http.StatusOK, map[string]any{"accounts": out,
+		"max_members": s.deps.Settings.Get(ctx).MaxAccountMembers})
+}
+
+// employeeAccountsJSON lists an employee's accounts with their status.
+func employeeAccountsJSON(accs []store.EmployeeAccount) []map[string]any {
+	out := make([]map[string]any, 0, len(accs))
+	for _, a := range accs {
+		out = append(out, map[string]any{
+			"id": a.ID, "email": a.Email, "provider": a.Provider, "plan_type": a.PlanType,
+			"status": accountStatus(store.Account{Status: a.Status, NeedsLogin: a.NeedsLogin, RateLimitedUntil: a.RateLimitedUntil}),
+		})
+	}
+	return out
 }
 
 // handleRefreshQuota asks ChatGPT for one account's current quota now.
@@ -372,30 +389,45 @@ func (s *Server) handleBind(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "employee_id required")
 		return
 	}
-	if err := s.deps.Store.BindAccount(r.Context(), accID, body.EmployeeID); err != nil {
-		if err == store.ErrConflict {
-			writeErr(w, http.StatusConflict, "该账号或该员工已被绑定")
-			return
+	ctx := r.Context()
+	maxMembers := s.deps.Settings.Get(ctx).MaxAccountMembers
+	if err := s.deps.Store.BindAccount(ctx, accID, body.EmployeeID, maxMembers); err != nil {
+		switch err {
+		case store.ErrAccountFull:
+			writeErr(w, http.StatusConflict, fmt.Sprintf("这个账号已经有 %d 人在用，一个账号最多 %d 人共用", maxMembers, maxMembers))
+		case store.ErrNotFound:
+			writeErr(w, http.StatusNotFound, "account not found")
+		default:
+			writeErr(w, http.StatusInternalServerError, "bind failed")
 		}
-		writeErr(w, http.StatusInternalServerError, "bind failed")
 		return
 	}
 	s.audit(r, "account_bind", "account", fmt.Sprint(accID), map[string]any{"employee_id": body.EmployeeID})
-	if emp, err := s.deps.Store.GetEmployee(r.Context(), body.EmployeeID); err == nil && s.deps.Risk != nil {
+	if emp, err := s.deps.Store.GetEmployee(ctx, body.EmployeeID); err == nil && s.deps.Risk != nil {
 		portal := strings.TrimRight(s.deps.PublicBaseURL, "/")
-		go s.deps.Risk.Notify(context.WithoutCancel(r.Context()), emp.FeishuOpenID,
-			"【AI 网关】你的 AI 账号已经分配好了，现在就能用。还没配置的话，打开 "+portal+"/key 生成 Key，弹窗里有一条命令配好的方式。")
+		msg := "【AI 网关】你的 AI 账号已经分配好了，现在就能用。还没配置的话，打开 " + portal + "/key 生成 Key，弹窗里有一条命令配好的方式。"
+		if accs, err := s.deps.Store.AccountsOf(ctx, emp.ID); err == nil && len(accs) > 1 {
+			msg = fmt.Sprintf("【AI 网关】管理员给你加了一个 AI 账号，你现在有 %d 个。不用重新配置：一个账号额度用完时，网关会自动换到另一个。", len(accs))
+		}
+		go s.deps.Risk.Notify(context.WithoutCancel(ctx), emp.FeishuOpenID, msg)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 	accID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err := s.deps.Store.UnbindAccount(r.Context(), accID); err != nil {
+	var body struct {
+		EmployeeID int64 `json:"employee_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.EmployeeID == 0 {
+		writeErr(w, http.StatusBadRequest, "employee_id required")
+		return
+	}
+	if err := s.deps.Store.UnbindAccount(r.Context(), accID, body.EmployeeID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "unbind failed")
 		return
 	}
-	s.audit(r, "account_unbind", "account", fmt.Sprint(accID), nil)
+	s.audit(r, "account_unbind", "account", fmt.Sprint(accID), map[string]any{"employee_id": body.EmployeeID})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

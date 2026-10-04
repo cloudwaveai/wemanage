@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { AccountRow, EmployeeRow, IPGroupRow } from "../lib/types";
+import type { AccountModelsResp, AccountRow, EmployeeRow, IPGroupRow } from "../lib/types";
 import {
   Card,
   PageHeader,
@@ -71,18 +71,24 @@ export function AccountsPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [bindFor, setBindFor] = useState<AccountRow | null>(null);
   const [editFor, setEditFor] = useState<AccountRow | null>(null);
+  const [modelsFor, setModelsFor] = useState<AccountRow | null>(null);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
-    queryFn: () => api.get<{ accounts: AccountRow[] }>("/api/admin/accounts"),
+    queryFn: () => api.get<{ accounts: AccountRow[]; max_members: number }>("/api/admin/accounts"),
   });
+  const maxMembers = accounts.data?.max_members ?? 3;
 
-  const refetch = () => qc.invalidateQueries({ queryKey: ["accounts"] });
+  const refetch = () => {
+    qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["admin-employees"] });
+  };
 
   const unbind = useMutation({
-    mutationFn: (id: number) => api.post(`/api/admin/accounts/${id}/unbind`),
+    mutationFn: ({ account, employee }: { account: number; employee: number }) =>
+      api.post(`/api/admin/accounts/${account}/unbind`, { employee_id: employee }),
     onSuccess: () => {
-      toast("已解绑", "success");
+      toast("已移除", "success");
       refetch();
     },
     onError: (e: unknown) =>
@@ -106,7 +112,7 @@ export function AccountsPage() {
     <div>
       <PageHeader
         title="账号"
-        desc="上游账号的绑定、额度与用量。5 小时 / 每周额度来自 ChatGPT / Kimi 官方接口：有请求时随请求更新，闲置时网关每 30 分钟查询一次；Token 为经过网关的用量。"
+        desc={`上游账号的使用人、可用模型、额度与用量。一个账号最多 ${maxMembers} 人共用，一个人也可以有多个账号（额度用完时自动换下一个）。5 小时 / 每周额度来自 ChatGPT / Kimi 官方接口：有请求时随请求更新，闲置时网关每 30 分钟查询一次；Token 为经过网关的用量。`}
         right={
           <Button variant="primary" onClick={() => setWizardOpen(true)}>
             添加账号
@@ -124,7 +130,7 @@ export function AccountsPage() {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-4 py-2.5 font-medium">账号</th>
-                  <th className="px-4 py-2.5 font-medium">绑定员工</th>
+                  <th className="px-4 py-2.5 font-medium">使用人</th>
                   <th className="px-4 py-2.5 font-medium">IP 组</th>
                   <th className="px-4 py-2.5 font-medium">状态</th>
                   <th className="px-4 py-2.5 font-medium">额度（5 小时 / 每周）</th>
@@ -161,9 +167,36 @@ export function AccountsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">
-                      {a.employee_name || (
-                        <span className="text-slate-400">未绑定</span>
-                      )}
+                      <div className="flex max-w-[220px] flex-wrap items-center gap-1">
+                        {a.members.map((m) => (
+                          <span
+                            key={m.id}
+                            className="inline-flex items-center gap-1 rounded-full bg-slate-100 py-0.5 pl-2 pr-1 text-xs text-slate-700"
+                          >
+                            {m.name}
+                            <button
+                              onClick={() => {
+                                if (window.confirm(`把 ${m.name} 从这个账号移除？`)) unbind.mutate({ account: a.id, employee: m.id });
+                              }}
+                              className="rounded-full px-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                              title="移除"
+                              aria-label={`移除 ${m.name}`}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                        {a.members.length < maxMembers ? (
+                          <button
+                            onClick={() => setBindFor(a)}
+                            className="rounded-full border border-dashed border-indigo-300 px-2 py-0.5 text-xs text-indigo-600 hover:bg-indigo-50"
+                          >
+                            + 添加
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">已满 {maxMembers} 人</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">
                       {a.ip_group_name || "-"}
@@ -174,6 +207,22 @@ export function AccountsPage() {
                         {a.needs_login && (
                           <span className="text-[11px] text-rose-500">
                             需登录
+                          </span>
+                        )}
+                        {a.allowed_models && (
+                          <span
+                            title={`只允许：${a.allowed_models.join("、")}`}
+                            className="whitespace-nowrap rounded bg-sky-50 px-1.5 py-0.5 text-[11px] text-sky-700"
+                          >
+                            限定模型
+                          </span>
+                        )}
+                        {a.allow_third_party && (
+                          <span
+                            title="允许 OpenCode、Command Code 等第三方客户端"
+                            className="whitespace-nowrap rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700"
+                          >
+                            第三方
                           </span>
                         )}
                         {a.cpa_drift && (
@@ -238,21 +287,13 @@ export function AccountsPage() {
                             刷新额度
                           </button>
                         )}
-                        {a.employee_id ? (
-                          <button
-                            onClick={() => unbind.mutate(a.id)}
-                            className="rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100"
-                          >
-                            解绑
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => setBindFor(a)}
-                            className="rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50"
-                          >
-                            绑定
-                          </button>
-                        )}
+                        <button
+                          onClick={() => setModelsFor(a)}
+                          className="rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50"
+                          title="查看这个账号有哪些模型，设置哪些可以用"
+                        >
+                          模型
+                        </button>
                         <button
                           onClick={() => setEditFor(a)}
                           className="rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100"
@@ -283,6 +324,11 @@ export function AccountsPage() {
       <EditModal
         account={editFor}
         onClose={() => setEditFor(null)}
+        onDone={refetch}
+      />
+      <ModelsModal
+        account={modelsFor}
+        onClose={() => setModelsFor(null)}
         onDone={refetch}
       />
     </div>
@@ -328,7 +374,7 @@ function BindModal({
     <Modal
       open={!!account}
       onClose={onClose}
-      title={`绑定账号 ${account ? accountName(account) : ""}`}
+      title={`给账号 ${account ? accountName(account) : ""} 添加使用人`}
       footer={
         <>
           <Button onClick={onClose}>取消</Button>
@@ -337,7 +383,7 @@ function BindModal({
             onClick={() => bind.mutate()}
             disabled={!empId || bind.isPending}
           >
-            {bind.isPending ? "处理中…" : "确认绑定"}
+            {bind.isPending ? "处理中…" : "添加"}
           </Button>
         </>
       }
@@ -352,13 +398,16 @@ function BindModal({
       >
         <option value="">请选择员工</option>
         {(employees.data?.employees ?? [])
-          .filter((e) => !e.account_id)
+          .filter((e) => e.status === "active" && !account?.members.some((m) => m.id === e.id))
           .map((e) => (
             <option key={e.id} value={e.id}>
-              {e.name}（{e.email || e.id}）
+              {e.name}（{e.email || e.id}）{e.accounts.length > 0 ? ` · 已有 ${e.accounts.length} 个账号` : ""}
             </option>
           ))}
       </select>
+      <p className="mt-2 text-xs leading-relaxed text-slate-400">
+        共用一个账号的人共享它的额度。给已有账号的人再加一个，网关会在一个账号用完时自动换到另一个。
+      </p>
     </Modal>
   );
 }
@@ -378,6 +427,7 @@ function EditModal({
   const [status, setStatus] = useState("");
   const [ipGroup, setIpGroup] = useState("");
   const [email, setEmail] = useState("");
+  const [thirdParty, setThirdParty] = useState(false);
 
   const groups = useQuery({
     queryKey: ["ip-groups"],
@@ -394,6 +444,7 @@ function EditModal({
     setStatus(account.status);
     setIpGroup(String(account.ip_group_id));
     setEmail(account.email);
+    setThirdParty(account.allow_third_party);
   }
 
   const save = useMutation({
@@ -414,6 +465,7 @@ function EditModal({
           patch.IPGroupID = Number(ipGroup);
         }
         if (email.trim() !== account.email) patch.Email = email.trim();
+        if (thirdParty !== account.allow_third_party) patch.AllowThirdParty = thirdParty;
       }
       return api.patch(`/api/admin/accounts/${account!.id}`, patch);
     },
@@ -510,7 +562,151 @@ function EditModal({
             </p>
           )}
         </div>
+        <div>
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={thirdParty}
+              onChange={(e) => setThirdParty(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span>
+              允许 OpenCode、Command Code 等第三方客户端
+              <span className="mt-0.5 block text-xs text-slate-400">
+                它们走同样的 OpenAI Responses 接口。请求特征和官方 Codex 不同，账号被风控的可能更大，只给确有需要的账号打开。
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
+    </Modal>
+  );
+}
+
+// -------------------------------------------------------------- models modal
+// The account's models as CPA lists them; administrators choose which may be
+// used (e.g. keep Astra off an account whose users only need luna and sol).
+function ModelsModal({
+  account,
+  onClose,
+  onDone,
+}: {
+  account: AccountRow | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { toast } = useToast();
+  const models = useQuery({
+    queryKey: ["account-models", account?.id],
+    queryFn: () => api.get<AccountModelsResp>(`/api/admin/accounts/${account!.id}/models`),
+    enabled: !!account,
+    retry: false,
+  });
+  const [restricted, setRestricted] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [synced, setSynced] = useState("");
+  const syncKey = `${account?.id}:${models.dataUpdatedAt}`;
+  if (account && models.data && synced !== syncKey) {
+    setSynced(syncKey);
+    setRestricted(models.data.restricted);
+    setPicked(new Set(models.data.models.filter((m) => m.allowed).map((m) => m.id)));
+  }
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.put(`/api/admin/accounts/${account!.id}/models`, {
+        restricted,
+        models: restricted ? [...picked] : [],
+      }),
+    onSuccess: () => {
+      toast("已保存，几秒内生效", "success");
+      onDone();
+      onClose();
+    },
+    onError: (e: unknown) => toast(e instanceof Error ? e.message : "保存失败", "error"),
+  });
+
+  const toggle = (id: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  return (
+    <Modal
+      open={!!account}
+      onClose={onClose}
+      title={`账号 ${account ? accountName(account) : ""} 的模型`}
+      width="max-w-xl"
+      footer={
+        <>
+          <Button onClick={onClose}>取消</Button>
+          <Button
+            variant="primary"
+            onClick={() => save.mutate()}
+            disabled={save.isPending || !models.data || (restricted && picked.size === 0)}
+          >
+            {save.isPending ? "保存中…" : "保存"}
+          </Button>
+        </>
+      }
+    >
+      {models.isPending && !models.error && <Loading />}
+      {models.error && <ErrorBox error={models.error} />}
+      {models.data && (
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            {[
+              { v: false, label: "全部模型可用" },
+              { v: true, label: "只允许勾选的模型" },
+            ].map((o) => (
+              <button
+                key={String(o.v)}
+                onClick={() => setRestricted(o.v)}
+                className={
+                  "rounded-lg border px-3 py-1.5 text-sm " +
+                  (restricted === o.v
+                    ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                    : "border-slate-300 text-slate-600 hover:bg-slate-50")
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs leading-relaxed text-slate-500">
+            {restricted
+              ? "这个账号的使用人只能用勾选的模型，其他模型会被拦下并提示可用的模型；以后新出的模型默认不开放。"
+              : "这个账号的使用人可以用下面所有模型，以后新出的模型也会自动开放。"}
+          </p>
+          <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+            {models.data.models.map((m) => (
+              <label
+                key={m.id}
+                className={"flex items-center gap-3 px-3 py-2 text-sm " + (restricted ? "cursor-pointer hover:bg-slate-50" : "")}
+              >
+                <input
+                  type="checkbox"
+                  disabled={!restricted}
+                  checked={restricted ? picked.has(m.id) : true}
+                  onChange={() => toggle(m.id)}
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                />
+                <span className="flex-1 font-mono text-xs text-slate-800">
+                  {m.id}
+                  {!m.offered && (
+                    <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 font-sans text-[10px] text-slate-500">账号已不提供</span>
+                  )}
+                </span>
+                <span className="text-xs tabular-nums text-slate-400">近 7 天 {fmtNum(m.requests_7d)} 次</span>
+              </label>
+            ))}
+            {models.data.models.length === 0 && <Empty label="CPA 没有列出这个账号的模型" />}
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -137,7 +137,7 @@ func newRig(t *testing.T, cpa *fakeCPA, mode string, opts ...func(*proxy.Handler
 	e, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_p", Name: "p"})
 	g, _ := st.CreateIPGroup(ctx, box, "g", "", 10)
 	a, _ := st.CreateAccount(ctx, store.Account{CPAAuthName: "c.json", IPGroupID: g.ID, DeviceProfile: store.DeviceProfile{OS: "Linux", Terminal: "x"}})
-	_ = st.BindAccount(ctx, a.ID, e.ID)
+	_ = st.BindAccount(ctx, a.ID, e.ID, 3)
 	plain, _, _ := st.IssueKey(ctx, e.ID)
 
 	rec := recorder.New(st, set, t.TempDir(), nil, 128)

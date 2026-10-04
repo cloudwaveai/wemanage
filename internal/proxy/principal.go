@@ -119,7 +119,7 @@ func (c *principalCache) forgetAccount(accountID int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for k, e := range c.m {
-		if e.p.Account != nil && e.p.Account.ID == accountID {
+		if _, ok := e.p.Account(accountID); ok {
 			delete(c.m, k)
 		}
 	}

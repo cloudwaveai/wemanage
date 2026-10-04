@@ -92,7 +92,7 @@ func TestKimiAccountOnboarding(t *testing.T) {
 	// Its employee's Codex snippet carries the key in the file (no environment
 	// variable) and does not hard-code a ChatGPT model.
 	emp, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_kuser", Name: "u"})
-	_ = st.BindAccount(ctx, accs[0].ID, emp.ID)
+	_ = st.BindAccount(ctx, accs[0].ID, emp.ID, 3)
 	_, body = login(t, ts, "ou_kuser").do(http.MethodGet, "/api/me/config-snippets", "")
 	var snip struct {
 		CodexToml string `json:"codex_toml"`

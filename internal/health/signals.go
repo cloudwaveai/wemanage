@@ -105,6 +105,21 @@ func HasQuotaHeaders(h http.Header) bool {
 	return false
 }
 
+// UsedPctFromHeaders is the larger of the 5-hour and weekly used percentages
+// a response reports, for spreading load across an employee's accounts.
+func UsedPctFromHeaders(h http.Header) (float64, bool) {
+	p, s := parseFloatHeader(h, hdrPrimaryUsedPct), parseFloatHeader(h, hdrSecondaryUsedPct)
+	switch {
+	case p != nil && s != nil:
+		return max(*p, *s), true
+	case p != nil:
+		return *p, true
+	case s != nil:
+		return *s, true
+	}
+	return 0, false
+}
+
 func parseFloatHeader(h http.Header, name string) *float64 {
 	v := h.Get(name)
 	if v == "" {

@@ -9,27 +9,43 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const accountCols = `id, cpa_auth_name, email, plan_type, owner_type, employee_id, ip_group_id, status, needs_login, rate_limited_until, max_concurrency, device_profile, cpa_drift, created_at, provider`
+const accountCols = `id, cpa_auth_name, email, plan_type, owner_type, ip_group_id, status, needs_login, rate_limited_until, max_concurrency, device_profile, cpa_drift, created_at, provider, allowed_models, allow_third_party`
+
+// accountDests are the scan destinations for accountCols; finish must run
+// after the scan.
+func accountDests(a *Account) (dests []any, finish func()) {
+	var dp []byte
+	return []any{&a.ID, &a.CPAAuthName, &a.Email, &a.PlanType, &a.OwnerType,
+			&a.IPGroupID, &a.Status, &a.NeedsLogin, &a.RateLimitedUntil, &a.MaxConcurrency, &dp, &a.CPADrift, &a.CreatedAt, &a.Provider,
+			&a.AllowedModels, &a.AllowThirdParty},
+		func() {
+			if len(dp) > 0 {
+				_ = json.Unmarshal(dp, &a.DeviceProfile)
+			}
+		}
+}
 
 func scanAccount(r pgx.Row) (Account, error) {
 	var a Account
-	var dp []byte
-	err := r.Scan(&a.ID, &a.CPAAuthName, &a.Email, &a.PlanType, &a.OwnerType, &a.EmployeeID,
-		&a.IPGroupID, &a.Status, &a.NeedsLogin, &a.RateLimitedUntil, &a.MaxConcurrency, &dp, &a.CPADrift, &a.CreatedAt, &a.Provider)
-	if err != nil {
+	dests, finish := accountDests(&a)
+	if err := r.Scan(dests...); err != nil {
 		return Account{}, err
 	}
-	if len(dp) > 0 {
-		_ = json.Unmarshal(dp, &a.DeviceProfile)
-	}
+	finish()
 	return a, nil
 }
 
-// AccountRow is an account joined with employee/ip-group display names.
+// AccountMember is an employee sharing an account.
+type AccountMember struct {
+	EmployeeID int64  `json:"id"`
+	Name       string `json:"name"`
+}
+
+// AccountRow is an account with its members and ip-group name.
 type AccountRow struct {
 	Account
-	EmployeeName string
-	IPGroupName  string
+	Members     []AccountMember
+	IPGroupName string
 }
 
 // CreateAccount inserts a new upstream account.
@@ -76,9 +92,10 @@ func (s *Store) GetAccountByCPAName(ctx context.Context, name string) (Account, 
 func (s *Store) ListAccounts(ctx context.Context) ([]AccountRow, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT `+prefixCols("a", accountCols)+`,
-			COALESCE(e.name,''), COALESCE(g.name,'')
+			COALESCE((SELECT json_agg(json_build_object('id', e.id, 'name', e.name) ORDER BY m.created_at, e.id)
+				FROM account_members m JOIN employees e ON e.id = m.employee_id WHERE m.account_id = a.id), '[]'),
+			COALESCE(g.name,'')
 		FROM upstream_accounts a
-		LEFT JOIN employees e ON e.id = a.employee_id
 		LEFT JOIN ip_groups g ON g.id = a.ip_group_id
 		ORDER BY a.id`)
 	if err != nil {
@@ -88,51 +105,101 @@ func (s *Store) ListAccounts(ctx context.Context) ([]AccountRow, error) {
 	var out []AccountRow
 	for rows.Next() {
 		var ar AccountRow
-		var dp []byte
-		err := rows.Scan(&ar.ID, &ar.CPAAuthName, &ar.Email, &ar.PlanType, &ar.OwnerType, &ar.EmployeeID,
-			&ar.IPGroupID, &ar.Status, &ar.NeedsLogin, &ar.RateLimitedUntil, &ar.MaxConcurrency, &dp, &ar.CPADrift, &ar.CreatedAt, &ar.Provider,
-			&ar.EmployeeName, &ar.IPGroupName)
-		if err != nil {
+		var members []byte
+		dests, finish := accountDests(&ar.Account)
+		if err := rows.Scan(append(dests, &members, &ar.IPGroupName)...); err != nil {
 			return nil, err
 		}
-		if len(dp) > 0 {
-			_ = json.Unmarshal(dp, &ar.DeviceProfile)
-		}
+		finish()
+		_ = json.Unmarshal(members, &ar.Members)
 		out = append(out, ar)
 	}
 	return out, rows.Err()
 }
 
-// BindAccount binds an account to an employee (1:1). Fails with ErrConflict if
-// the employee already has an account or the account is already bound to someone else.
-func (s *Store) BindAccount(ctx context.Context, accountID, employeeID int64) error {
+// AccountsOf returns an employee's accounts, oldest binding first.
+func (s *Store) AccountsOf(ctx context.Context, employeeID int64) ([]Account, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT `+prefixCols("a", accountCols)+`
+		FROM upstream_accounts a JOIN account_members m ON m.account_id = a.id
+		WHERE m.employee_id = $1
+		ORDER BY m.created_at, a.id`, employeeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Account
+	for rows.Next() {
+		var a Account
+		dests, finish := accountDests(&a)
+		if err := rows.Scan(dests...); err != nil {
+			return nil, err
+		}
+		finish()
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// AccountMemberIDs returns the employees sharing an account.
+func (s *Store) AccountMemberIDs(ctx context.Context, accountID int64) ([]int64, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT employee_id FROM account_members WHERE account_id=$1 ORDER BY created_at, employee_id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// BindAccount adds an employee to an account. Binding an existing member is a
+// no-op; an account that already has maxMembers employees gives ErrAccountFull.
+func (s *Store) BindAccount(ctx context.Context, accountID, employeeID int64, maxMembers int) error {
 	return s.tx(ctx, func(q queryer) error {
-		var existingEmp *int64
-		if err := q.QueryRow(ctx, `SELECT employee_id FROM upstream_accounts WHERE id=$1 FOR UPDATE`, accountID).Scan(&existingEmp); err != nil {
+		var id int64
+		if err := q.QueryRow(ctx, `SELECT id FROM upstream_accounts WHERE id=$1 FOR UPDATE`, accountID).Scan(&id); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
 		}
-		if existingEmp != nil && *existingEmp != employeeID {
-			return ErrConflict
-		}
-		var otherAcct int64
-		err := q.QueryRow(ctx, `SELECT id FROM upstream_accounts WHERE employee_id=$1 AND id<>$2`, employeeID, accountID).Scan(&otherAcct)
-		if err == nil {
-			return ErrConflict
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		var member bool
+		var n int
+		if err := q.QueryRow(ctx, `SELECT COALESCE(bool_or(employee_id=$2), false), COUNT(*) FROM account_members WHERE account_id=$1`,
+			accountID, employeeID).Scan(&member, &n); err != nil {
 			return err
 		}
-		_, err = q.Exec(ctx, `UPDATE upstream_accounts SET employee_id=$2, updated_at=now() WHERE id=$1`, accountID, employeeID)
+		if member {
+			return nil
+		}
+		if maxMembers > 0 && n >= maxMembers {
+			return ErrAccountFull
+		}
+		_, err := q.Exec(ctx, `INSERT INTO account_members (account_id, employee_id) VALUES ($1,$2)`, accountID, employeeID)
 		return err
 	})
 }
 
-// UnbindAccount removes the employee binding.
-func (s *Store) UnbindAccount(ctx context.Context, accountID int64) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE upstream_accounts SET employee_id=NULL, updated_at=now() WHERE id=$1`, accountID)
+// UnbindAccount removes an employee from an account.
+func (s *Store) UnbindAccount(ctx context.Context, accountID, employeeID int64) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM account_members WHERE account_id=$1 AND employee_id=$2`, accountID, employeeID)
+	return err
+}
+
+// SetAccountModels sets the models an account may be used with; nil allows all.
+func (s *Store) SetAccountModels(ctx context.Context, id int64, models []string) error {
+	var v any
+	if models != nil {
+		v = models
+	}
+	_, err := s.Pool.Exec(ctx, `UPDATE upstream_accounts SET allowed_models=$2, updated_at=now() WHERE id=$1`, id, v)
 	return err
 }
 
@@ -144,6 +211,8 @@ type AccountPatch struct {
 	Email          *string
 	PlanType       *string
 	DeviceProfile  *DeviceProfile
+	// AllowThirdParty lets clients other than Codex use the account.
+	AllowThirdParty *bool
 }
 
 // UpdateAccount applies a partial update.
@@ -178,6 +247,9 @@ func (s *Store) UpdateAccount(ctx context.Context, id int64, p AccountPatch) err
 	if p.DeviceProfile != nil {
 		dp, _ := json.Marshal(*p.DeviceProfile)
 		add("device_profile=", dp)
+	}
+	if p.AllowThirdParty != nil {
+		add("allow_third_party=", *p.AllowThirdParty)
 	}
 	_, err := s.Pool.Exec(ctx, `UPDATE upstream_accounts SET `+set+` WHERE id=$1`, args...)
 	return err

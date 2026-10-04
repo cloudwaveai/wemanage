@@ -89,15 +89,13 @@ func TestParseRegion(t *testing.T) {
 
 func TestClientGate(t *testing.T) {
 	set := settings.Defaults()
-	if d := ClientGate(set, "other", DeviceInfo{}); d.Allow || d.Code != "client_not_allowed" {
-		t.Fatalf("non-codex should be blocked by default: %+v", d)
+	// Whether other clients may be used is up to each account (the proxy's
+	// account picking), not this gate.
+	if d := ClientGate(set, "other", DeviceInfo{}); !d.Allow {
+		t.Fatalf("the gate leaves other clients to the account policy: %+v", d)
 	}
 	if d := ClientGate(set, KindCodex, DeviceInfo{}); !d.Allow {
 		t.Fatal("codex allowed")
-	}
-	set.AllowNonCodex = true
-	if d := ClientGate(set, "other", DeviceInfo{}); !d.Allow {
-		t.Fatal("non-codex allowed when configured")
 	}
 	set.RequireCodexInstallID = true
 	if d := ClientGate(set, KindCodex, DeviceInfo{}); d.Allow {

@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"sort"
+	"time"
 
 	"aiseat/internal/store"
 )
@@ -35,26 +36,18 @@ func (s *Server) handleTeamUsage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "employee query failed")
 		return
 	}
-	accByID := map[int64]store.Account{}
-	if accs, err := s.deps.Store.ListAccounts(ctx); err == nil {
-		for _, a := range accs {
-			accByID[a.ID] = a.Account
-		}
-	}
-
 	members := make([]map[string]any, 0, len(emps))
 	withAccount := 0
 	for _, e := range emps {
 		m := map[string]any{
 			"employee_id": e.ID, "name": e.Name, "department_names": nonNil(e.DepartmentNames),
-			"has_account": e.AccountID != nil,
+			"has_account": len(e.Accounts) > 0, "accounts": len(e.Accounts),
 		}
-		if e.AccountID != nil {
+		if len(e.Accounts) > 0 {
 			withAccount++
-			if a, ok := accByID[*e.AccountID]; ok {
-				m["account_status"] = accountStatus(a)
-				m["rate_limited_until"] = a.RateLimitedUntil
-			}
+			status, until := bestAccountStatus(e.Accounts)
+			m["account_status"] = status
+			m["rate_limited_until"] = until
 		}
 		members = append(members, m)
 	}
@@ -64,4 +57,25 @@ func (s *Server) handleTeamUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"summary": summary, "members": members, "with_account": withAccount,
 	})
+}
+
+// bestAccountStatus is how an employee's accounts stand together: usable if
+// any is; otherwise the status of the one closest to usable (the soonest
+// reset among rate-limited ones).
+func bestAccountStatus(accs []store.EmployeeAccount) (string, *time.Time) {
+	rank := map[string]int{"active": 0, "rate_limited": 1, "needs_login": 2, "disabled": 3}
+	best, bestRank := "", 99
+	var until *time.Time
+	for _, a := range accs {
+		st := accountStatus(store.Account{Status: a.Status, NeedsLogin: a.NeedsLogin, RateLimitedUntil: a.RateLimitedUntil})
+		r := rank[st]
+		if r < bestRank || (st == "rate_limited" && r == bestRank && a.RateLimitedUntil.Before(*until)) {
+			best, bestRank = st, r
+			until = nil
+			if st == "rate_limited" {
+				until = a.RateLimitedUntil
+			}
+		}
+	}
+	return best, until
 }

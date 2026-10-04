@@ -20,14 +20,11 @@ type Decision struct {
 
 var allow = Decision{Allow: true}
 
-// ClientGate checks the client type before any device lookup: non-Codex clients
-// are rejected unless allowed, and — once require_codex_installation_id is on —
-// "Codex" requests without an installation id are treated as impersonation.
+// ClientGate checks the client before any device lookup: once
+// require_codex_installation_id is on, "Codex" requests without an
+// installation id are treated as impersonation. Whether clients other than
+// Codex may be used is up to each account (see the proxy's account picking).
 func ClientGate(set settings.Settings, clientKind string, dev DeviceInfo) Decision {
-	if clientKind != KindCodex && !set.AllowNonCodex {
-		return Decision{Status: http.StatusForbidden, Code: "client_not_allowed",
-			Message: "这个 Key 只能在官方 Codex 客户端里使用。"}
-	}
 	if clientKind == KindCodex && set.RequireCodexInstallID && dev.InstallID == "" {
 		return Decision{Status: http.StatusForbidden, Code: "client_not_allowed",
 			Message: "Codex 版本太旧，请升级到最新版后再用。"}

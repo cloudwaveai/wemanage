@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,6 +74,16 @@ type Handler struct {
 	quotaAt  map[int64]time.Time       // account -> last quota snapshot write
 
 	authFiles authFileCache
+
+	// Picking among an employee's accounts: the account each conversation
+	// used, and each account's latest used percentage.
+	sticky stickyMap
+	load   loadMap
+
+	// CPA's model list by account, cached.
+	catMu sync.Mutex
+	cat   map[int64][]store.ModelInfo
+	catAt time.Time
 }
 
 type observedEntry struct {
@@ -177,7 +188,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		clientIP := risk.ClientIP(r, h.deps.TrustProxy)
 
 		// --- 1. Authenticate ---
-		prin, acc, refused := h.authorize(ctx, bearer(r), set)
+		prin, refused := h.authorize(ctx, bearer(r))
 		if refused != nil && prin.EmployeeID == 0 {
 			h.logAnonymous(r, kind, refused)
 			refused.write(w, kind)
@@ -199,7 +210,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		sessionSeed := h.sessionSeed(kind, r.Header, body, prin.EmployeeID)
 		rec := recorder.Record{
 			RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
-			AccountID: accountID(prin), APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
+			APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
 			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: endpoint,
 			Stream: stream, ModelRequested: model, ReasoningEffort: reasoning,
 			ReqBody: body, ClientIP: clientIP,
@@ -207,6 +218,15 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		obs := risk.Observation{
 			EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
 			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
+		}
+		// --- 2a. Pick the account: allowed for this client and model, usable now ---
+		want := need{model: model, kind: kind, session: sessionSeed, exclude: map[int64]bool{}}
+		acc := store.Account{}
+		if refused == nil {
+			acc, refused = h.pickAccount(prin, want, set, nil)
+		}
+		if acc.ID != 0 {
+			rec.AccountID = &acc.ID
 		}
 		if refused != nil {
 			h.observeRefusal(obs, refused)
@@ -256,112 +276,152 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		}
 		h.observe(obs)
 
-		// --- 3. Concurrency gate ---
-		capN := set.DefaultMaxConcurrency
-		if acc.MaxConcurrency != nil && *acc.MaxConcurrency > 0 {
-			capN = *acc.MaxConcurrency
-		}
-		release, waited, err := h.deps.Limiter.Acquire(ctx, acc.ID, capN, time.Duration(set.QueueTimeoutSeconds)*time.Second)
-		if err != nil {
-			if errors.Is(err, ErrQueueTimeout) {
-				h.refuse(w, gatewayBusy(), kind, &rec)
+		// --- 3..5. Send upstream; an account whose quota runs out hands the
+		// request to the employee's next usable account ---
+		for {
+			resp, release, f := h.forward(ctx, w, r, acc, body, model, endpoint, kind, sessionSeed, stream, set, &rec)
+			if f != nil {
+				if f.code == "account_rate_limited" {
+					want.exclude[acc.ID] = true
+					if next, nf := h.pickAccount(prin, want, set, nil); nf == nil {
+						h.deps.Log.Info("account used up, switching", "employee", prin.EmployeeID, "from", acc.ID, "to", next.ID)
+						acc = next
+						rec.AccountID = &acc.ID
+						h.sticky.put(prin.EmployeeID, sessionSeed, acc.ID)
+						continue
+					}
+				}
+				h.refuse(w, f, kind, &rec)
 				return
 			}
-			// context cancelled by client
-			w.WriteHeader(499)
-			return
-		}
-		defer release()
-		rec.QueuedMS = int(waited.Milliseconds())
-
-		// --- 4. Build upstream request ---
-		upstreamModel := acc.Prefix() + "/" + model
-		outBody, _ := sjson.SetBytes(body, "model", upstreamModel)
-
-		hdr := BuildUpstreamHeaders(HeaderInput{
-			Kind:      kind,
-			Client:    r.Header,
-			Profile:   set.CodexProfile,
-			Device:    acc.DeviceProfile,
-			SessionID: SessionUUID(sessionSeed),
-			CPAAPIKey: h.deps.CPAAPIKey,
-		})
-
-		upURL := h.deps.CPABaseURL + "/v1/" + endpointPath(endpoint, r.URL.Path)
-		timeout := 100 * time.Second
-		if stream {
-			timeout = 600 * time.Second
-		}
-		reqCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-
-		upReq, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, upURL, strings.NewReader(string(outBody)))
-		upReq.Header = hdr
-
-		resp, err := h.deps.Upstream.Do(upReq)
-		if err != nil {
-			rec.StatusCode = http.StatusBadGateway
-			rec.ErrorType = "upstream_unreachable"
-			rec.ErrorBody = err.Error()
-			rec.DurationMS = int(time.Since(start).Milliseconds())
-			h.deps.Recorder.Submit(rec)
-			oaError(w, http.StatusBadGateway, "上游服务暂时连不上，请稍后重试。", "server_error", "upstream_unreachable")
-			return
-		}
-		defer resp.Body.Close()
-
-		// --- 5. Relay response, tee into parser ---
-		if health.HasQuotaHeaders(resp.Header) && h.quotaDue(acc.ID, resp.StatusCode) {
-			go func(hdr http.Header) {
-				_ = health.RecordQuotaFromHeaders(context.Background(), h.deps.Store, acc.ID, hdr, time.Now())
-			}(resp.Header.Clone())
-		}
-		// A used-up quota goes out in Codex's usage-limit shape, without the
-		// upstream plan's upgrade advice: Codex stops and shows the reset time.
-		if resp.StatusCode == http.StatusTooManyRequests {
-			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-			if until, ok := quotaReset(raw, resp.Header, time.Now()); ok {
-				rec.ErrorBody = string(raw[:min(len(raw), 2000)])
-				h.refuse(w, h.usageLimited(until), kind, &rec)
-				h.markRateLimited(context.WithoutCancel(ctx), acc.ID, until, nil)
-				return
+			if resp == nil {
+				return // already answered (client gone, upstream unreachable)
 			}
-			resp.Body = io.NopCloser(bytes.NewReader(raw))
+			h.relay(ctx, w, resp, acc, endpoint, model, stream, start, set, &rec)
+			release()
+			return
 		}
-		copyResponseHeaders(w, resp.Header)
-		w.WriteHeader(resp.StatusCode)
-
-		parser := capture.NewStreamParser(endpoint, start)
-		var outcome capture.Outcome
-		if isEventStream(resp.Header) || stream {
-			tee := io.TeeReader(resp.Body, parser)
-			flushCopy(w, tee)
-			outcome = parser.Finish()
-		} else {
-			respBody, _ := io.ReadAll(resp.Body)
-			_, _ = w.Write(respBody)
-			outcome = capture.ParseJSONResponse(endpoint, respBody)
-		}
-
-		rec.StatusCode = resp.StatusCode
-		rec.DurationMS = int(time.Since(start).Milliseconds())
-		rec.Outcome = outcome
-		if resp.StatusCode >= 400 {
-			rec.ErrorType = firstNonEmpty(outcome.ErrorType, "upstream_"+strconv.Itoa(resp.StatusCode))
-		}
-		h.deps.Recorder.Submit(rec)
-
-		// --- 6. React to upstream status / degradation ---
-		h.reactToUpstream(context.WithoutCancel(ctx), acc, resp, model, outcome, set)
 	}
 }
 
-func accountID(p store.KeyPrincipal) *int64 {
-	if p.Account == nil {
-		return nil
+// forward sends the request upstream on acc. It returns the response to relay
+// (with the release of its concurrency slot), or a refusal; a nil response
+// with no refusal means the outcome was already written and logged.
+func (h *Handler) forward(ctx context.Context, w http.ResponseWriter, r *http.Request, acc store.Account, body []byte,
+	model, endpoint, kind, sessionSeed string, stream bool, set settings.Settings, rec *recorder.Record) (*http.Response, func(), *refusal) {
+	// --- 3. Concurrency gate ---
+	capN := set.DefaultMaxConcurrency
+	if acc.MaxConcurrency != nil && *acc.MaxConcurrency > 0 {
+		capN = *acc.MaxConcurrency
 	}
-	id := p.Account.ID
-	return &id
+	release, waited, err := h.deps.Limiter.Acquire(ctx, acc.ID, capN, time.Duration(set.QueueTimeoutSeconds)*time.Second)
+	if err != nil {
+		if errors.Is(err, ErrQueueTimeout) {
+			return nil, nil, gatewayBusy()
+		}
+		// context cancelled by client
+		w.WriteHeader(499)
+		return nil, nil, nil
+	}
+	rec.QueuedMS += int(waited.Milliseconds())
+
+	// --- 4. Build upstream request ---
+	upstreamModel := acc.Prefix() + "/" + model
+	outBody, _ := sjson.SetBytes(body, "model", upstreamModel)
+
+	hdr := BuildUpstreamHeaders(HeaderInput{
+		Kind:      kind,
+		Client:    r.Header,
+		Profile:   set.CodexProfile,
+		Device:    acc.DeviceProfile,
+		SessionID: SessionUUID(sessionSeed),
+		CPAAPIKey: h.deps.CPAAPIKey,
+	})
+
+	upURL := h.deps.CPABaseURL + "/v1/" + endpointPath(endpoint, r.URL.Path)
+	timeout := 100 * time.Second
+	if stream {
+		timeout = 600 * time.Second
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	done := func() { cancel(); release() }
+
+	upReq, _ := http.NewRequestWithContext(reqCtx, http.MethodPost, upURL, strings.NewReader(string(outBody)))
+	upReq.Header = hdr
+
+	resp, err := h.deps.Upstream.Do(upReq)
+	if err != nil {
+		done()
+		rec.StatusCode = http.StatusBadGateway
+		rec.ErrorType = "upstream_unreachable"
+		rec.ErrorBody = err.Error()
+		rec.DurationMS = int(time.Since(rec.StartedAt).Milliseconds())
+		h.deps.Recorder.Submit(*rec)
+		oaError(w, http.StatusBadGateway, "上游服务暂时连不上，请稍后重试。", "server_error", "upstream_unreachable")
+		return nil, nil, nil
+	}
+	h.noteQuota(acc.ID, resp.StatusCode, resp.Header)
+	// A used-up quota: the caller tries another account, or answers in Codex's
+	// usage-limit shape, without the upstream plan's upgrade advice.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if until, ok := quotaReset(raw, resp.Header, time.Now()); ok {
+			done()
+			rec.ErrorBody = string(raw[:min(len(raw), 2000)])
+			h.markRateLimited(context.WithoutCancel(ctx), acc.ID, until, nil)
+			return nil, nil, h.usageLimited(until)
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+	}
+	return resp, done, nil
+}
+
+// relay copies the upstream response to the client, logs it and reacts to it.
+func (h *Handler) relay(ctx context.Context, w http.ResponseWriter, resp *http.Response, acc store.Account,
+	endpoint, model string, stream bool, start time.Time, set settings.Settings, rec *recorder.Record) {
+	defer resp.Body.Close()
+	copyResponseHeaders(w, resp.Header)
+	w.WriteHeader(resp.StatusCode)
+
+	parser := capture.NewStreamParser(endpoint, start)
+	var outcome capture.Outcome
+	if isEventStream(resp.Header) || stream {
+		tee := io.TeeReader(resp.Body, parser)
+		flushCopy(w, tee)
+		outcome = parser.Finish()
+	} else {
+		respBody, _ := io.ReadAll(resp.Body)
+		_, _ = w.Write(respBody)
+		outcome = capture.ParseJSONResponse(endpoint, respBody)
+	}
+
+	rec.StatusCode = resp.StatusCode
+	rec.DurationMS = int(time.Since(start).Milliseconds())
+	rec.Outcome = outcome
+	if resp.StatusCode >= 400 {
+		rec.ErrorType = firstNonEmpty(outcome.ErrorType, "upstream_"+strconv.Itoa(resp.StatusCode))
+	}
+	h.deps.Recorder.Submit(*rec)
+
+	// --- 6. React to upstream status / degradation ---
+	h.reactToUpstream(context.WithoutCancel(ctx), acc, resp, model, outcome, set)
+}
+
+// noteQuota records the quota an upstream response reports: in memory for
+// picking accounts, and as a snapshot at most once per quotaEvery.
+func (h *Handler) noteQuota(accountID int64, status int, hdr http.Header) {
+	if !health.HasQuotaHeaders(hdr) {
+		return
+	}
+	if pct, ok := health.UsedPctFromHeaders(hdr); ok {
+		h.load.set(accountID, pct)
+	}
+	if h.quotaDue(accountID, status) {
+		go func(hdr http.Header) {
+			_ = health.RecordQuotaFromHeaders(context.Background(), h.deps.Store, accountID, hdr, time.Now())
+		}(hdr.Clone())
+	}
 }
 
 func gatewayBusy() *refusal {
@@ -370,9 +430,10 @@ func gatewayBusy() *refusal {
 }
 
 // observeRefusal tells the risk engine about an employee who has a key but
-// no account yet, so the administrators hear about it.
+// no account yet (the administrators hear about it), and about a client the
+// employee's accounts are not open to (the employee hears about it).
 func (h *Handler) observeRefusal(o risk.Observation, f *refusal) {
-	if f.code == "no_account_bound" {
+	if f.code == "no_account_bound" || f.code == "client_not_allowed" {
 		o.Denied = f.code
 		h.observe(o)
 	}
@@ -384,16 +445,16 @@ func (h *Handler) observe(o risk.Observation) {
 	}
 }
 
-// authorize resolves a bearer token to its principal and bound account and
-// applies the employee and account checks shared by the HTTP and WebSocket
-// paths. A refusal after the key is found still returns the principal, so the
-// refusal can be logged for the employee.
-func (h *Handler) authorize(ctx context.Context, token string, set settings.Settings) (store.KeyPrincipal, store.Account, *refusal) {
+// authorize resolves a bearer token to its principal and applies the employee
+// checks shared by every endpoint; which account serves the request is picked
+// afterwards (pickAccount). A refusal after the key is found still returns the
+// principal, so the refusal can be logged for the employee.
+func (h *Handler) authorize(ctx context.Context, token string) (store.KeyPrincipal, *refusal) {
 	no := func(status int, code, msg string) *refusal {
 		return &refusal{status: status, typ: "invalid_request_error", code: code, msg: msg}
 	}
 	if token == "" {
-		return store.KeyPrincipal{}, store.Account{}, no(http.StatusUnauthorized, "missing_key",
+		return store.KeyPrincipal{}, no(http.StatusUnauthorized, "missing_key",
 			"没有带上 Key。请到 "+h.portal("/key")+" 重新配置（生成 Key 时会给出安装命令）。")
 	}
 	hash := secure.HashAPIKey(token)
@@ -401,43 +462,28 @@ func (h *Handler) authorize(ctx context.Context, token string, set settings.Sett
 	if errors.Is(err, store.ErrNotFound) {
 		// A reset key is the usual cause: say so, and log it for its owner.
 		if keyID, empID, err := h.deps.Store.RevokedKeyOwner(ctx, hash); err == nil {
-			return store.KeyPrincipal{KeyID: keyID, EmployeeID: empID}, store.Account{}, no(http.StatusUnauthorized, "key_revoked",
+			return store.KeyPrincipal{KeyID: keyID, EmployeeID: empID}, no(http.StatusUnauthorized, "key_revoked",
 				"这个 Key 已经重置过，旧 Key 不能再用了。请到 "+h.portal("/key")+" 用新 Key 重新配置（弹窗里有一条命令配好的方式）。")
 		}
-		return store.KeyPrincipal{}, store.Account{}, no(http.StatusUnauthorized, "invalid_key",
+		return store.KeyPrincipal{}, no(http.StatusUnauthorized, "invalid_key",
 			"Key 无效。请到 "+h.portal("/key")+" 生成新 Key，按弹窗里的安装命令配置。")
 	}
 	if err != nil {
 		h.deps.Log.Warn("key lookup failed", "err", err)
-		return store.KeyPrincipal{}, store.Account{}, &refusal{status: http.StatusServiceUnavailable,
+		return store.KeyPrincipal{}, &refusal{status: http.StatusServiceUnavailable,
 			typ: "server_error", code: "gateway_unavailable", msg: "网关暂时连不上数据库，稍后会自动重试。", retryAfter: "5"}
 	}
-	var f *refusal
-	switch acc := prin.Account; {
+	switch {
 	case prin.EmployeeStatus != "active":
-		f = no(http.StatusForbidden, "employee_disabled", "你的账号已停用，如有疑问请联系管理员。")
+		return prin, no(http.StatusForbidden, "employee_disabled", "你的账号已停用，如有疑问请联系管理员。")
 	case prin.Frozen:
 		why := ""
 		if prin.FrozenReason != "" {
 			why = "（" + prin.FrozenReason + "）"
 		}
-		f = no(http.StatusForbidden, "account_frozen", "你的 Key 已被暂停"+why+"，请联系管理员。")
-	case acc == nil:
-		f = no(http.StatusForbidden, "no_account_bound", "你还没有分配 AI 账号，已通知管理员；分配好后会在飞书告诉你。")
-	case acc.Status != "active":
-		f = no(http.StatusForbidden, "account_disabled", "你的 AI 账号已被管理员停用，请联系管理员。")
-	case acc.NeedsLogin:
-		f = no(http.StatusServiceUnavailable, "account_needs_login", "你的 AI 账号登录已失效，管理员已收到通知，重新登录后即可继续使用。")
-	case acc.RateLimitedUntil != nil && acc.RateLimitedUntil.After(time.Now()):
-		f = h.usageLimited(*acc.RateLimitedUntil)
-	default:
-		return prin, *acc, nil
+		return prin, no(http.StatusForbidden, "account_frozen", "你的 Key 已被暂停"+why+"，请联系管理员。")
 	}
-	var acc store.Account
-	if prin.Account != nil {
-		acc = *prin.Account
-	}
-	return prin, acc, f
+	return prin, nil
 }
 
 // sessionSeed derives a stable per-conversation seed.
@@ -545,8 +591,9 @@ func (h *Handler) markRateLimited(ctx context.Context, accountID int64, until ti
 
 func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	set := h.deps.Settings.Get(ctx)
 	token := bearer(r)
-	kind := h.classifier(h.deps.Settings.Get(ctx)).Classify(r.Header)
+	kind := h.classifier(set).Classify(r.Header)
 	if token == "" {
 		h.logAnonymous(r, kind, &refusal{code: "missing_key"})
 		oaError(w, http.StatusUnauthorized, "没有带上 Key。", "invalid_request_error", "missing_key")
@@ -556,7 +603,7 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	if err != nil && errors.Is(err, store.ErrNotFound) {
 		h.logAnonymous(r, kind, &refusal{code: "invalid_key"})
 	}
-	if err != nil || prin.Account == nil {
+	if err != nil || len(prin.Accounts) == 0 {
 		oaError(w, http.StatusForbidden, "Key 无效，或还没有分配 AI 账号。", "invalid_request_error", "no_account_bound")
 		return
 	}
@@ -564,9 +611,16 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		oaError(w, http.StatusForbidden, "你的 Key 已被暂停，请联系管理员。", "invalid_request_error", "account_frozen")
 		return
 	}
-	models, err := h.AccountModels(ctx, *prin.Account)
+	// The models of the accounts this client may use, as their policies allow.
+	var accs []store.Account
+	for _, a := range prin.Accounts {
+		if a.Status == "active" && (kind == KindCodex || set.AllowNonCodex || a.AllowThirdParty) {
+			accs = append(accs, a)
+		}
+	}
+	models, err := h.ModelsFor(ctx, accs)
 	if err != nil || len(models) == 0 {
-		writeStaticModels(w, h.deps.Settings.Get(ctx).DefaultCodexModel)
+		writeStaticModels(w, set.DefaultCodexModel)
 		return
 	}
 	out := make([]map[string]any, 0, len(models))
@@ -577,10 +631,47 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": out})
 }
 
-// AccountModels lists the models CPA serves for an account, without the
-// account's routing prefix.
+// AccountModels lists every model CPA serves for an account, without the
+// account's routing prefix and regardless of the account's model policy.
 func (h *Handler) AccountModels(ctx context.Context, acc store.Account) ([]store.ModelInfo, error) {
-	prefix := acc.Prefix() + "/"
+	cat, err := h.catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return cat[acc.ID], nil
+}
+
+// ModelsFor lists the models an employee may use across the given accounts:
+// each account's models as its policy allows, without duplicates, newest first.
+func (h *Handler) ModelsFor(ctx context.Context, accounts []store.Account) ([]store.ModelInfo, error) {
+	cat, err := h.catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []store.ModelInfo
+	for _, a := range accounts {
+		for _, m := range cat[a.ID] {
+			if !seen[m.ID] && a.AllowsModel(m.ID) {
+				seen[m.ID] = true
+				out = append(out, m)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Created > out[j].Created })
+	return out, nil
+}
+
+// catalog is CPA's model list by account (cached for a minute): CPA lists
+// every account's models under its "acct-N/" prefix.
+func (h *Handler) catalog(ctx context.Context) (map[int64][]store.ModelInfo, error) {
+	h.catMu.Lock()
+	if h.cat != nil && time.Since(h.catAt) < time.Minute {
+		defer h.catMu.Unlock()
+		return h.cat, nil
+	}
+	h.catMu.Unlock()
+
 	reqCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	upReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, h.deps.CPABaseURL+"/v1/models", nil)
@@ -597,16 +688,27 @@ func (h *Handler) AccountModels(ctx context.Context, acc store.Account) ([]store
 	if err != nil {
 		return nil, err
 	}
-	var models []store.ModelInfo
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("cpa /v1/models: " + resp.Status)
+	}
+	cat := map[int64][]store.ModelInfo{}
 	gjson.GetBytes(raw, "data").ForEach(func(_, v gjson.Result) bool {
-		if id := v.Get("id").String(); strings.HasPrefix(id, prefix) {
-			models = append(models, store.ModelInfo{
-				ID: strings.TrimPrefix(id, prefix), Name: v.Get("display_name").String(), Created: v.Get("created").Int(),
-			})
+		id := v.Get("id").String()
+		prefix, model, ok := strings.Cut(id, "/")
+		if !ok || !strings.HasPrefix(prefix, "acct-") {
+			return true
 		}
+		acc, err := strconv.ParseInt(strings.TrimPrefix(prefix, "acct-"), 10, 64)
+		if err != nil {
+			return true
+		}
+		cat[acc] = append(cat[acc], store.ModelInfo{ID: model, Name: v.Get("display_name").String(), Created: v.Get("created").Int()})
 		return true
 	})
-	return models, nil
+	h.catMu.Lock()
+	h.cat, h.catAt = cat, time.Now()
+	h.catMu.Unlock()
+	return cat, nil
 }
 
 // writeStaticModels answers /v1/models when CPA cannot list the account's

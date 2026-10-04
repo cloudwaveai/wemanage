@@ -36,7 +36,7 @@ func TestQuotaAlertOncePerWindow(t *testing.T) {
 	emp, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_q", Name: "q"})
 	g, _ := st.CreateIPGroup(ctx, box, "g", "", 10)
 	acc, _ := st.CreateAccount(ctx, store.Account{CPAAuthName: "a.json", IPGroupID: g.ID})
-	_ = st.BindAccount(ctx, acc.ID, emp.ID)
+	_ = st.BindAccount(ctx, acc.ID, emp.ID, 3)
 
 	now := time.Now()
 	pct := func(v float64) *float64 { return &v }

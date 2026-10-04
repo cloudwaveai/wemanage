@@ -82,24 +82,31 @@ func (a *QuotaAlerter) check(ctx context.Context, t store.QuotaAlertTarget, wind
 	portal := strings.TrimRight(a.PortalURL, "/")
 	when := timefmt.Relative(*reset, now, a.Loc)
 	var text string
-	if full {
-		text = fmt.Sprintf("【AI 网关】你的账号%s额度已用完，预计 %s 恢复。", label, when)
+	which := "你的账号"
+	if t.Accounts > 1 {
+		which = fmt.Sprintf("你的 AI 账号 #%d ", t.AccountID)
+	}
+	if full && t.Accounts > 1 {
+		// Another account takes over by itself; nothing to do but know.
+		text = fmt.Sprintf("【AI 网关】%s%s额度已用完，预计 %s 恢复。期间网关会自动用你的其他账号，不用做什么。", which, label, when)
+	} else if full {
+		text = fmt.Sprintf("【AI 网关】%s%s额度已用完，预计 %s 恢复。", which, label, when)
 		if cards := a.credits(ctx, t.AccountID); cards > 0 {
 			text += fmt.Sprintf("\n到时会自动恢复。重置卡原则上不用；确有急需的话，你还有 %d 张，可以在门户「我的用量」里使用：%s/usage", cards, portal)
 		} else {
 			text += "到时会自动恢复，期间可以先处理不需要 AI 的工作。"
 		}
 	} else {
-		text = fmt.Sprintf("【AI 网关】你的账号%s额度已用 %.0f%%，预计 %s 重置。日常任务用 luna 模型更省额度。", label, *pct, when)
+		text = fmt.Sprintf("【AI 网关】%s%s额度已用 %.0f%%，预计 %s 重置。日常任务用 luna 模型更省额度。", which, label, *pct, when)
 		text += fmt.Sprintf("\n不想收到这个提醒，可以在门户「我的用量」里关掉：%s/usage", portal)
 	}
 	if err := a.Sender.SendText(ctx, t.OpenID, text); err != nil {
 		return // tried again on the next run
 	}
-	_ = a.Store.MarkQuotaAlerted(ctx, t.EmployeeID, window, full, *reset)
+	_ = a.Store.MarkQuotaAlerted(ctx, t.EmployeeID, t.AccountID, window, full, *reset)
 	if full {
 		// Used up implies past the threshold: no 80% reminder after it.
-		_ = a.Store.MarkQuotaAlerted(ctx, t.EmployeeID, window, false, *reset)
+		_ = a.Store.MarkQuotaAlerted(ctx, t.EmployeeID, t.AccountID, window, false, *reset)
 	}
 }
 

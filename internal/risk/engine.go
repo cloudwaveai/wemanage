@@ -340,7 +340,7 @@ func (e *Engine) process(ctx context.Context, o Observation) {
 			ev := e.addEvent(ctx, o.EmployeeID, RuleNonCodexBlocked, "warn", nil, nil,
 				map[string]any{"user_agent": o.UserAgent, "ip": o.IP, "client_kind": o.ClientKind})
 			e.notifyEmployee(ctx, o.OpenID, fmt.Sprintf(
-				"【AI 网关】有一个非 Codex 客户端用你的 Key 发起了请求，已被拦截。\n客户端：%s\nIP：%s\n公司只允许用官方 Codex 客户端。如果不是你本人操作，说明 Key 可能已经泄露，请到门户重新生成：%s",
+				"【AI 网关】有一个非 Codex 客户端用你的 Key 发起了请求，已被拦截。\n客户端：%s\nIP：%s\n你的 AI 账号目前只开放给官方 Codex 客户端，需要用其他工具请联系管理员开通。如果不是你本人操作，说明 Key 可能已经泄露，请到门户重新生成：%s",
 				short(o.UserAgent), o.IP, e.cfg.PortalURL))
 			e.markNotified(ctx, ev)
 		}

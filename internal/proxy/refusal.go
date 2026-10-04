@@ -33,6 +33,7 @@ var needsPerson = map[string]bool{
 	"no_account_bound": true, "account_disabled": true, "account_needs_login": true,
 	"network_not_allowed": true, "client_not_allowed": true, "device_blocked": true,
 	"device_unconfirmed": true, "content_blocked": true, "images_unsupported": true, "search_unsupported": true,
+	"model_not_allowed": true,
 }
 
 // wire shapes a refusal for the client. Codex retries other 4xx responses

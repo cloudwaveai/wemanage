@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { api, ApiError } from "../lib/api";
+import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import type { UsageSummary, QuotaResp } from "../lib/types";
 import { ResetCreditsCard } from "../components/ResetCredits";
@@ -35,15 +35,7 @@ export function UsagePage() {
 
   const quota = useQuery({
     queryKey: ["my-quota"],
-    queryFn: async () => {
-      try {
-        return await api.get<QuotaResp>("/api/me/quota");
-      } catch (e) {
-        // 404 = no account bound; treat as "no quota" rather than an error.
-        if (e instanceof ApiError && e.status === 404) return null;
-        throw e;
-      }
-    },
+    queryFn: () => api.get<QuotaResp>("/api/me/quota"),
     retry: false,
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
@@ -75,37 +67,46 @@ export function UsagePage() {
             <StatTile label="输出 Token" value={fmtNum(u.tokens_output)} />
           </div>
 
-          {/* quota */}
-          {quota.data && (
+          {/* quota: one block per account */}
+          {quota.data && quota.data.accounts.length > 0 && (
             <Card className="p-5">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-slate-800">账号额度</h2>
-                <StatusBadge status={quota.data.status} />
+                {quota.data.accounts.length === 1 && <StatusBadge status={quota.data.accounts[0].status} />}
               </div>
-              {quota.data.quota ? (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Meter
-                    label="5 小时额度已用"
-                    pct={quota.data.quota.PrimaryUsedPct}
-                    hint={
-                      quota.data.quota.PrimaryResetAt
-                        ? `重置于 ${fmtDateTime(quota.data.quota.PrimaryResetAt)}`
-                        : undefined
-                    }
-                  />
-                  <Meter
-                    label="每周额度已用"
-                    pct={quota.data.quota.SecondaryUsedPct}
-                    hint={
-                      quota.data.quota.SecondaryResetAt
-                        ? `重置于 ${fmtDateTime(quota.data.quota.SecondaryResetAt)}`
-                        : undefined
-                    }
-                  />
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400">暂无额度快照。</p>
+              {quota.data.accounts.length > 1 && (
+                <p className="-mt-1 mb-3 text-xs text-slate-500">
+                  你有 {quota.data.accounts.length} 个 AI 账号，网关会自动用额度多的那个；一个用完了会自动换到另一个，不用做什么。
+                </p>
               )}
+              <div className="space-y-4">
+                {quota.data.accounts.map((a) => (
+                  <div key={a.id} className={quota.data!.accounts.length > 1 ? "rounded-lg border border-slate-100 p-3" : ""}>
+                    {quota.data!.accounts.length > 1 && (
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-medium text-slate-600">{a.email || `账号 #${a.id}`}</span>
+                        <StatusBadge status={a.status} />
+                      </div>
+                    )}
+                    {a.quota ? (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Meter
+                          label="5 小时额度已用"
+                          pct={a.quota.PrimaryUsedPct}
+                          hint={a.quota.PrimaryResetAt ? `重置于 ${fmtDateTime(a.quota.PrimaryResetAt)}` : undefined}
+                        />
+                        <Meter
+                          label="每周额度已用"
+                          pct={a.quota.SecondaryUsedPct}
+                          hint={a.quota.SecondaryResetAt ? `重置于 ${fmtDateTime(a.quota.SecondaryResetAt)}` : undefined}
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-400">暂无额度快照。</p>
+                    )}
+                  </div>
+                ))}
+              </div>
               <div className="mt-4 border-t border-slate-100 pt-3">
                 <Switch
                   checked={!!me?.quota_alert}

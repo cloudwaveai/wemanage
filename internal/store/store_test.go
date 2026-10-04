@@ -93,47 +93,103 @@ func TestLookupKeyPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kp.Account != nil {
-		t.Fatal("account should be nil before binding")
+	if len(kp.Accounts) != 0 {
+		t.Fatal("no accounts before binding")
 	}
-	if err := s.BindAccount(ctx, a.ID, e.ID); err != nil {
+	if err := s.BindAccount(ctx, a.ID, e.ID, 3); err != nil {
 		t.Fatalf("bind: %v", err)
+	}
+	b := mkAccount(t, s, ctx, g.ID, "codex-b2.json")
+	if err := s.BindAccount(ctx, b.ID, e.ID, 3); err != nil {
+		t.Fatalf("bind second: %v", err)
 	}
 	kp, err = s.LookupKey(ctx, secure.HashAPIKey(plain))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kp.Account == nil || kp.Account.ID != a.ID {
-		t.Fatalf("expected bound account, got %+v", kp.Account)
+	if len(kp.Accounts) != 2 || kp.Accounts[0].ID != a.ID || kp.Accounts[1].ID != b.ID {
+		t.Fatalf("expected both accounts, oldest binding first, got %+v", kp.Accounts)
 	}
-	if kp.Account.Prefix() != "acct-"+itoa(a.ID) {
-		t.Fatalf("prefix = %q", kp.Account.Prefix())
+	if acc, ok := kp.Account(a.ID); !ok || acc.Prefix() != "acct-"+itoa(a.ID) {
+		t.Fatalf("account %d: %+v %v", a.ID, acc, ok)
 	}
 }
 
-func TestBindConflicts(t *testing.T) {
+func TestBindMembers(t *testing.T) {
 	s, ctx := newStore(t)
 	box := newBox(t)
 	g := mkGroup(t, s, ctx, box, "grp", "socks5://1.1.1.1:1080")
 	e1 := mkEmployee(t, s, ctx, "ou_1", "e1")
 	e2 := mkEmployee(t, s, ctx, "ou_2", "e2")
+	e3 := mkEmployee(t, s, ctx, "ou_3", "e3")
 	a1 := mkAccount(t, s, ctx, g.ID, "codex-1.json")
 	a2 := mkAccount(t, s, ctx, g.ID, "codex-2.json")
 
-	if err := s.BindAccount(ctx, a1.ID, e1.ID); err != nil {
+	// An account is shared by up to max employees.
+	for _, e := range []int64{e1.ID, e2.ID} {
+		if err := s.BindAccount(ctx, a1.ID, e, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.BindAccount(ctx, a1.ID, e3.ID, 2); err != store.ErrAccountFull {
+		t.Fatalf("third member over a cap of 2: %v", err)
+	}
+	// Rebinding a member is a no-op, even at the cap.
+	if err := s.BindAccount(ctx, a1.ID, e1.ID, 2); err != nil {
+		t.Fatalf("idempotent rebind: %v", err)
+	}
+	// An employee can have several accounts.
+	if err := s.BindAccount(ctx, a2.ID, e1.ID, 2); err != nil {
+		t.Fatalf("second account: %v", err)
+	}
+	if accs, _ := s.AccountsOf(ctx, e1.ID); len(accs) != 2 {
+		t.Fatalf("e1 accounts = %d", len(accs))
+	}
+	// Removing one member makes room.
+	if err := s.UnbindAccount(ctx, a1.ID, e2.ID); err != nil {
 		t.Fatal(err)
 	}
-	// account already bound to e1 -> binding to e2 conflicts
-	if err := s.BindAccount(ctx, a1.ID, e2.ID); err != store.ErrConflict {
-		t.Fatalf("expected conflict binding bound account, got %v", err)
+	if err := s.BindAccount(ctx, a1.ID, e3.ID, 2); err != nil {
+		t.Fatalf("after unbind: %v", err)
 	}
-	// employee e1 already has a1 -> binding a2 to e1 conflicts
-	if err := s.BindAccount(ctx, a2.ID, e1.ID); err != store.ErrConflict {
-		t.Fatalf("expected conflict binding second account, got %v", err)
+	rows, err := s.ListAccounts(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// idempotent rebind of same pair is allowed
-	if err := s.BindAccount(ctx, a1.ID, e1.ID); err != nil {
-		t.Fatalf("idempotent rebind should succeed: %v", err)
+	if len(rows[0].Members) != 2 || rows[0].Members[0].Name != "e1" || rows[0].Members[1].Name != "e3" {
+		t.Fatalf("members = %+v", rows[0].Members)
+	}
+	if err := s.BindAccount(ctx, 999999, e1.ID, 2); err != store.ErrNotFound {
+		t.Fatalf("unknown account: %v", err)
+	}
+}
+
+func TestAccountModels(t *testing.T) {
+	s, ctx := newStore(t)
+	g := mkGroup(t, s, ctx, newBox(t), "grp", "socks5://1.1.1.1:1080")
+	a := mkAccount(t, s, ctx, g.ID, "codex-m.json")
+	if !a.AllowsModel("gpt-6-astra") {
+		t.Fatal("a new account allows every model")
+	}
+	if err := s.SetAccountModels(ctx, a.ID, []string{"gpt-6-luna", "gpt-6-sol"}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ = s.GetAccount(ctx, a.ID)
+	if a.AllowsModel("gpt-6-astra") || !a.AllowsModel("gpt-6-sol") || !a.AllowsModel("") {
+		t.Fatalf("allowed = %v", a.AllowedModels)
+	}
+	if err := s.SetAccountModels(ctx, a.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ = s.GetAccount(ctx, a.ID); a.AllowedModels != nil {
+		t.Fatalf("cleared policy = %v", a.AllowedModels)
+	}
+	on := true
+	if err := s.UpdateAccount(ctx, a.ID, store.AccountPatch{AllowThirdParty: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ = s.GetAccount(ctx, a.ID); !a.AllowThirdParty {
+		t.Fatal("third-party clients should be allowed")
 	}
 }
 
@@ -216,7 +272,7 @@ func TestListEmployeesSummary(t *testing.T) {
 	e := mkEmployee(t, s, ctx, "ou_x", "xavier")
 	g := mkGroup(t, s, ctx, box, "gx", "socks5://1.1.1.1:1080")
 	a := mkAccount(t, s, ctx, g.ID, "cx.json")
-	_ = s.BindAccount(ctx, a.ID, e.ID)
+	_ = s.BindAccount(ctx, a.ID, e.ID, 3)
 	_, _, _ = s.IssueKey(ctx, e.ID)
 
 	rows, err := s.ListEmployees(ctx, store.EmployeeFilter{})
@@ -226,8 +282,8 @@ func TestListEmployeesSummary(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d", len(rows))
 	}
-	if rows[0].AccountID == nil || *rows[0].AccountID != a.ID {
-		t.Fatalf("account id = %v", rows[0].AccountID)
+	if len(rows[0].Accounts) != 1 || rows[0].Accounts[0].ID != a.ID || rows[0].Accounts[0].Status != "active" {
+		t.Fatalf("accounts = %+v", rows[0].Accounts)
 	}
 	if rows[0].ActiveKeyPrefix == "" {
 		t.Fatal("expected active key prefix")

@@ -25,15 +25,21 @@ export interface Me {
   quota_alert: boolean; // the employee is told in Feishu when quota reaches 80%
   key_prefix?: string;
   key_created_at?: string;
-  account?: {
-    email: string;
-    plan_type: string;
-    status: AccountStatus;
-  };
+  // The employee's accounts, oldest binding first (several accounts are used
+  // in turn: one that runs out hands over to the next).
+  accounts: MyAccount[];
   // The employee's latest request that got through the gateway, absent until
   // one has; cli: version is the Codex CLI's (comparable to codex_version).
   last_success?: { at: string; client: string; version: string; cli: boolean };
   codex_version: string; // the Codex CLI release the gateway targets
+}
+
+export interface MyAccount {
+  id: number;
+  email: string;
+  plan_type: string;
+  provider: string;
+  status: AccountStatus;
 }
 
 export type AccountStatus =
@@ -84,9 +90,10 @@ export interface QuotaSnapshot {
   SecondaryResetAt: string | null;
 }
 export interface QuotaResp {
-  status: AccountStatus;
-  rate_limited_until?: string | null;
-  quota?: QuotaSnapshot | null;
+  accounts: (MyAccount & {
+    rate_limited_until?: string | null;
+    quota?: QuotaSnapshot | null;
+  })[];
 }
 
 // --- reports (Go-cased) ---
@@ -118,7 +125,12 @@ export interface ConfigSnippets {
   codex_toml: string;
   third_party: {
     base_url: string;
+    allowed: boolean; // some account of the employee is open to other clients
     note: string;
+    // Ready configs; the browser fills {{KEY}} and {{MODEL}}.
+    opencode_json: string; // ~/.config/opencode/opencode.json
+    commandcode_json: string; // ~/.commandcode/providers.json
+    commandcode_env: string; // shell line exporting the key
   };
 }
 
@@ -186,10 +198,7 @@ export interface EmployeeRow {
   email: string;
   status: string;
   is_super_admin: boolean;
-  account_id: number | null;
-  account_email: string;
-  account_provider: string;
-  account_status: string;
+  accounts: { id: number; email: string; provider: string; plan_type: string; status: AccountStatus }[];
   active_key_prefix: string;
   department_names: string[] | null;
   frozen: boolean;
@@ -211,8 +220,7 @@ export interface AccountRow {
   plan_type: string;
   owner_type: string;
   provider?: string; // "codex" (ChatGPT) | "kimi" | …
-  employee_id: number | null;
-  employee_name: string;
+  members: { id: number; name: string }[]; // employees sharing the account
   ip_group_id: number;
   ip_group_name: string;
   status: AccountStatus;
@@ -221,6 +229,8 @@ export interface AccountRow {
   max_concurrency: number | null;
   device_profile: DeviceProfile;
   cpa_drift: string;
+  allowed_models: string[] | null; // null: every model
+  allow_third_party: boolean; // clients other than Codex may use it
   quota?: AccountQuota; // latest snapshot; absent until first seen
   usage: AccountUsage;
 }
@@ -309,6 +319,7 @@ export interface Settings {
   concurrency_window_minutes: number;
   new_device_grace_minutes: number;
   max_active_devices: number;
+  max_account_members: number; // how many employees may share one account
   require_codex_installation_id: boolean;
   // Office networks (CIDRs or single IPs).
   office_only: boolean;
@@ -402,7 +413,8 @@ export interface TeamMember {
   name: string;
   department_names: string[] | null;
   has_account: boolean;
-  account_status?: AccountStatus;
+  accounts?: number;
+  account_status?: AccountStatus; // the best of the member's accounts
   rate_limited_until?: string | null;
 }
 export interface TeamUsageResp {
@@ -411,11 +423,31 @@ export interface TeamUsageResp {
   with_account: number;
 }
 
-// A ChatGPT account's rate-limit reset credits (重置卡).
+// The rate-limit reset credits (重置卡) of each of the employee's ChatGPT accounts.
 export interface ResetCreditsResp {
-  supported: boolean; // the account type has reset credits at all
+  accounts: AccountResetCredits[];
+}
+export interface AccountResetCredits {
+  account_id: number;
+  email: string;
+  plan_type: string;
+  supported: boolean;
   available: number;
   credits: { id: string; title: string; status: string; expires_at: string | null }[];
   can_use: boolean;
-  reason: string; // why they cannot be used now
+  reason?: string; // why they cannot be used now
+  error?: string; // they could not be looked up
+}
+
+// An account's models as an administrator sees them.
+export interface AccountModelsResp {
+  restricted: boolean; // false: every model may be used
+  models: {
+    id: string;
+    name: string;
+    created: number;
+    allowed: boolean;
+    offered: boolean; // CPA lists it for the account
+    requests_7d: number;
+  }[];
 }

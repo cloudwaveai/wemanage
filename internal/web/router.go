@@ -121,6 +121,8 @@ func (s *Server) Mount(r chi.Router) {
 				r.Post("/admin/accounts/{id}/unbind", s.handleUnbind)
 				r.Post("/admin/accounts/{id}/quota/refresh", s.handleRefreshQuota)
 				r.Patch("/admin/accounts/{id}", s.handlePatchAccount)
+				r.Get("/admin/accounts/{id}/models", s.handleAccountModels)
+				r.Put("/admin/accounts/{id}/models", s.handleSetAccountModels)
 				r.Get("/admin/ip-groups", s.handleListIPGroups)
 				r.Post("/admin/ip-groups", s.handleCreateIPGroup)
 				r.Patch("/admin/ip-groups/{id}", s.handleUpdateIPGroup)

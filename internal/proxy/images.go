@@ -15,6 +15,7 @@ import (
 	"aiseat/internal/recorder"
 	"aiseat/internal/risk"
 	"aiseat/internal/settings"
+	"aiseat/internal/store"
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -43,7 +44,7 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 		set := h.deps.Settings.Get(ctx)
 
 		kind := h.classifier(set).Classify(r.Header)
-		prin, acc, refused := h.authorize(ctx, bearer(r), set)
+		prin, refused := h.authorize(ctx, bearer(r))
 		if refused != nil && prin.EmployeeID == 0 {
 			h.logAnonymous(r, kind, refused)
 			refused.write(w, kind)
@@ -68,7 +69,7 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 		sessionSeed := h.sessionSeed(kind, r.Header, body, prin.EmployeeID)
 		rec := recorder.Record{
 			RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
-			AccountID: accountID(prin), APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
+			APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
 			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: imagesEndpointName,
 			ModelRequested: model, ReqBody: logBody, ClientIP: clientIP,
 		}
@@ -76,14 +77,18 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 			EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
 			ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
 		}
+		acc := store.Account{}
+		if refused == nil {
+			acc, refused = h.pickAccount(prin, need{model: model, kind: kind, chatgpt: true, session: sessionSeed}, set,
+				&refusal{status: http.StatusNotFound, typ: "invalid_request_error", code: "images_unsupported",
+					msg: "生图需要 ChatGPT 账号，你现在的 AI 账号不支持。"})
+		}
+		if acc.ID != 0 {
+			rec.AccountID = &acc.ID
+		}
 		if refused != nil {
 			h.observeRefusal(obs, refused)
 			h.refuse(w, refused, kind, &rec)
-			return
-		}
-		if !acc.IsChatGPT() {
-			h.refuse(w, &refusal{status: http.StatusNotFound, typ: "invalid_request_error", code: "images_unsupported",
-				msg: "生图需要 ChatGPT 账号，你现在的 AI 账号不支持。"}, kind, &rec)
 			return
 		}
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -32,46 +33,63 @@ func (s *Server) resetAllowed(ctx context.Context, acc store.Account) (bool, str
 	return false, "为降低账号风险，重置卡原则上不用：5 小时或每周额度用完、确有急需时才能使用。"
 }
 
-// chatgptAccount is the employee's bound account when it can have reset
-// credits.
-func (s *Server) chatgptAccount(r *http.Request) (store.Account, bool) {
-	acc, err := s.boundAccount(r.Context(), currentEmployee(r).ID)
-	if err != nil || !acc.IsChatGPT() || s.deps.Quota == nil {
-		return store.Account{}, false
+// chatgptAccounts are the employee's accounts that can have reset credits.
+func (s *Server) chatgptAccounts(r *http.Request) []store.Account {
+	if s.deps.Quota == nil {
+		return nil
 	}
-	return acc, true
+	accs, _ := s.deps.Store.AccountsOf(r.Context(), currentEmployee(r).ID)
+	var out []store.Account
+	for _, a := range accs {
+		if a.IsChatGPT() {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
-// handleMyResetCredits lists the reset credits (重置卡) of the employee's account.
+// handleMyResetCredits lists the reset credits (重置卡) of each of the
+// employee's ChatGPT accounts.
 func (s *Server) handleMyResetCredits(w http.ResponseWriter, r *http.Request) {
-	acc, ok := s.chatgptAccount(r)
-	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"supported": false, "available": 0, "credits": []health.ResetCredit{},
-			"can_use": false, "reason": "你的 AI 账号没有重置卡。"})
-		return
+	accs := s.chatgptAccounts(r)
+	out := make([]map[string]any, 0, len(accs))
+	for _, acc := range accs {
+		entry := map[string]any{"account_id": acc.ID, "email": acc.Email, "plan_type": acc.PlanType,
+			"supported": true, "available": 0, "credits": []health.ResetCredit{}, "can_use": false}
+		c, err := s.deps.Quota.ResetCredits(r.Context(), acc)
+		if err != nil {
+			s.deps.Log.Warn("reset credits", "account", acc.ID, "err", err)
+			entry["error"] = "暂时查不到重置卡，请稍后再试。"
+			out = append(out, entry)
+			continue
+		}
+		can, reason := s.resetAllowed(r.Context(), acc)
+		if c.Available == 0 {
+			can, reason = false, "暂时没有可用的重置卡。"
+		}
+		if c.Credits != nil {
+			entry["credits"] = c.Credits
+		}
+		entry["available"], entry["can_use"], entry["reason"] = c.Available, can, reason
+		out = append(out, entry)
 	}
-	c, err := s.deps.Quota.ResetCredits(r.Context(), acc)
-	if err != nil {
-		s.deps.Log.Warn("reset credits", "account", acc.ID, "err", err)
-		writeErr(w, http.StatusBadGateway, "暂时查不到重置卡，请稍后再试")
-		return
-	}
-	can, reason := s.resetAllowed(r.Context(), acc)
-	if c.Available == 0 {
-		can, reason = false, "暂时没有可用的重置卡。"
-	}
-	credits := c.Credits
-	if credits == nil {
-		credits = []health.ResetCredit{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"supported": true, "available": c.Available, "credits": credits,
-		"can_use": can, "reason": reason})
+	writeJSON(w, http.StatusOK, map[string]any{"accounts": out})
 }
 
-// handleUseResetCredit spends one reset credit on the employee's account.
+// handleUseResetCredit spends one reset credit on one of the employee's accounts.
 func (s *Server) handleUseResetCredit(w http.ResponseWriter, r *http.Request) {
-	acc, ok := s.chatgptAccount(r)
-	if !ok {
+	var body struct {
+		AccountID int64 `json:"account_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	accs := s.chatgptAccounts(r)
+	var acc store.Account
+	for _, a := range accs {
+		if a.ID == body.AccountID || (body.AccountID == 0 && len(accs) == 1) {
+			acc = a
+		}
+	}
+	if acc.ID == 0 {
 		writeErr(w, http.StatusBadRequest, "你的 AI 账号没有重置卡")
 		return
 	}

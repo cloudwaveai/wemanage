@@ -57,15 +57,18 @@ func TestResetCreditsOnlyWhenUsedUp(t *testing.T) {
 	emp, _ := st.GetEmployeeByOpenID(ctx, "ou_rc")
 	g, _ := st.CreateIPGroup(ctx, box, "g", "", 10)
 	acc, _ := st.CreateAccount(ctx, store.Account{CPAAuthName: "c.json", IPGroupID: g.ID, Provider: "codex"})
-	_ = st.BindAccount(ctx, acc.ID, emp.ID)
+	_ = st.BindAccount(ctx, acc.ID, emp.ID, 3)
 
 	_, raw := c.do(http.MethodGet, "/api/me/reset-credits", "")
-	var got struct {
-		Available int  `json:"available"`
-		CanUse    bool `json:"can_use"`
+	var list struct {
+		Accounts []struct {
+			AccountID int64 `json:"account_id"`
+			Available int   `json:"available"`
+			CanUse    bool  `json:"can_use"`
+		} `json:"accounts"`
 	}
-	_ = json.Unmarshal(raw, &got)
-	if got.Available != 1 || got.CanUse {
+	_ = json.Unmarshal(raw, &list)
+	if len(list.Accounts) != 1 || list.Accounts[0].AccountID != acc.ID || list.Accounts[0].Available != 1 || list.Accounts[0].CanUse {
 		t.Fatalf("low usage: %s (want 1 card, not usable yet)", raw)
 	}
 	if resp, body := c.do(http.MethodPost, "/api/me/reset-credits/use", ""); resp.StatusCode != http.StatusConflict || consumed.Load() != 0 {

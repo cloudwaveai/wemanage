@@ -72,6 +72,9 @@ type Settings struct {
 	// (the last "-" part, e.g. "luna") is recommended instead.
 	DefaultCodexModel string `json:"default_codex_model"`
 
+	// MaxAccountMembers is how many employees may share one account.
+	MaxAccountMembers int `json:"max_account_members"`
+
 	// Content audit of the newest user message, before it is sent upstream.
 	ContentAuditMode  string        `json:"content_audit_mode"` // off | warn | block
 	ContentAuditRules []ContentRule `json:"content_audit_rules"`
@@ -160,6 +163,7 @@ func Defaults() Settings {
 		MaxActiveDevices:         3,
 		RequireCodexInstallID:    false,
 		DefaultCodexModel:        "gpt-6-luna",
+		MaxAccountMembers:        3,
 	}
 }
 
@@ -177,6 +181,9 @@ func mergeDefaults(s Settings) Settings {
 	}
 	if s.CodexProfile.Version == "" {
 		s.CodexProfile.Version = d.CodexProfile.Version
+	}
+	if s.MaxAccountMembers <= 0 {
+		s.MaxAccountMembers = d.MaxAccountMembers
 	}
 	if strings.TrimSpace(s.DefaultCodexModel) == "" {
 		s.DefaultCodexModel = d.DefaultCodexModel
@@ -284,6 +291,9 @@ func Validate(s Settings) error {
 	}
 	if s.MaxActiveDevices < 1 || s.MaxActiveDevices > 50 {
 		return fmt.Errorf("max_active_devices must be 1..50")
+	}
+	if s.MaxAccountMembers < 1 || s.MaxAccountMembers > 10 {
+		return fmt.Errorf("max_account_members must be 1..10")
 	}
 	if m := strings.TrimSpace(s.DefaultCodexModel); m != "" && (len(m) > 100 || strings.ContainsAny(m, " /\"\n")) {
 		return fmt.Errorf("default_codex_model must be a model id like gpt-6-luna")

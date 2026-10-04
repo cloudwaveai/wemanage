@@ -243,3 +243,25 @@ func (s *Store) UsageSeries(ctx context.Context, from, to time.Time, employeeIDs
 	}
 	return out, nil
 }
+
+// ModelUsage counts an account's requests per requested model since a time.
+func (s *Store) ModelUsage(ctx context.Context, accountID int64, since time.Time) (map[string]int64, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT model_requested, COUNT(*) FROM requests
+		WHERE account_id = $1 AND started_at >= $2 AND model_requested <> ''
+		GROUP BY 1`, accountID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var m string
+		var n int64
+		if err := rows.Scan(&m, &n); err != nil {
+			return nil, err
+		}
+		out[m] = n
+	}
+	return out, rows.Err()
+}

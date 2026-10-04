@@ -177,7 +177,7 @@ function steps(me: Me, installed: boolean, setInstalled: (v: boolean) => void, p
   return [
     {
       title: "管理员分配 AI 账号",
-      done: !!me.account,
+      done: me.accounts.length > 0,
       byAdmin: true,
       status: "已分配",
       how: <p>管理员给你分配好 AI 账号后，你会收到飞书通知。这一步不用你操作，可以先做下面几步。</p>,

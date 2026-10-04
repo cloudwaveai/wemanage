@@ -18,10 +18,10 @@ import { useAuth } from "../context/AuthContext";
 
 // accountLabel names a bound account: its email, else its provider and id
 // (Kimi Code logins carry no email).
-function accountLabel(e: EmployeeRow): string {
-  if (e.account_email) return e.account_email;
-  const kind = e.account_provider === "kimi" ? "Kimi Code" : "ChatGPT";
-  return `${kind} #${e.account_id}`;
+function accountLabel(a: EmployeeRow["accounts"][number]): string {
+  if (a.email) return a.email;
+  const kind = a.provider === "kimi" ? "Kimi Code" : "ChatGPT";
+  return `${kind} #${a.id}`;
 }
 
 export function EmployeesPage() {
@@ -134,12 +134,14 @@ export function EmployeesPage() {
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">
-                      {e.account_id != null ? (
-                        <div className="flex items-center gap-2">
-                          <span>{accountLabel(e)}</span>
-                          {e.account_status && (
-                            <StatusBadge status={e.account_status} />
-                          )}
+                      {e.accounts.length > 0 ? (
+                        <div className="space-y-1">
+                          {e.accounts.map((a) => (
+                            <div key={a.id} className="flex items-center gap-2">
+                              <span>{accountLabel(a)}</span>
+                              <StatusBadge status={a.status} />
+                            </div>
+                          ))}
                         </div>
                       ) : (
                         <span className="text-slate-400">未绑定</span>

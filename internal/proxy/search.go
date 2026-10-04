@@ -16,6 +16,7 @@ import (
 	"aiseat/internal/recorder"
 	"aiseat/internal/risk"
 	"aiseat/internal/settings"
+	"aiseat/internal/store"
 
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
@@ -81,7 +82,7 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	set := h.deps.Settings.Get(ctx)
 
 	kind := h.classifier(set).Classify(r.Header)
-	prin, acc, refused := h.authorize(ctx, bearer(r), set)
+	prin, refused := h.authorize(ctx, bearer(r))
 	if refused != nil && prin.EmployeeID == 0 {
 		h.logAnonymous(r, kind, refused)
 		refused.write(w, kind)
@@ -96,10 +97,10 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	queries := searchQueries(body)
 	logBody := searchLogBody(queries)
 	clientIP := risk.ClientIP(r, h.deps.TrustProxy)
+	sessionSeed := h.sessionSeed(kind, r.Header, body, prin.EmployeeID)
 	rec := recorder.Record{
 		RequestID: uuid.New(), StartedAt: start, EmployeeID: prin.EmployeeID,
-		AccountID: accountID(prin), APIKeyID: &prin.KeyID,
-		SessionKey: h.sessionSeed(kind, r.Header, body, prin.EmployeeID),
+		APIKeyID: &prin.KeyID, SessionKey: sessionSeed,
 		ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: searchEndpointName,
 		ModelRequested: gjson.GetBytes(body, "model").String(), ReqBody: logBody, ClientIP: clientIP,
 	}
@@ -107,14 +108,23 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP, At: start,
 		ClientKind: kind, UserAgent: r.Header.Get("User-Agent"),
 	}
+	unsupported := &refusal{status: http.StatusNotFound, typ: "invalid_request_error", code: "search_unsupported",
+		msg: "联网搜索需要 ChatGPT 账号，你现在的 AI 账号不支持。"}
+	acc := store.Account{}
+	if refused == nil && h.deps.CPA == nil {
+		refused = unsupported
+	}
+	if refused == nil {
+		// A search is a tool call within the conversation: it goes to the
+		// conversation's account, whatever its model.
+		acc, refused = h.pickAccount(prin, need{kind: kind, chatgpt: true, session: sessionSeed}, set, unsupported)
+	}
+	if acc.ID != 0 {
+		rec.AccountID = &acc.ID
+	}
 	if refused != nil {
 		h.observeRefusal(obs, refused)
 		h.refuse(w, refused, kind, &rec)
-		return
-	}
-	if !acc.IsChatGPT() || h.deps.CPA == nil {
-		h.refuse(w, &refusal{status: http.StatusNotFound, typ: "invalid_request_error", code: "search_unsupported",
-			msg: "联网搜索需要 ChatGPT 账号，你现在的 AI 账号不支持。"}, kind, &rec)
 		return
 	}
 

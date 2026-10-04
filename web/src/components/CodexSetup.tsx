@@ -65,7 +65,7 @@ export function CodexSetup({
 
       <details className="rounded-lg border border-slate-200 px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium text-slate-700">
-          其他方式：CC Switch、手动配置、第三方客户端
+          其他方式：CC Switch、手动配置、OpenCode、Command Code
         </summary>
 
         <div className="mt-3 space-y-4 text-xs leading-relaxed text-slate-500">
@@ -105,15 +105,40 @@ export function CodexSetup({
           </div>
 
           <div>
-            <div className="mb-1 font-medium text-slate-700">第三方客户端</div>
+            <div className="mb-1 font-medium text-slate-700">第三方客户端（OpenCode、Command Code 等）</div>
             <div className="flex flex-wrap items-center gap-2">
               <span>Base URL</span>
               <code className="rounded bg-slate-100 px-2 py-0.5 font-mono text-slate-700">
                 {data.third_party.base_url}
               </code>
               <CopyButton text={data.third_party.base_url} />
+              <span className="text-slate-400">接口类型选 OpenAI Responses</span>
             </div>
-            <p className="mt-1 text-amber-700">{data.third_party.note}</p>
+            <p className={"mt-1 " + (data.third_party.allowed ? "" : "text-amber-700")}>{data.third_party.note}</p>
+            {data.third_party.allowed && (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <div className="mb-1 font-medium text-slate-700">OpenCode</div>
+                  <p className="mb-1">
+                    写入 <code className="font-mono">~/.config/opencode/opencode.json</code>（已有这个文件的话，把 provider 里的
+                    aiseat 一段合并进去）。Key 已经填在里面，这个文件别发给别人。
+                  </p>
+                  <CodeBlock code={fill(data.third_party.opencode_json)} />
+                </div>
+                <div>
+                  <div className="mb-1 font-medium text-slate-700">Command Code</div>
+                  <p className="mb-1">
+                    写入 <code className="font-mono">~/.commandcode/providers.json</code>，再把 Key 设成环境变量（下面这行加到
+                    <code className="font-mono"> ~/.zshrc</code> 或 <code className="font-mono">~/.bashrc</code>，新开终端生效），然后在 Command Code 里用
+                    <code className="font-mono"> /model</code> 选「公司 AI 网关」的模型。
+                  </p>
+                  <CodeBlock code={fill(data.third_party.commandcode_json)} />
+                  <div className="mt-2">
+                    <CodeBlock code={fill(data.third_party.commandcode_env)} />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </details>

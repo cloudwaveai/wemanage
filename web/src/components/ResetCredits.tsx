@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { ResetCreditsResp } from "../lib/types";
+import type { AccountResetCredits, ResetCreditsResp } from "../lib/types";
 import { Modal } from "./Modal";
 import { useToast } from "./Toast";
 import { Card, Button } from "./ui";
 
-type Credit = ResetCreditsResp["credits"][number];
+type Credit = AccountResetCredits["credits"][number];
 
 // ChatGPT names credits in English; the one kind seen so far is
 // "Full reset (Weekly + 5 hr)".
@@ -58,19 +58,33 @@ function Ticket({ credit, first }: { credit: Credit; first: boolean }) {
   );
 }
 
-// ResetCreditsCard shows the reset credits (重置卡) of the employee's
-// account, one ticket each, and spends the one that expires first.
+// ResetCreditsCard shows the reset credits (重置卡) of each of the
+// employee's ChatGPT accounts, one ticket each; using one spends the credit
+// of that account that expires first.
 export function ResetCreditsCard() {
-  const qc = useQueryClient();
-  const { toast } = useToast();
-  const [confirm, setConfirm] = useState(false);
   const credits = useQuery({
     queryKey: ["my-reset-credits"],
     queryFn: () => api.get<ResetCreditsResp>("/api/me/reset-credits"),
     retry: false,
   });
+  const accounts = credits.data?.accounts ?? [];
+  if (accounts.length === 0) return null;
+  return (
+    <>
+      {accounts.map((rc) => (
+        <AccountCredits key={rc.account_id} rc={rc} several={accounts.length > 1} />
+      ))}
+    </>
+  );
+}
+
+function AccountCredits({ rc, several }: { rc: AccountResetCredits; several: boolean }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [confirm, setConfirm] = useState(false);
   const spend = useMutation({
-    mutationFn: () => api.post<{ ok: boolean; message: string }>("/api/me/reset-credits/use"),
+    mutationFn: () =>
+      api.post<{ ok: boolean; message: string }>("/api/me/reset-credits/use", { account_id: rc.account_id }),
     onSuccess: (d) => {
       setConfirm(false);
       toast(d.message, d.ok ? "success" : "info");
@@ -83,11 +97,10 @@ export function ResetCreditsCard() {
     },
   });
 
-  const rc = credits.data;
-  if (!rc?.supported) return null;
   const list = [...rc.credits].sort((a, b) =>
     (a.expires_at ?? "9999").localeCompare(b.expires_at ?? "9999"),
   );
+  const label = rc.email || `账号 #${rc.account_id}`;
 
   return (
     <Card className="p-5">
@@ -97,9 +110,10 @@ export function ResetCreditsCard() {
             重置卡
             <span className="text-2xl font-semibold text-indigo-600">{rc.available}</span>
             <span className="text-sm font-normal text-slate-500">张</span>
+            {several && <span className="text-xs font-normal text-slate-400">· {label}</span>}
           </h2>
           <p className="mt-1 text-xs text-slate-500">
-            用一张，5 小时和每周额度立即清零、重新开始计算。为降低账号风险，重置卡原则上不用，额度用完、确有急需时再用。
+            用一张，这个账号的 5 小时和每周额度立即清零、重新开始计算。为降低账号风险，重置卡原则上不用，额度用完、确有急需时再用。
           </p>
         </div>
         <Button variant="primary" disabled={!rc.can_use || spend.isPending} onClick={() => setConfirm(true)}>
@@ -107,7 +121,11 @@ export function ResetCreditsCard() {
         </Button>
       </div>
 
-      {list.length > 0 ? (
+      {rc.error ? (
+        <div className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-400">
+          {rc.error}
+        </div>
+      ) : list.length > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {list.map((c, i) => (
             <Ticket key={c.id} credit={c} first={i === 0 && list.length > 1} />
@@ -137,7 +155,7 @@ export function ResetCreditsCard() {
         }
       >
         <p className="text-sm leading-relaxed text-slate-600">
-          使用后，你的 5 小时和每周额度会立即清零、重新开始计算。
+          使用后，{several ? `账号「${label}」` : "你"}的 5 小时和每周额度会立即清零、重新开始计算。
           {list.length > 1 ? "会先用最早到期的那张。" : ""}
           重置卡原则上不用，额度到时会自动恢复；确定现在确有急需吗？
         </p>

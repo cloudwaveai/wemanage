@@ -152,7 +152,7 @@ function AccountQuotaCard({
                   </div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
                     <StatusBadge status={a.status} />
-                    <span className="truncate">{a.employee_name || "未绑定"}</span>
+                    <span className="truncate">{a.members.length ? a.members.map((m) => m.name).join("、") : "未绑定"}</span>
                   </div>
                 </div>
                 {quota ? (

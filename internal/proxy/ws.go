@@ -91,26 +91,44 @@ func (h *Handler) handleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	kind := h.classifier(set).Classify(r.Header)
 	clientIP := risk.ClientIP(r, h.deps.TrustProxy)
 	token := bearer(r)
-	prin, acc, refused := h.authorize(ctx, token, set)
+	prin, refused := h.authorize(ctx, token)
 	// A refused handshake has no request body; it is logged as an empty turn.
+	session := h.sessionSeed(kind, r.Header, nil, prin.EmployeeID)
 	rec := &recorder.Record{
 		RequestID: uuid.New(), StartedAt: time.Now(), EmployeeID: prin.EmployeeID,
-		AccountID: accountID(prin), APIKeyID: &prin.KeyID, SessionKey: h.sessionSeed(kind, r.Header, nil, prin.EmployeeID),
+		APIKeyID: &prin.KeyID, SessionKey: session,
 		ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), Endpoint: "responses", Stream: true, ClientIP: clientIP,
 	}
 	base := risk.Observation{EmployeeID: prin.EmployeeID, OpenID: prin.EmployeeOpenID, IP: clientIP,
 		ClientKind: kind, UserAgent: r.Header.Get("User-Agent"), At: time.Now()}
+	// 426 makes Codex switch to HTTP for the rest of the session.
+	noWS := func() {
+		oaError(w, http.StatusUpgradeRequired, "websocket transport not enabled; use HTTP", "invalid_request_error", "websocket_unsupported")
+	}
+	if refused == nil && set.DisableWebsocket {
+		noWS()
+		return
+	}
+	acc := store.Account{}
+	if refused == nil {
+		// The connection's account: one that does WebSocket (ChatGPT); the
+		// model is only known per turn.
+		acc, refused = h.pickAccount(prin, need{kind: kind, chatgpt: true, session: session}, set,
+			&refusal{code: "websocket_unsupported"})
+		if refused != nil && refused.code == "websocket_unsupported" {
+			noWS()
+			return
+		}
+	}
+	if acc.ID != 0 {
+		rec.AccountID = &acc.ID
+	}
 	if refused != nil {
 		if prin.EmployeeID == 0 {
 			h.logAnonymous(r, kind, refused)
 		}
 		h.observeRefusal(base, refused)
 		h.refuse(w, refused, kind, rec)
-		return
-	}
-	// 426 makes Codex switch to HTTP for the rest of the session.
-	if set.DisableWebsocket || !acc.IsChatGPT() {
-		oaError(w, http.StatusUpgradeRequired, "websocket transport not enabled; use HTTP", "invalid_request_error", "websocket_unsupported")
 		return
 	}
 
@@ -151,11 +169,7 @@ func (h *Handler) handleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		oaError(w, status, "upstream websocket unavailable", "server_error", "upstream_unreachable")
 		return
 	}
-	if health.HasQuotaHeaders(resp.Header) && h.quotaDue(acc.ID, 0) {
-		go func(hdr http.Header) {
-			_ = health.RecordQuotaFromHeaders(context.Background(), h.deps.Store, acc.ID, hdr, time.Now())
-		}(resp.Header.Clone())
-	}
+	h.noteQuota(acc.ID, 0, resp.Header)
 
 	// Hand CPA's handshake response headers (model, reasoning flags, …) on.
 	respHdr := http.Header{}
@@ -174,7 +188,7 @@ func (h *Handler) handleResponsesWS(w http.ResponseWriter, r *http.Request) {
 
 	s := &wsSession{
 		h: h, prin: prin, acc: acc, keyHash: secure.HashAPIKey(token), token: token, kind: kind,
-		ip: clientIP, hdr: r.Header.Clone(), client: client, upstream: upstream, done: make(chan struct{}),
+		ip: clientIP, hdr: r.Header.Clone(), session: session, client: client, upstream: upstream, done: make(chan struct{}),
 	}
 	h.trackWS(s, true)
 	defer h.trackWS(s, false)
@@ -199,6 +213,7 @@ type wsSession struct {
 	kind     string
 	ip       string
 	hdr      http.Header
+	session  string // conversation key, for staying on one account
 	client   *websocket.Conn
 	upstream *websocket.Conn
 
@@ -208,9 +223,12 @@ type wsSession struct {
 	done  chan struct{}
 	once  sync.Once
 	// why says which side ended the connection first (client_closed,
-	// upstream_closed, gateway_restart, gateway_refused); turns still in
-	// flight are logged with it.
+	// upstream_closed, gateway_restart, gateway_refused, account_switch);
+	// turns still in flight are logged with it.
 	why string
+	// switching: the account ran out mid-turn and another can take over;
+	// the connection closes after the retryable error, so Codex reconnects.
+	switching bool
 }
 
 func (s *wsSession) run() {
@@ -337,6 +355,10 @@ func (s *wsSession) pumpUpstream() {
 			s.shutdown("client_closed", websocket.CloseGoingAway, "")
 			return
 		}
+		if s.switching {
+			s.shutdown("account_switch", websocket.CloseGoingAway, "account switch")
+			return
+		}
 	}
 }
 
@@ -366,14 +388,22 @@ func (s *wsSession) beginTurn(data []byte) (out []byte, ok, fatal bool) {
 	}
 
 	// Freezes, revocations and account changes apply mid-connection too.
-	prin, acc, refused := h.authorize(ctx, s.token, set)
+	prin, refused := h.authorize(ctx, s.token)
 	if refused != nil {
 		refuse(refused)
 		return nil, false, true
 	}
-	// The bound account cannot change under an open connection's prefix.
+	acc, refused := h.pickAccount(prin, need{model: model, kind: s.kind, chatgpt: true, session: s.session, prefer: s.acc.ID}, set, nil)
+	if refused != nil {
+		refuse(refused)
+		// A model the account may not use: the employee can switch models and
+		// carry on over the same connection.
+		return nil, false, refused.code != "model_not_allowed"
+	}
+	// A connection stays on its account (its responses live there): when
+	// another account has to take over, Codex reconnects.
 	if acc.ID != s.acc.ID {
-		s.sendError(http.StatusConflict, "invalid_request_error", "account_changed", "你的 AI 账号有变动，正在重新连接。")
+		s.sendError(http.StatusConflict, "invalid_request_error", "account_changed", "正在切换到你的另一个 AI 账号，马上重新连接。")
 		return nil, false, true
 	}
 
@@ -444,7 +474,8 @@ func (s *wsSession) onUpstreamEvent(data []byte) []byte {
 		return data
 	}
 	var until time.Time
-	if typ == "error" && gjson.GetBytes(data, "error.type").String() == typeUsageLimit {
+	usedUp := typ == "error" && gjson.GetBytes(data, "error.type").String() == typeUsageLimit
+	if usedUp {
 		// Codex turns plan_type into upgrade advice for the upstream plan;
 		// without it, it just says the limit is reached and when it resets.
 		data, _ = sjson.DeleteBytes(data, "error.plan_type")
@@ -458,6 +489,20 @@ func (s *wsSession) onUpstreamEvent(data []byte) []byte {
 	s.mu.Unlock()
 	if t == nil {
 		return data
+	}
+	if usedUp && s.canSwitch(t.model) {
+		// Another of the employee's accounts can take over: log the turn as
+		// used up (which marks this account), then have Codex retry, which
+		// reconnects and lands on the other account.
+		_, _ = t.parser.Write(append(append([]byte("data: "), data...), '\n', '\n'))
+		s.finishTurn(http.StatusTooManyRequests, "usage_limit_switch", until)
+		s.switching = true
+		b, _ := json.Marshal(map[string]any{
+			"type": "error", "status": http.StatusServiceUnavailable,
+			"error": map[string]any{"type": "server_error", "code": "account_switch",
+				"message": "这个 AI 账号的额度用完了，正在切换到你的另一个账号，马上自动重试。"},
+		})
+		return b
 	}
 	_, _ = t.parser.Write(append(append([]byte("data: "), data...), '\n', '\n'))
 
@@ -529,8 +574,20 @@ func (s *wsSession) complete(t *wsTurn, status int, errType string, until time.T
 	}
 }
 
+// canSwitch reports whether another of the employee's accounts could serve a
+// turn for model if this connection's account ran out.
+func (s *wsSession) canSwitch(model string) bool {
+	set := s.h.deps.Settings.Get(context.Background())
+	_, f := s.h.pickAccount(s.prin, need{model: model, kind: s.kind, chatgpt: true,
+		exclude: map[int64]bool{s.acc.ID: true}}, set, nil)
+	return f == nil
+}
+
 // recordRateLimits stores a codex.rate_limits event as a quota snapshot.
 func (s *wsSession) recordRateLimits(data []byte) {
+	if pct, ok := wsUsedPct(data); ok {
+		s.h.load.set(s.acc.ID, pct)
+	}
 	if !s.h.quotaDue(s.acc.ID, 0) {
 		return
 	}
@@ -580,4 +637,19 @@ func (h *Handler) CloseWebsockets() {
 	for _, s := range sessions {
 		s.shutdown("gateway_restart", websocket.CloseGoingAway, "server restarting")
 	}
+}
+
+// wsUsedPct is the larger used percentage in a codex.rate_limits event.
+func wsUsedPct(data []byte) (float64, bool) {
+	p := gjson.GetBytes(data, "rate_limits.primary.used_percent")
+	q := gjson.GetBytes(data, "rate_limits.secondary.used_percent")
+	switch {
+	case p.Exists() && q.Exists():
+		return max(p.Float(), q.Float()), true
+	case p.Exists():
+		return p.Float(), true
+	case q.Exists():
+		return q.Float(), true
+	}
+	return 0, false
 }
