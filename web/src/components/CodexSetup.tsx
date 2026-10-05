@@ -61,6 +61,10 @@ export function CodexSetup({
       <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-3">
         <div className="mb-2 text-sm font-medium text-slate-800">一条命令配好 Codex（推荐）</div>
         <InstallCommand keyValue={keyOK ? key : ""} model={model} tools={tools} auto={auto} />
+        <p className="mt-2 text-xs leading-relaxed text-slate-500">
+          装了 CC Switch 的电脑（macOS / Linux）：命令会等你退出 CC Switch，然后把网关加成 CC Switch 里的「公司 AI 网关」（带生图和联网搜索），
+          不改 Codex 的配置文件。之后在 CC Switch 里点「启用」，切回官方也在 CC Switch 里点「OpenAI Official」。
+        </p>
       </div>
 
       <details className="rounded-lg border border-slate-200 px-4 py-3">

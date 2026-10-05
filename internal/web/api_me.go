@@ -329,7 +329,7 @@ func (s *Server) handleConfigSnippets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	cs := s.codexSetup(ctx, currentEmployee(r).ID)
 	base, provider, source, model, models := cs.base, cs.provider, cs.source, cs.model, cs.models
-	chatgpt, wsLine, toolsLine := cs.chatgpt, cs.wsLine, cs.toolsLine
+	chatgpt := cs.chatgpt
 	ids := make([]string, len(models))
 	modelList := make([]map[string]any, len(models))
 	for i, m := range models {
@@ -358,17 +358,7 @@ model = "填入模型 id"`, provider, base)
 	// {{KEY}} and {{MODEL}}, and the key never comes back here.
 	ccToml := ""
 	if chatgpt {
-		ccToml = fmt.Sprintf(`model_provider = "custom"
-model = "{{MODEL}}"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "AI 订阅网关"
-base_url = "%s"
-wire_api = "responses"
-requires_openai_auth = false
-experimental_bearer_token = "{{KEY}}"
-%s%s`, base, wsLine, toolsLine)
+		ccToml = cs.ccSwitchToml("{{KEY}}", "{{MODEL}}")
 	}
 
 	allowed := cs.thirdParty

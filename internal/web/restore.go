@@ -76,6 +76,11 @@ if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
   fi
 fi
 
+if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1 &&
+  [ "$(sqlite3 "$DB" "SELECT is_current FROM providers WHERE id='aiseat-gateway' AND app_type='codex'" 2>/dev/null)" = 1 ]; then
+  echo "你现在用的是 CC Switch 里的「公司 AI 网关」：打开 CC Switch → Codex，点「OpenAI Official」就切回官方了。"
+fi
+
 AUTH="$DIR/auth.json"
 if [ -f "$AUTH" ] && grep -q '"refresh_token"' "$AUTH"; then
   echo "完成。重新打开 Codex（桌面版要完全退出再打开）就是你自己的 ChatGPT 账号。"

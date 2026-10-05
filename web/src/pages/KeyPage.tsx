@@ -131,9 +131,9 @@ export function KeyPage() {
             切回官方登录（不用公司网关了）
           </summary>
           <p className="mt-2 text-xs leading-relaxed text-slate-500">
-            把 Codex 的配置恢复成你自己的 ChatGPT 账号：只去掉网关那几行，其它设置不动，改之前先备份。用 CC Switch 的话，
-            它的「OpenAI Official」等供应商里可能也存了网关配置，这条命令一并清掉（要先退出 CC Switch）。只在 CC Switch
-            里切换是切不回去的。
+            用 CC Switch 的：直接在 CC Switch → Codex 里点「OpenAI Official」就行（一条命令安装时，网关是作为 CC Switch
+            的「公司 AI 网关」加进去的）。没用 CC Switch、或者以前用旧版命令装过的：运行下面的命令，它只去掉网关那几行，
+            其它设置不动，改之前先备份；CC Switch 的「OpenAI Official」里如果混进了网关配置，也一并清掉（要先退出 CC Switch）。
           </p>
           <div className="mt-3 space-y-2">
             <div className="text-xs text-slate-500">macOS / Linux（终端）</div>

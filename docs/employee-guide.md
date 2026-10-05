@@ -21,11 +21,21 @@
 - 终端里设了代理（`HTTPS_PROXY` 等）时，把网关域名加进直连名单（`NO_PROXY`），避免每次请求多绕几秒；
 - 命令里不含 Key 本身，只有一个 10 分钟内有效、只能用一次的安装码，贴到哪里都不会泄露 Key。
 
+### 用 CC Switch 的人
+
+电脑上装了 CC Switch（macOS / Linux）时，上面的一条命令不会改 Codex 的配置文件，而是：
+
+1. 提示你退出 CC Switch，退出后自动继续；
+2. 去掉以前旧版命令直接写进 `config.toml` 的网关配置（CC Switch「OpenAI Official」里混进去的也一并去掉）；
+3. 把网关加成 CC Switch 里的供应商「公司 AI 网关」，配置是完整的：Key、WebSocket、生图和联网搜索都在（CC Switch 自带的导入做不到这一点）。
+
+之后打开 CC Switch → Codex，在「公司 AI 网关」上点「启用」，重新打开 Codex 即可。要用自己的官方账号时，在 CC Switch 里点「OpenAI Official」；再切回来点「公司 AI 网关」。重置 Key 后重新运行一次安装命令，CC Switch 里的 Key 会跟着更新。
+
 ### 切回官方登录
 
-不用公司网关了、想换回自己的 ChatGPT 账号时，在「我的 Key」页展开"切回官方登录"，复制命令运行（macOS / Linux：`curl -fsSL https://ai.cloudwaveai.cn/restore | sh`；Windows：`irm https://ai.cloudwaveai.cn/restore.ps1 | iex`）。它只去掉网关写进去的那几行，其它设置不动，改之前先备份。
+用 CC Switch 的，在 CC Switch 里切就行（见上）。没用 CC Switch 的，不用公司网关了、想换回自己的 ChatGPT 账号时，在「我的 Key」页展开"切回官方登录"，复制命令运行（macOS / Linux：`curl -fsSL https://ai.cloudwaveai.cn/restore | sh`；Windows：`irm https://ai.cloudwaveai.cn/restore.ps1 | iex`）。它只去掉网关写进去的那几行，其它设置不动，改之前先备份。
 
-**用 CC Switch 的人注意**：上面的一条命令安装是直接改 `config.toml` 的，CC Switch 不知道。之后在 CC Switch 里切换时，它会把这份网关配置存进它当时认为在用的供应商（通常是「OpenAI Official」），于是"切回官方"切回来的还是网关。遇到这种情况运行上面的命令即可，它会把 CC Switch 里存进去的网关配置一并清掉（要先退出 CC Switch）。
+**以前用旧版命令装过、又在用 CC Switch 的**：旧版命令直接改了 `config.toml`，CC Switch 不知道，之后一切换就把网关配置存进了「OpenAI Official」，于是"切回官方"切回来的还是网关。重新运行一次新的安装命令（或上面的切回命令）就会清掉。
 
 ### 用 CC Switch 导入（经常切换服务商的人）
 
