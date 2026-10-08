@@ -11,7 +11,7 @@ import {
   Button,
   StatusBadge,
 } from "../components/ui";
-import { fmtCompact, fmtDateTime, fmtNum } from "../lib/format";
+import { fmtCompact, fmtDateTime, fmtDayShort, fmtNum } from "../lib/format";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { AddAccountWizard } from "../components/AddAccountWizard";
@@ -51,6 +51,61 @@ function QuotaRow({
       <span className="w-11 shrink-0 text-right tabular-nums text-slate-600">
         {pct == null ? "—" : `${v.toFixed(1)}%`}
       </span>
+    </div>
+  );
+}
+
+// SubscriptionCell shows when a ChatGPT account next renews (or ends, if it
+// was cancelled), with the days left; amber within a week of an end.
+function SubscriptionCell({ a }: { a: AccountRow }) {
+  if (!isChatGPT(a.provider)) return <span className="text-slate-300">—</span>;
+  const s = a.subscription;
+  if (!s) return <span className="text-xs text-slate-400">查询中…</span>;
+  const day = fmtDayShort;
+  const daysLeft = (v: string) => Math.ceil((new Date(v).getTime() - Date.now()) / 86400000);
+  const left = (v: string) => {
+    const d = daysLeft(v);
+    return d > 0 ? `还有 ${d} 天` : d === 0 ? "今天" : `已过 ${-d} 天`;
+  };
+  const title = [
+    s.plan && `套餐：${s.plan}`,
+    s.renews_at && `下次续费：${fmtDateTime(s.renews_at)}`,
+    s.expires_at && `本期到：${fmtDateTime(s.expires_at)}`,
+    s.cancels_at && `已取消，${fmtDateTime(s.cancels_at)} 结束`,
+    `查询于 ${fmtDateTime(s.checked_at)}`,
+    s.error && `最近一次查询失败：${s.error}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  let main: string;
+  let sub = "";
+  let tone = "text-slate-700";
+  if (s.delinquent) {
+    main = "欠费";
+    sub = "扣款失败，尽快处理";
+    tone = "text-rose-600";
+  } else if (s.cancels_at) {
+    main = `${day(s.cancels_at)} 到期`;
+    sub = `不再续费 · ${left(s.cancels_at)}`;
+    tone = daysLeft(s.cancels_at) <= 7 ? "text-amber-600" : "text-slate-700";
+  } else if (s.active && s.renews_at) {
+    main = `${day(s.renews_at)} 续费`;
+    sub = left(s.renews_at);
+  } else if (s.active && s.expires_at) {
+    main = `${day(s.expires_at)} 到期`;
+    sub = left(s.expires_at);
+  } else {
+    main = "未订阅";
+    sub = s.expires_at ? `${day(s.expires_at)} 已结束` : "";
+    tone = "text-rose-600";
+  }
+  return (
+    <div className="whitespace-nowrap" title={title}>
+      <div className={"text-sm " + tone}>{main}</div>
+      <div className="text-[11px] text-slate-400">
+        {sub}
+        {s.error && <span className="ml-1 text-amber-500">（未能核实）</span>}
+      </div>
     </div>
   );
 }
@@ -127,6 +182,7 @@ export function AccountsPage() {
                   <th className="px-4 py-2.5 font-medium">账号</th>
                   <th className="px-4 py-2.5 font-medium">使用人</th>
                   <th className="px-4 py-2.5 font-medium">IP 组</th>
+                  <th className="px-4 py-2.5 font-medium">订阅</th>
                   <th className="px-4 py-2.5 font-medium">状态</th>
                   <th className="px-4 py-2.5 font-medium">额度（5 小时 / 每周）</th>
                   <th className="px-4 py-2.5 text-right font-medium">
@@ -195,6 +251,9 @@ export function AccountsPage() {
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">
                       {a.ip_group_name || "-"}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <SubscriptionCell a={a} />
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex flex-wrap items-center gap-1.5">

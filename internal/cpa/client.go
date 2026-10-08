@@ -55,6 +55,9 @@ type AuthFile struct {
 	IDToken struct {
 		ChatGPTAccountID string `json:"chatgpt_account_id"`
 		PlanType         string `json:"plan_type"`
+		// SubscriptionActiveUntil is when the paid period the token was
+		// issued in ends (RFC 3339); only as fresh as the last token refresh.
+		SubscriptionActiveUntil string `json:"chatgpt_subscription_active_until"`
 	} `json:"id_token"`
 }
 

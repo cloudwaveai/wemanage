@@ -212,6 +212,17 @@ export interface EmployeeRow {
 }
 
 // --- accounts (snake_case) ---
+// A ChatGPT account's subscription as ChatGPT reports it (checked every 6 h).
+export interface AccountSubscription {
+  plan: string;
+  active: boolean;
+  renews_at: string | null; // next charge, while it renews
+  expires_at: string | null; // end of the paid period
+  cancels_at: string | null; // set when cancelled: it ends then, no renewal
+  delinquent: boolean; // payment failed
+  checked_at: string;
+  error?: string; // last check failed; the dates above are the last known
+}
 export interface DeviceProfile {
   os: string;
   terminal: string;
@@ -235,6 +246,7 @@ export interface AccountRow {
   allowed_models: string[] | null; // null: every model
   allow_third_party: boolean; // clients other than Codex may use it
   quota?: AccountQuota; // latest snapshot; absent until first seen
+  subscription?: AccountSubscription; // ChatGPT accounts, once checked
   usage: AccountUsage;
 }
 export interface AccountQuota {

@@ -136,6 +136,10 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 	for i, a := range rows {
 		ids[i] = a.ID
 	}
+	subs, err := s.deps.Store.Subscriptions(ctx)
+	if err != nil {
+		s.deps.Log.Warn("account list: subscriptions", "err", err)
+	}
 	quotas, err := s.deps.Store.LatestQuotas(ctx, ids)
 	if err != nil {
 		s.deps.Log.Warn("account list: quotas", "err", err)
@@ -158,6 +162,9 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 			"rate_limited_until": a.RateLimitedUntil, "max_concurrency": a.MaxConcurrency,
 			"device_profile": a.DeviceProfile, "cpa_drift": a.CPADrift,
 			"allowed_models": a.AllowedModels, "allow_third_party": a.AllowThirdParty,
+		}
+		if sub, ok := subs[a.ID]; ok {
+			m["subscription"] = sub
 		}
 		if q, ok := quotas[a.ID]; ok {
 			m["quota"] = quotaJSON(q)
@@ -199,6 +206,15 @@ func (s *Server) handleRefreshQuota(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, err := s.deps.Quota.Refresh(r.Context(), id)
+	// The subscription comes along with a manual refresh (best effort).
+	var sub *store.Subscription
+	if err == nil {
+		if acc, aerr := s.deps.Store.GetAccount(r.Context(), id); aerr == nil && acc.IsChatGPT() {
+			if got, serr := s.deps.Quota.CheckSubscription(r.Context(), acc); serr == nil {
+				sub = &got
+			}
+		}
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "account not found")
@@ -211,7 +227,7 @@ func (s *Server) handleRefreshQuota(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "查询额度失败："+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"quota": quotaJSON(q)})
+	writeJSON(w, http.StatusOK, map[string]any{"quota": quotaJSON(q), "subscription": sub})
 }
 
 // quotaJSON renders a quota snapshot: primary is the 5-hour window, secondary

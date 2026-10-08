@@ -67,7 +67,8 @@ func (f *fakeCPAQuota) server(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v0/management/auth-files", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{
-			{"name": "busy.json", "auth_index": "idx-busy", "provider": "codex"},
+			{"name": "busy.json", "auth_index": "idx-busy", "provider": "codex",
+				"id_token": map[string]any{"plan_type": "plus", "chatgpt_subscription_active_until": "2026-11-04T11:20:22+00:00"}},
 			{"name": "idle.json", "auth_index": "idx-idle", "provider": "codex",
 				"id_token": map[string]any{"chatgpt_account_id": "acct-uuid-1", "plan_type": "plus"}},
 			{"name": "kimi.json", "auth_index": "idx-kimi", "provider": "kimi"},
@@ -85,6 +86,13 @@ func (f *fakeCPAQuota) server(t *testing.T) *httptest.Server {
 				{"id":"late","status":"available","title":"Full reset","expires_at":"2026-11-29T18:21:14.580904Z"},
 				{"id":"soon","status":"available","title":"Full reset","expires_at":"2026-10-29T18:21:14.580904Z"},
 				{"id":"used","status":"redeemed","title":"Full reset","expires_at":"2026-10-01T00:00:00Z"}]}`})
+			return
+		case health.CodexAccountsCheckURL:
+			if c.AuthIndex == "idx-busy" { // this account's check fails
+				_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 403, "body": `{"detail":"nope"}`})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 200, "body": accountsCheckBody})
 			return
 		case health.CodexResetCreditConsumeURL:
 			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 200, "body": `{"code":"reset","windows_reset":2}`})
@@ -293,5 +301,59 @@ func TestResetCredits(t *testing.T) {
 	after, _ := st.GetAccount(ctx, acc.ID)
 	if after.RateLimitedUntil != nil {
 		t.Fatalf("account still rate limited until %v", after.RateLimitedUntil)
+	}
+}
+
+// accountsCheckBody is ChatGPT's accounts/check reply in the shape seen in
+// production (2026-10-08): the account's entry plus a second one.
+const accountsCheckBody = `{"accounts":{
+	"default":{"account":{"plan_type":"free"},"entitlement":{"has_active_subscription":false,"subscription_plan":"chatgptfreeplan","expires_at":null,"renews_at":null,"cancels_at":null,"is_delinquent":false}},
+	"acct-uuid-1":{"account":{"plan_type":"plus"},"entitlement":{"has_active_subscription":true,"is_active_subscription_gratis":false,
+		"subscription_plan":"chatgptplusplan","expires_at":"2026-10-29T08:53:11+00:00","renews_at":"2026-10-29T02:53:11+00:00",
+		"cancels_at":null,"billing_period":null,"is_delinquent":false,"billing_currency":"USD"}}},"account_ordering":["acct-uuid-1"]}`
+
+func TestCheckSubscription(t *testing.T) {
+	st, ctx := newStore(t)
+	box := newBox(t)
+	idle := mkAccount(t, st, ctx, box, "idle.json")
+	busy := mkAccount(t, st, ctx, box, "busy.json")
+	f := &fakeCPAQuota{}
+	srv := f.server(t)
+	p := &health.QuotaProber{Store: st, CPA: cpa.NewClient(srv.URL, "mk", srv.Client()), Settings: settings.NewService(st)}
+
+	sub, err := p.CheckSubscription(ctx, idle)
+	if err != nil || sub.Plan != "plus" || !sub.Active || sub.RenewsAt == nil || sub.CancelsAt != nil ||
+		sub.RenewsAt.UTC().Format(time.RFC3339) != "2026-10-29T02:53:11Z" {
+		t.Fatalf("subscription %+v %v (want the account's own entry)", sub, err)
+	}
+	// A failed check keeps the id_token's paid-until date and says why.
+	if _, err := p.CheckSubscription(ctx, busy); err == nil {
+		t.Fatal("want the check to fail")
+	}
+	subs, _ := st.Subscriptions(ctx)
+	if s := subs[busy.ID]; s.Error == "" || s.ExpiresAt == nil || s.ExpiresAt.UTC().Format(time.RFC3339) != "2026-11-04T11:20:22Z" || s.Plan != "plus" {
+		t.Fatalf("fallback %+v", s)
+	}
+	if s := subs[idle.ID]; s.RenewsAt == nil || s.Error != "" {
+		t.Fatalf("saved %+v", s)
+	}
+
+	// The background job checks only accounts not checked lately.
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
+	if err := p.RunSubscriptions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	n := 0
+	for _, c := range f.calls {
+		if c.URL == health.CodexAccountsCheckURL {
+			n++
+		}
+	}
+	f.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("checked %d fresh subscriptions again", n)
 	}
 }

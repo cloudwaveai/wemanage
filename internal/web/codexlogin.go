@@ -176,6 +176,7 @@ func (s *Server) completeCodexLogin(w http.ResponseWriter, r *http.Request, ob s
 				_ = s.deps.Store.SetCPADrift(ctx, acc.ID, "apply on relogin failed: "+err.Error())
 			}
 		}
+		s.checkSubscriptionSoon(acc)
 		_ = s.deps.Store.CompleteOnboarding(ctx, ob.State, acc.ID)
 		s.audit(r, "account_relogin", "account", fmt.Sprint(acc.ID), map[string]any{"email": tok.email, "via": "codex"})
 		writeJSON(w, http.StatusOK, map[string]any{"account_id": acc.ID, "email": tok.email, "provider": store.ProviderCodex, "updated": true})
@@ -186,9 +187,23 @@ func (s *Server) completeCodexLogin(w http.ResponseWriter, r *http.Request, ob s
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.checkSubscriptionSoon(acc)
 	_ = s.deps.Store.CompleteOnboarding(ctx, ob.State, acc.ID)
 	s.audit(r, "account_added", "account", fmt.Sprint(acc.ID), map[string]any{"email": tok.email, "via": "codex", "cpa_name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"account_id": acc.ID, "email": tok.email, "provider": store.ProviderCodex})
+}
+
+// checkSubscriptionSoon looks up a just-added account's subscription in the
+// background, so the account list shows its renewal date right away.
+func (s *Server) checkSubscriptionSoon(acc store.Account) {
+	if s.deps.Quota == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, _ = s.deps.Quota.CheckSubscription(ctx, acc)
+	}()
 }
 
 type codexTokens struct {

@@ -52,6 +52,15 @@ func Register(c *cron.Cron, d Deps) {
 		})
 	}
 
+	// ChatGPT subscriptions (next renewal) — checked every 6 hours per account.
+	if d.Quota != nil {
+		_, _ = c.AddFunc("@every 15m", func() {
+			if err := d.Quota.RunSubscriptions(ctx); err != nil {
+				log.Warn("subscription check", "err", err)
+			}
+		})
+	}
+
 	// Quota reminders employees asked for — every 2 minutes.
 	if d.QuotaAlerts != nil {
 		_, _ = c.AddFunc("@every 2m", func() {
