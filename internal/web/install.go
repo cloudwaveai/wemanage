@@ -226,7 +226,7 @@ no_proxy_rc() {
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}` + host + `"
 export no_proxy="${no_proxy:+$no_proxy,}` + host + `"
 AISEAT_RC
-      echo "✓ 检测到终端代理，已在 $RC 里把 ` + host + ` 设为直连（新开的终端生效）"
+      echo "✓ 检测到终端代理，已在 ${RC} 里把 ` + host + ` 设为直连（新开的终端生效）"
     fi
   fi
   echo "提示：用 Clash 等代理软件的话，请把 ` + host + ` 设为直连（DIRECT）。"
@@ -253,12 +253,12 @@ if [ -f "$CCDB" ] && command -v sqlite3 >/dev/null 2>&1 && [ -z "${AISEAT_NO_CCS
     cp "$CONFIG" "$CONFIG.bak-$TS"
     strip < "$CONFIG" > "$TMP"
     cat "$TMP" > "$CONFIG"
-    echo "✓ 已去掉之前直接写进 $CONFIG 的网关配置（备份：$CONFIG.bak-$TS）"
+    echo "✓ 已去掉之前直接写进 ${CONFIG} 的网关配置（备份：${CONFIG}.bak-${TS}）"
   fi
   for row in $(sqlite3 "$CCDB" "SELECT rowid FROM providers WHERE app_type='codex' AND json_extract(settings_config,'\$.config') LIKE '%model_providers.aiseat%'"); do
     sqlite3 "$CCDB" "SELECT json_extract(settings_config,'\$.config') FROM providers WHERE rowid=$row" | strip > "$TMP"
     sqlite3 "$CCDB" "UPDATE providers SET settings_config=json_set(settings_config,'\$.config',CAST(readfile('$TMP') AS TEXT)) WHERE rowid=$row"
-    echo "✓ 已从 CC Switch 的「$(sqlite3 "$CCDB" "SELECT name FROM providers WHERE rowid=$row")」里去掉混进去的网关配置"
+    echo "✓ 已从 CC Switch 的「$(sqlite3 "${CCDB}" "SELECT name FROM providers WHERE rowid=${row}")」里去掉混进去的网关配置"
   done
   cat > "$TMP" <<'AISEAT_CC'
 ` + e.ccSettings + `
@@ -267,7 +267,7 @@ AISEAT_CC
     VALUES ('` + ccSwitchProviderID + `', 'codex', '公司 AI 网关', CAST(readfile('$TMP') AS TEXT), '` + portal + `', $(date +%s)000,
       '{\"commonConfigEnabled\":true,\"endpointAutoSelect\":true,\"apiFormat\":\"openai_responses\"}')
     ON CONFLICT(id, app_type) DO UPDATE SET settings_config=excluded.settings_config, website_url=excluded.website_url"
-  echo "✓ 已写入 CC Switch 的供应商「公司 AI 网关」（数据库备份：$CCDB.bak-$TS）"
+  echo "✓ 已写入 CC Switch 的供应商「公司 AI 网关」（数据库备份：${CCDB}.bak-${TS}）"
   if [ "$(sqlite3 "$CCDB" "SELECT is_current FROM providers WHERE id='` + ccSwitchProviderID + `' AND app_type='codex'")" = 1 ] && [ -f "$CONFIG" ]; then
     cp "$CONFIG" "$CONFIG.bak-$TS"
     awk -v key='` + e.key + `' '
@@ -276,11 +276,11 @@ AISEAT_CC
       { print }
     ' "$CONFIG" > "$TMP"
     cat "$TMP" > "$CONFIG"
-    echo "✓ 公司网关正在使用，新 Key 已同时写进 $CONFIG"
+    echo "✓ 公司网关正在使用，新 Key 已同时写进 ${CONFIG}"
   fi
   OLD="$(sqlite3 "$CCDB" "SELECT group_concat(name,'、') FROM providers WHERE app_type='codex' AND id<>'` + ccSwitchProviderID + `' AND website_url LIKE '%` + host + `%'")"
   if [ -n "$OLD" ]; then
-    echo "提示：CC Switch 里的「$OLD」是以前导入的网关，没有生图和联网搜索，可以删掉。"
+    echo "提示：CC Switch 里的「${OLD}」是以前导入的网关，没有生图和联网搜索，可以删掉。"
   fi
   no_proxy_rc
   echo "完成。打开 CC Switch → Codex，在「公司 AI 网关」上点「启用」，再重新打开 Codex。以后要用自己的官方账号，在 CC Switch 里点「OpenAI Official」。"
@@ -292,7 +292,7 @@ cat > "$NEW" <<'AISEAT_TOP'
 if [ -f "$CONFIG" ]; then
   BACKUP="$CONFIG.bak-$TS"
   cp "$CONFIG" "$BACKUP"
-  echo "已备份原配置：$BACKUP"
+  echo "已备份原配置：${BACKUP}"
   awk '
     /^[ \t]*\[/ { intable = 1; skip = ($0 ~ /^[ \t]*\[model_providers\.aiseat[].]/) }
     skip { next }
@@ -305,7 +305,7 @@ cat >> "$NEW" <<'AISEAT_TABLE'
 ` + e.table + `AISEAT_TABLE
 cat "$NEW" > "$CONFIG"
 chmod 600 "$CONFIG"
-echo "✓ 已写入 $CONFIG"
+echo "✓ 已写入 ${CONFIG}"
 no_proxy_rc
 echo "以后要切回自己的官方账号，运行：curl -fsSL ` + portal + `/restore | sh"
 if command -v codex >/dev/null 2>&1; then

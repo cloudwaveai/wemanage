@@ -74,7 +74,7 @@ INSERT INTO providers (id, app_type, name, settings_config, website_url) VALUES 
 	_ = os.WriteFile(filepath.Join(bin, "pgrep"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
 	run := func() string {
 		cmd := exec.Command("sh", "-c", script())
-		cmd.Env = []string{"HOME=" + home, "PATH=" + bin + ":" + os.Getenv("PATH"), "SHELL=/bin/zsh"}
+		cmd.Env = []string{"HOME=" + home, "LC_ALL=zh_CN.UTF-8", "PATH=" + bin + ":" + os.Getenv("PATH"), "SHELL=/bin/zsh"}
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("install: %v\n%s", err, out)

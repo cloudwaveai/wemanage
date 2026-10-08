@@ -80,7 +80,7 @@ model = "kept-inside-a-table"
 		t.Fatal(err)
 	}
 	run := exec.Command("sh", "-c", script)
-	run.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "SHELL=/bin/zsh", "HTTPS_PROXY=http://127.0.0.1:7890"}
+	run.Env = []string{"HOME=" + home, "LC_ALL=zh_CN.UTF-8", "PATH=" + os.Getenv("PATH"), "SHELL=/bin/zsh", "HTTPS_PROXY=http://127.0.0.1:7890"}
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("script failed: %v\n%s", err, out)
@@ -129,7 +129,7 @@ model = "kept-inside-a-table"
 	_ = json.Unmarshal(raw, &cmd)
 	path = strings.TrimPrefix(strings.TrimSuffix(cmd.Unix, " | sh"), "curl -fsSL http://localhost")
 	run = exec.Command("sh", "-c", get())
-	run.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "SHELL=/bin/zsh", "HTTPS_PROXY=http://127.0.0.1:7890"}
+	run.Env = []string{"HOME=" + home, "LC_ALL=zh_CN.UTF-8", "PATH=" + os.Getenv("PATH"), "SHELL=/bin/zsh", "HTTPS_PROXY=http://127.0.0.1:7890"}
 	if out, err := run.CombinedOutput(); err != nil {
 		t.Fatalf("second run: %v\n%s", err, out)
 	}

@@ -49,12 +49,12 @@ strip() {
 
 if [ -f "$CONFIG" ] && grep -q 'model_providers\.aiseat\|^[ 	]*model_provider[ 	]*=[ 	]*"aiseat"' "$CONFIG"; then
   cp "$CONFIG" "$CONFIG.bak-$TS"
-  echo "已备份当前配置：$CONFIG.bak-$TS"
+  echo "已备份当前配置：${CONFIG}.bak-${TS}"
   strip < "$CONFIG" > "$TMP"
   cat "$TMP" > "$CONFIG"
-  echo "✓ 已从 $CONFIG 去掉网关配置"
+  echo "✓ 已从 ${CONFIG} 去掉网关配置"
 else
-  echo "✓ $CONFIG 里没有网关配置"
+  echo "✓ ${CONFIG} 里没有网关配置"
 fi
 
 # CC Switch 切换时会把当时的配置存进它的供应商，网关配置可能已经存进去了。
@@ -62,9 +62,9 @@ DB="$HOME/.cc-switch/cc-switch.db"
 if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
   ROWS="$(sqlite3 "$DB" "SELECT rowid FROM providers WHERE app_type='codex' AND json_extract(settings_config,'\$.config') LIKE '%model_providers.aiseat%'" 2>/dev/null || true)"
   if [ -n "$ROWS" ]; then
-    NAMES="$(sqlite3 "$DB" "SELECT group_concat(name,'、') FROM providers WHERE rowid IN ($(echo $ROWS | tr ' ' ','))")"
+    NAMES="$(sqlite3 "${DB}" "SELECT group_concat(name,'、') FROM providers WHERE rowid IN ($(echo ${ROWS} | tr ' ' ','))")"
     if pgrep -x cc-switch >/dev/null 2>&1; then
-      echo "！CC Switch 的「$NAMES」里也存了网关配置。请先退出 CC Switch（菜单栏图标 → 退出），再运行一次这条命令。"
+      echo "！CC Switch 的「${NAMES}」里也存了网关配置。请先退出 CC Switch（菜单栏图标 → 退出），再运行一次这条命令。"
       exit 1
     fi
     cp "$DB" "$DB.bak-$TS"
@@ -72,7 +72,7 @@ if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
       sqlite3 "$DB" "SELECT json_extract(settings_config,'\$.config') FROM providers WHERE rowid=$row" | strip > "$TMP"
       sqlite3 "$DB" "UPDATE providers SET settings_config=json_set(settings_config,'\$.config',CAST(readfile('$TMP') AS TEXT)) WHERE rowid=$row"
     done
-    echo "✓ 已从 CC Switch 的「$NAMES」里去掉网关配置（备份：$DB.bak-$TS）"
+    echo "✓ 已从 CC Switch 的「${NAMES}」里去掉网关配置（备份：${DB}.bak-${TS}）"
   fi
 fi
 
