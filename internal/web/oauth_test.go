@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -29,8 +28,8 @@ func TestOAuthCompleteExplainsRefusals(t *testing.T) {
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.ReadAll(r.Body)
 		switch r.URL.Path {
-		case "/v0/management/codex-auth-url":
-			_, _ = io.WriteString(w, `{"status":"ok","url":"https://auth.openai.com/x","state":"st-now"}`)
+		case "/v0/management/antigravity-auth-url":
+			_, _ = io.WriteString(w, `{"status":"ok","url":"https://accounts.google.com/x","state":"st-now"}`)
 		case "/v0/management/auth-files":
 			_, _ = io.WriteString(w, `{"files":[]}`)
 		case "/v0/management/oauth-callback":
@@ -62,26 +61,26 @@ func TestOAuthCompleteExplainsRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp, body := admin.do(http.MethodPost, "/api/admin/accounts/oauth-start", `{"ip_group_id":`+itoa(g.ID)+`}`); resp.StatusCode != 200 {
+	if resp, body := admin.do(http.MethodPost, "/api/admin/accounts/login-start", `{"provider":"antigravity","ip_group_id":`+itoa(g.ID)+`}`); resp.StatusCode != 200 {
 		t.Fatalf("start: %d %s", resp.StatusCode, body)
 	}
 
 	complete := func(redirect string) (int, string) {
-		resp, body := admin.do(http.MethodPost, "/api/admin/accounts/oauth-complete",
+		resp, body := admin.do(http.MethodPost, "/api/admin/accounts/login-complete",
 			`{"state":"st-now","redirect_url":"`+redirect+`"}`)
 		return resp.StatusCode, string(body)
 	}
 
 	// A callback from an earlier link never reaches CPA.
-	if code, body := complete("http://localhost:1455/auth/callback?code=c&state=st-old"); code != http.StatusBadRequest || !strings.Contains(body, "之前的另一个登录链接") {
+	if code, body := complete("http://localhost:51121/oauth-callback?code=c&state=st-old"); code != http.StatusBadRequest || !strings.Contains(body, "之前的另一个登录链接") {
 		t.Fatalf("earlier link: %d %s", code, body)
 	}
 	cpaAnswer.status, cpaAnswer.body = http.StatusConflict, `{"error":"Timeout waiting for OAuth callback","status":"error"}`
-	if code, body := complete("http://localhost:1455/auth/callback?code=c&state=st-now"); code != http.StatusGone || !strings.Contains(body, "5 分钟") {
+	if code, body := complete("http://localhost:51121/oauth-callback?code=c&state=st-now"); code != http.StatusGone || !strings.Contains(body, "5 分钟") {
 		t.Fatalf("timed out: %d %s", code, body)
 	}
 	cpaAnswer.status, cpaAnswer.body = http.StatusBadRequest, `{"error":"code or error is required","status":"error"}`
-	if code, body := complete("http://localhost:1455/auth/callback?state=st-now"); code != http.StatusBadRequest || !strings.Contains(body, "localhost:1455") {
+	if code, body := complete("http://localhost:51121/oauth-callback?state=st-now"); code != http.StatusBadRequest || !strings.Contains(body, "localhost:51121") {
 		t.Fatalf("no code: %d %s", code, body)
 	}
 }
@@ -170,16 +169,5 @@ func TestGenericLoginAddsProviderAccounts(t *testing.T) {
 	}
 	if got["xai"] != "xai-me.json" || got["antigravity"] != "antigravity-me.json" {
 		t.Fatalf("accounts: %+v", got)
-	}
-}
-
-func TestCodexLoginURLIsTheOfficialOne(t *testing.T) {
-	in := "https://auth.openai.com/oauth/authorize?client_id=app_X&code_challenge=c&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&prompt=login&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile+offline_access&state=st"
-	out := web.CodexLoginURL(in)
-	u, _ := url.Parse(out)
-	q := u.Query()
-	if q.Has("prompt") || q.Get("originator") != "codex_cli_rs" || q.Get("state") != "st" || q.Get("code_challenge") != "c" ||
-		q.Get("redirect_uri") != "http://localhost:1455/auth/callback" || u.Host != "auth.openai.com" {
-		t.Fatalf("login url: %s", out)
 	}
 }

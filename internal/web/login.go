@@ -34,7 +34,8 @@ type loginProvider struct {
 // loginProviders are CPA's logins except Claude, which the company does not
 // proxy.
 var loginProviders = []loginProvider{
-	{ID: "codex", Label: "ChatGPT", path: "/codex-auth-url", Paste: true, Callback: "http://localhost:1455/auth/callback",
+	// ChatGPT is logged in by the gateway itself (codexlogin.go), not CPA.
+	{ID: "codex", Label: "ChatGPT", Paste: true, Callback: codexRedirectURI,
 		Note: "ChatGPT Plus / Pro / Team 账号，员工用 Codex。有 5 小时 / 每周额度显示。"},
 	{ID: "kimi", Label: "Kimi Code", path: "/kimi-auth-url",
 		Note: "kimi.com 的 Kimi Code 会员（K2 / K3 系列模型）。"},
@@ -97,6 +98,10 @@ func (s *Server) startLogin(w http.ResponseWriter, r *http.Request, provider str
 		writeErr(w, http.StatusBadRequest, "不支持的账号类型："+provider)
 		return
 	}
+	if p.ID == store.ProviderCodex {
+		s.startCodexLogin(w, r, p, ipGroupID, os)
+		return
+	}
 	ctx := r.Context()
 	// Accounts that exist now; the one that appears after login is the new one.
 	known, err := s.deps.CPA.ListAuthFiles(ctx)
@@ -108,9 +113,6 @@ func (s *Server) startLogin(w http.ResponseWriter, r *http.Request, provider str
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "CPA 没能开始 "+p.Label+" 登录："+err.Error())
 		return
-	}
-	if p.ID == store.ProviderCodex {
-		ls.URL = codexLoginURL(ls.URL)
 	}
 	names := make([]string, 0, len(known))
 	for _, f := range known {
@@ -167,6 +169,10 @@ func (s *Server) handleLoginComplete(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadRequest, "这个回调地址来自之前的另一个登录链接。请用上面「复制登录链接」里的链接重新登录，再粘回新的回调地址。")
 				return
 			}
+		}
+		if p.ID == store.ProviderCodex {
+			s.completeCodexLogin(w, r, ob, redirect)
+			return
 		}
 		if err := s.deps.CPA.PostOAuthCallback(ctx, p.ID, redirect); err != nil {
 			status, msg := oauthCallbackError(err, p)
@@ -225,25 +231,6 @@ func (s *Server) handleLoginComplete(w http.ResponseWriter, r *http.Request) {
 	_ = s.deps.Store.CompleteOnboarding(ctx, body.State, acc.ID)
 	s.audit(r, "account_added", "account", fmt.Sprint(acc.ID), map[string]any{"email": acc.Email, "via": p.ID, "cpa_name": newFile.Name})
 	writeJSON(w, http.StatusOK, map[string]any{"account_id": acc.ID, "email": acc.Email, "provider": p.ID})
-}
-
-// codexLoginURL makes CPA's ChatGPT login link the official Codex CLI's: no
-// prompt=login, which makes OpenAI ask for the password again even in a
-// browser already signed in to that account (and that password step is where
-// logins were failing), and the CLI's originator. Client, redirect, scopes,
-// state and PKCE stay CPA's, so CPA completes the login as before.
-func codexLoginURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	q := u.Query()
-	q.Del("prompt")
-	if q.Get("originator") == "" {
-		q.Set("originator", "codex_cli_rs")
-	}
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 // oauthCallbackError explains a callback CPA refused. 410 means this login is

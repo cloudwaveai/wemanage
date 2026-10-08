@@ -52,10 +52,10 @@ export function AddAccountWizard({
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [login]);
-  const windowMs = login?.paste
-    ? PASTE_WINDOW_MS
-    : login?.expires_in
-      ? login.expires_in * 1000
+  const windowMs = login?.expires_in
+    ? login.expires_in * 1000
+    : login?.paste
+      ? PASTE_WINDOW_MS
       : DEVICE_WINDOW_MS;
   const leftMs = linkAt ? linkAt + windowMs - now : windowMs;
   const expired = linkDead || leftMs <= 0;
@@ -320,7 +320,7 @@ export function AddAccountWizard({
                   <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
                     {linkDead
                       ? "这次登录已经失效，请重新获取登录链接，用新链接再登录一次。"
-                      : "登录链接生成后 5 分钟内要粘回回调地址，现在已经超时。请重新获取登录链接，用新链接再登录一次。"}
+                      : `登录链接生成后 ${Math.round(windowMs / 60000)} 分钟内要粘回回调地址，现在已经超时。请重新获取登录链接，用新链接再登录一次。`}
                   </p>
                 )}
                 <div className="flex flex-wrap items-center gap-2">

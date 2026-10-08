@@ -43,6 +43,8 @@ type Deps struct {
 	// SyncFeishu triggers a directory sync; wired by the serve command so the
 	// web layer need not import the feishu sync logic directly.
 	SyncFeishu func(ctx context.Context) (int, int, error)
+	// CodexAuthBase overrides OpenAI's auth server for ChatGPT logins (tests).
+	CodexAuthBase string
 	// Risk is the key-sharing engine (optional); used to refresh gate caches
 	// and notify on device/freeze changes.
 	Risk *risk.Engine
@@ -53,6 +55,7 @@ type Deps struct {
 type Server struct {
 	deps     Deps
 	installs installCodes
+	codex    codexLogins // ChatGPT logins in progress (codexlogin.go)
 }
 
 // NewServer builds the web server.
