@@ -11,7 +11,9 @@ import {
   Button,
   StatusBadge,
 } from "../components/ui";
-import { fmtCompact, fmtDateTime, fmtDayShort, fmtNum } from "../lib/format";
+import { fmtCompact, fmtDateTime, fmtNum } from "../lib/format";
+import { daysLeft, subscriptionView, toneText } from "../lib/subscription";
+import { AccountCard } from "../components/AccountCard";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { AddAccountWizard } from "../components/AddAccountWizard";
@@ -55,56 +57,18 @@ function QuotaRow({
   );
 }
 
-// SubscriptionCell shows when a ChatGPT account next renews (or ends, if it
-// was cancelled), with the days left; amber within a week of an end.
+// SubscriptionCell is the subscription in the list view.
 function SubscriptionCell({ a }: { a: AccountRow }) {
   if (!isChatGPT(a.provider)) return <span className="text-slate-300">—</span>;
   const s = a.subscription;
-  if (!s) return <span className="text-xs text-slate-400">查询中…</span>;
-  const day = fmtDayShort;
-  const daysLeft = (v: string) => Math.ceil((new Date(v).getTime() - Date.now()) / 86400000);
-  const left = (v: string) => {
-    const d = daysLeft(v);
-    return d > 0 ? `还有 ${d} 天` : d === 0 ? "今天" : `已过 ${-d} 天`;
-  };
-  const title = [
-    s.plan && `套餐：${s.plan}`,
-    s.renews_at && `下次续费：${fmtDateTime(s.renews_at)}`,
-    s.expires_at && `本期到：${fmtDateTime(s.expires_at)}`,
-    s.cancels_at && `已取消，${fmtDateTime(s.cancels_at)} 结束`,
-    `查询于 ${fmtDateTime(s.checked_at)}`,
-    s.error && `最近一次查询失败：${s.error}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  let main: string;
-  let sub = "";
-  let tone = "text-slate-700";
-  if (s.delinquent) {
-    main = "欠费";
-    sub = "扣款失败，尽快处理";
-    tone = "text-rose-600";
-  } else if (s.cancels_at) {
-    main = `${day(s.cancels_at)} 到期`;
-    sub = `不再续费 · ${left(s.cancels_at)}`;
-    tone = daysLeft(s.cancels_at) <= 7 ? "text-amber-600" : "text-slate-700";
-  } else if (s.active && s.renews_at) {
-    main = `${day(s.renews_at)} 续费`;
-    sub = left(s.renews_at);
-  } else if (s.active && s.expires_at) {
-    main = `${day(s.expires_at)} 到期`;
-    sub = left(s.expires_at);
-  } else {
-    main = "未订阅";
-    sub = s.expires_at ? `${day(s.expires_at)} 已结束` : "";
-    tone = "text-rose-600";
-  }
+  if (!s) return <span className="whitespace-nowrap text-xs text-slate-400">查询中…</span>;
+  const v = subscriptionView(s);
   return (
-    <div className="whitespace-nowrap" title={title}>
-      <div className={"text-sm " + tone}>{main}</div>
+    <div className="whitespace-nowrap" title={v.title}>
+      <div className={"text-sm " + toneText[v.tone]}>{v.main}</div>
       <div className="text-[11px] text-slate-400">
-        {sub}
-        {s.error && <span className="ml-1 text-amber-500">（未能核实）</span>}
+        {v.sub}
+        {v.unverified && <span className="ml-1 text-amber-500">（未能核实）</span>}
       </div>
     </div>
   );
@@ -122,6 +86,21 @@ export function AccountsPage() {
   const [bindFor, setBindFor] = useState<AccountRow | null>(null);
   const [editFor, setEditFor] = useState<AccountRow | null>(null);
   const [modelsFor, setModelsFor] = useState<AccountRow | null>(null);
+  const [view, setView] = useState<"cards" | "table">(() => {
+    try {
+      return localStorage.getItem("accounts-view") === "table" ? "table" : "cards";
+    } catch {
+      return "cards";
+    }
+  });
+  const pickView = (v: "cards" | "table") => {
+    setView(v);
+    try {
+      localStorage.setItem("accounts-view", v);
+    } catch {
+      /* private mode: just this visit */
+    }
+  };
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -157,6 +136,15 @@ export function AccountsPage() {
   });
 
   const rows = accounts.data?.accounts ?? [];
+  const confirmUnbind = (account: number, employee: number, name: string) => {
+    if (window.confirm(`把 ${name} 从这个账号移除？`)) unbind.mutate({ account, employee });
+  };
+  // The soonest renewal (or end) among the ChatGPT accounts.
+  const nextRenewal = rows
+    .map((a) => ({ a, at: a.subscription?.cancels_at || a.subscription?.renews_at || a.subscription?.expires_at }))
+    .filter((x): x is { a: AccountRow; at: string } => !!x.at && daysLeft(x.at) >= 0)
+    .sort((x, y) => new Date(x.at).getTime() - new Date(y.at).getTime())[0];
+  const needsCare = rows.filter((a) => a.status !== "active" || a.needs_login || a.subscription?.delinquent).length;
 
   return (
     <div>
@@ -173,7 +161,71 @@ export function AccountsPage() {
       {accounts.isLoading && <Loading />}
       {accounts.error && <ErrorBox error={accounts.error} />}
 
-      {accounts.data && (
+      {accounts.data && rows.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-slate-500">
+          <span>
+            共 <b className="tabular-nums text-slate-800">{rows.length}</b> 个账号
+          </span>
+          <span>
+            正常 <b className="tabular-nums text-emerald-600">{rows.filter((a) => a.status === "active" && !a.needs_login).length}</b>
+          </span>
+          {needsCare > 0 && (
+            <span>
+              需要处理 <b className="tabular-nums text-rose-600">{needsCare}</b>
+            </span>
+          )}
+          {nextRenewal && (
+            <span title={nextRenewal.a.email}>
+              最近续费：{accountName(nextRenewal.a)} · <b className="text-slate-800">{subscriptionView(nextRenewal.a.subscription!).main}</b>
+            </span>
+          )}
+          <div className="ml-auto inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+            {(
+              [
+                ["cards", "卡片"],
+                ["table", "列表"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => pickView(v)}
+                className={
+                  "rounded-md px-3 py-1 text-xs font-medium " +
+                  (view === v ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100")
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {accounts.data && rows.length === 0 && (
+        <Card>
+          <Empty label="暂无账号，点右上角「添加账号」" />
+        </Card>
+      )}
+
+      {accounts.data && rows.length > 0 && view === "cards" && (
+        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          {rows.map((a) => (
+            <AccountCard
+              key={a.id}
+              a={a}
+              maxMembers={maxMembers}
+              onBind={() => setBindFor(a)}
+              onUnbind={(emp, name) => confirmUnbind(a.id, emp, name)}
+              onRefresh={() => refreshQuota.mutate(a.id)}
+              refreshing={refreshQuota.isPending}
+              onModels={() => setModelsFor(a)}
+              onEdit={() => setEditFor(a)}
+            />
+          ))}
+        </div>
+      )}
+
+      {accounts.data && rows.length > 0 && view === "table" && (
         <Card className="overflow-hidden">
           <div className="scroll-thin overflow-x-auto">
             <table className="w-full min-w-[1080px] text-sm">
@@ -226,9 +278,7 @@ export function AccountsPage() {
                           >
                             {m.name}
                             <button
-                              onClick={() => {
-                                if (window.confirm(`把 ${m.name} 从这个账号移除？`)) unbind.mutate({ account: a.id, employee: m.id });
-                              }}
+                              onClick={() => confirmUnbind(a.id, m.id, m.name)}
                               className="rounded-full px-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
                               title="移除"
                               aria-label={`移除 ${m.name}`}
@@ -361,7 +411,6 @@ export function AccountsPage() {
               </tbody>
             </table>
           </div>
-          {rows.length === 0 && <Empty label="暂无账号" />}
         </Card>
       )}
 

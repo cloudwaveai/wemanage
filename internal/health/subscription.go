@@ -18,8 +18,15 @@ import (
 const CodexAccountsCheckURL = "https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27"
 
 // SubscriptionMaxAge is how old a subscription check may get before the
-// background job checks again.
-const SubscriptionMaxAge = 6 * time.Hour
+// background job checks again; a failed check is retried sooner.
+const (
+	SubscriptionMaxAge   = 6 * time.Hour
+	SubscriptionRetryAge = 30 * time.Minute
+)
+
+// subscriptionGap spaces the background checks: several accounts asked at
+// once got ChatGPT's 403 page together (2026-10-08).
+var subscriptionGap = 5 * time.Second
 
 var ErrNoSubscription = errors.New("this account type has no subscription to check")
 
@@ -122,13 +129,28 @@ func (p *QuotaProber) RunSubscriptions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	first := true
 	for _, a := range rows {
 		if !a.IsChatGPT() || a.Status != "active" {
 			continue
 		}
-		if s, ok := subs[a.ID]; ok && time.Since(s.CheckedAt) < SubscriptionMaxAge {
-			continue
+		if s, ok := subs[a.ID]; ok {
+			maxAge := SubscriptionMaxAge
+			if s.Error != "" {
+				maxAge = SubscriptionRetryAge
+			}
+			if time.Since(s.CheckedAt) < maxAge {
+				continue
+			}
 		}
+		if !first {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(subscriptionGap):
+			}
+		}
+		first = false
 		if _, err := p.CheckSubscription(ctx, a.Account); err != nil && p.Log != nil {
 			p.Log.Warn("subscription check", "account", a.ID, "err", err)
 		}

@@ -313,6 +313,7 @@ const accountsCheckBody = `{"accounts":{
 		"cancels_at":null,"billing_period":null,"is_delinquent":false,"billing_currency":"USD"}}},"account_ordering":["acct-uuid-1"]}`
 
 func TestCheckSubscription(t *testing.T) {
+	health.SetSubscriptionGap(0)
 	st, ctx := newStore(t)
 	box := newBox(t)
 	idle := mkAccount(t, st, ctx, box, "idle.json")
@@ -355,5 +356,25 @@ func TestCheckSubscription(t *testing.T) {
 	f.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("checked %d fresh subscriptions again", n)
+	}
+
+	// A failed check is retried after half an hour, not six.
+	if _, err := st.Pool.Exec(ctx, `UPDATE account_subscriptions SET checked_at = now() - interval '31 minutes'`); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.calls = nil
+	f.mu.Unlock()
+	_ = p.RunSubscriptions(ctx)
+	f.mu.Lock()
+	var checked []string
+	for _, c := range f.calls {
+		if c.URL == health.CodexAccountsCheckURL {
+			checked = append(checked, c.AuthIndex)
+		}
+	}
+	f.mu.Unlock()
+	if len(checked) != 1 || checked[0] != "idx-busy" {
+		t.Fatalf("retried %v, want only the failed one", checked)
 	}
 }
