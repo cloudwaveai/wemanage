@@ -423,6 +423,7 @@ function EditModal({
   const [ipGroup, setIpGroup] = useState("");
   const [email, setEmail] = useState("");
   const [thirdParty, setThirdParty] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   const groups = useQuery({
     queryKey: ["ip-groups"],
@@ -473,17 +474,33 @@ function EditModal({
       toast(e instanceof Error ? e.message : "保存失败", "error"),
   });
 
+  const remove = useMutation({
+    mutationFn: () => api.del<{ ok: boolean; warning?: string }>(`/api/admin/accounts/${account!.id}`),
+    onSuccess: (r) => {
+      toast(r.warning || "账号已移除", r.warning ? "error" : "success");
+      setRemoving(false);
+      onDone();
+      onClose();
+    },
+    onError: (e: unknown) =>
+      toast(e instanceof Error ? e.message : "移除失败", "error"),
+  });
+
   const inputCls =
     "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100";
   const ipChanged = account && Number(ipGroup) !== account.ip_group_id;
 
   return (
+    <>
     <Modal
-      open={!!account}
+      open={!!account && !removing}
       onClose={onClose}
       title={`编辑账号 ${account ? accountName(account) : ""}`}
       footer={
         <>
+          <Button variant="danger" className="mr-auto" onClick={() => setRemoving(true)}>
+            移除账号
+          </Button>
           <Button onClick={onClose}>取消</Button>
           <Button
             variant="primary"
@@ -575,6 +592,34 @@ function EditModal({
         </div>
       </div>
     </Modal>
+    <Modal
+      open={!!account && removing}
+      onClose={() => setRemoving(false)}
+      title={`移除账号 ${account ? accountName(account) : ""}`}
+      footer={
+        <>
+          <Button onClick={() => setRemoving(false)}>返回</Button>
+          <Button variant="danger" onClick={() => remove.mutate()} disabled={remove.isPending}>
+            {remove.isPending ? "移除中…" : "确认移除"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-2 text-sm text-slate-600">
+        <p>
+          从网关和 CPA 里删掉这个账号，腾出 IP 组「{account?.ip_group_name || "-"}」的一个名额。
+        </p>
+        {account && account.members.length > 0 && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-amber-800">
+            {account.members.map((m) => m.name).join("、")} 正在用这个账号，移除后他们就用不了了（有别的账号的会自动用别的）。
+          </p>
+        )}
+        <p className="text-xs text-slate-400">
+          历史用量记录保留。上游账号本身（比如 ChatGPT 账号）不受影响，之后想加回来，重新登录添加即可。只是想换出口 IP 的话，不用移除，直接在编辑里换 IP 组。此操作会记录到审计。
+        </p>
+      </div>
+    </Modal>
+    </>
   );
 }
 

@@ -215,6 +215,25 @@ type AccountPatch struct {
 	AllowThirdParty *bool
 }
 
+// DeleteAccount removes an account: its members, signals and quota snapshots
+// go with it; request logs stay (they keep the old account id, which no
+// longer joins to anything). It frees the account's place in its IP group.
+func (s *Store) DeleteAccount(ctx context.Context, id int64) error {
+	return s.tx(ctx, func(q queryer) error {
+		if _, err := q.Exec(ctx, `UPDATE account_onboardings SET completed_account_id=NULL WHERE completed_account_id=$1`, id); err != nil {
+			return err
+		}
+		tag, err := q.Exec(ctx, `DELETE FROM upstream_accounts WHERE id=$1`, id)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
 // UpdateAccount applies a partial update.
 func (s *Store) UpdateAccount(ctx context.Context, id int64, p AccountPatch) error {
 	set := "updated_at=now()"

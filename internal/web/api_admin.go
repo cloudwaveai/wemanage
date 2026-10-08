@@ -278,6 +278,34 @@ func (s *Server) handleImportAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"account_id": acc.ID})
 }
 
+// handleDeleteAccount removes an account from the gateway and its credential
+// from CPA, freeing its place in the IP group. The upstream account itself is
+// untouched and can be logged in again later.
+func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	accID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	acc, err := s.deps.Store.GetAccount(ctx, accID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "account not found")
+		return
+	}
+	memberIDs, _ := s.deps.Store.AccountMemberIDs(ctx, accID)
+	if err := s.deps.Store.DeleteAccount(ctx, accID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "delete failed: "+err.Error())
+		return
+	}
+	warning := ""
+	if s.deps.CPA != nil && acc.CPAAuthName != "" {
+		if err := s.deps.CPA.DeleteAuthFile(ctx, acc.CPAAuthName); err != nil {
+			warning = "已从网关移除，但 CPA 里的凭证没删掉（" + err.Error() + "），可以在 CPA 管理页手动删除 " + acc.CPAAuthName
+		}
+	}
+	s.audit(r, "account_delete", "account", fmt.Sprint(accID), map[string]any{
+		"email": acc.Email, "provider": acc.Provider, "ip_group_id": acc.IPGroupID, "cpa_name": acc.CPAAuthName, "member_ids": memberIDs,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "warning": warning})
+}
+
 // finishAccount creates the account row, applies device profile and pushes
 // prefix+proxy to CPA.
 func (s *Server) finishAccount(r *http.Request, ob store.Onboarding, cpaName, email, provider string) (store.Account, error) {
