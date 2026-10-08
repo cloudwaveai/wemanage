@@ -45,6 +45,11 @@ func TestCodexLoginByTheGateway(t *testing.T) {
 		mu.Lock()
 		tokenForm = r.PostForm
 		mu.Unlock()
+		if r.PostForm.Get("code") == "api-style" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":{"message":"Could not validate your token.","type":"invalid_request_error","code":"token_expired"}}`)
+			return
+		}
 		if r.PostForm.Get("code") != "good-code" {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"error":"invalid_grant","error_description":"code expired"}`)
@@ -130,6 +135,12 @@ func TestCodexLoginByTheGateway(t *testing.T) {
 	// A bad code is explained; the login is then used up.
 	if code, body := complete(state, "http://127.0.0.1:1455/auth/callback?code=bad&state="+state); code != http.StatusGone || !strings.Contains(body, "code expired") {
 		t.Fatalf("bad code: %d %s", code, body)
+	}
+
+	state, _ = start()
+	if code, body := complete(state, "http://127.0.0.1:1455/auth/callback?code=api-style&state="+state); code != http.StatusGone ||
+		!strings.Contains(body, "token_expired Could not validate your token.") {
+		t.Fatalf("api-style error: %d %s", code, body)
 	}
 
 	state, link = start()

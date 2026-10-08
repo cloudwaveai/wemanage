@@ -214,16 +214,7 @@ func (s *Server) exchangeCodexCode(ctx context.Context, code, verifier string) (
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		var e struct {
-			Error       any    `json:"error"`
-			Description string `json:"error_description"`
-		}
-		_ = json.Unmarshal(body, &e)
-		msg := strings.TrimSpace(fmt.Sprint(e.Error, " ", e.Description))
-		if e.Error == nil {
-			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		}
-		return codexTokens{}, errors.New(msg)
+		return codexTokens{}, errors.New(oauthErrorText(resp.StatusCode, body))
 	}
 	var t struct {
 		IDToken      string `json:"id_token"`
@@ -240,6 +231,26 @@ func (s *Server) exchangeCodexCode(ctx context.Context, code, verifier string) (
 	}
 	out.email, out.accountID = codexIdentity(t.IDToken)
 	return out, nil
+}
+
+// oauthErrorText describes an error from OpenAI's token endpoint, which
+// answers either OAuth-style ({"error":"invalid_grant","error_description":…})
+// or API-style ({"error":{"message":…,"code":…}}).
+func oauthErrorText(status int, body []byte) string {
+	var e struct {
+		Error       json.RawMessage `json:"error"`
+		Description string          `json:"error_description"`
+	}
+	_ = json.Unmarshal(body, &e)
+	var code string
+	if json.Unmarshal(e.Error, &code) == nil && code != "" {
+		return strings.TrimSpace(code + " " + e.Description)
+	}
+	var obj struct{ Message, Code string }
+	if json.Unmarshal(e.Error, &obj) == nil && (obj.Message != "" || obj.Code != "") {
+		return strings.TrimSpace(obj.Code + " " + obj.Message)
+	}
+	return fmt.Sprintf("HTTP %d", status)
 }
 
 // codexIdentity reads the email and ChatGPT account id from an id_token's
