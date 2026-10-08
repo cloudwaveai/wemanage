@@ -217,14 +217,15 @@ func (c *Client) StaticModels(ctx context.Context, channel string) ([]store.Mode
 // format suggested by the spec (rather than the raw-body + X-Auth-File-Name
 // fallback), since a single JSON body is unambiguous and easy to validate.
 func (c *Client) UploadAuthFile(ctx context.Context, name string, content []byte) error {
-	body := map[string]any{
-		"name":    name,
-		"content": string(content),
-	}
-	req, err := c.newRequest(ctx, http.MethodPost, managementBase+"/auth-files", nil, body)
+	// CPA takes the file name from the query and the file itself as the body
+	// (POST /v0/management/auth-files?name=x.json, checked against v7.3.18).
+	q := url.Values{}
+	q.Set("name", name)
+	req, err := c.newRequest(ctx, http.MethodPost, managementBase+"/auth-files", q, content)
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
 	return c.do(req, nil)
 }
 

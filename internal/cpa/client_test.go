@@ -168,16 +168,11 @@ func TestUploadAuthFile(t *testing.T) {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		body, _ := io.ReadAll(r.Body)
-		var m map[string]any
-		if err := json.Unmarshal(body, &m); err != nil {
-			t.Errorf("decode request body %q: %v", string(body), err)
-			return
+		if got := r.URL.Query().Get("name"); got != "codex-2.json" {
+			t.Errorf("name = %q, want codex-2.json (CPA reads it from the query)", got)
 		}
-		if m["name"] != "codex-2.json" {
-			t.Errorf("name = %v, want codex-2.json", m["name"])
-		}
-		if m["content"] != `{"k":"v"}` {
-			t.Errorf("content = %v, want the raw file text", m["content"])
+		if string(body) != `{"k":"v"}` {
+			t.Errorf("body = %q, want the file itself", body)
 		}
 		io.WriteString(w, `{}`)
 	}))

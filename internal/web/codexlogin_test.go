@@ -36,6 +36,7 @@ func TestCodexLoginByTheGateway(t *testing.T) {
 	var mu sync.Mutex
 	var tokenForm url.Values
 	files := map[string]string{} // CPA auth files by name
+	patched := map[string]int{}  // PATCH /auth-files/fields calls by file name
 	openai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/oauth/token" {
 			http.NotFound(w, r)
@@ -65,9 +66,25 @@ func TestCodexLoginByTheGateway(t *testing.T) {
 		defer mu.Unlock()
 		switch {
 		case r.URL.Path == "/v0/management/auth-files" && r.Method == http.MethodPost:
-			var b struct{ Name, Content string }
+			// Like CPA: the name in the query, the file as the body.
+			name := r.URL.Query().Get("name")
+			if name == "" || strings.ContainsAny(name, "/\\") {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":"invalid name"}`)
+				return
+			}
+			b, _ := io.ReadAll(r.Body)
+			files[name] = string(b)
+			_, _ = io.WriteString(w, `{"status":"ok"}`)
+		case r.URL.Path == "/v0/management/auth-files/fields" && r.Method == http.MethodPatch:
+			var b struct {
+				Name   string `json:"name"`
+				Prefix string `json:"prefix"`
+			}
 			_ = json.NewDecoder(r.Body).Decode(&b)
-			files[b.Name] = b.Content
+			if b.Prefix != "" {
+				patched[b.Name]++
+			}
 			_, _ = io.WriteString(w, `{"status":"ok"}`)
 		case r.URL.Path == "/v0/management/auth-files":
 			list := []map[string]any{}
@@ -181,6 +198,11 @@ func TestCodexLoginByTheGateway(t *testing.T) {
 	}
 	mu.Lock()
 	n := len(files)
+	for name := range files {
+		if patched[name] != 2 {
+			t.Errorf("prefix and egress applied %d times to %s, want on add and on relogin", patched[name], name)
+		}
+	}
 	mu.Unlock()
 	if accs, _ := st.ListAccounts(ctx); len(accs) != 1 || n != 1 {
 		t.Fatalf("relogin added an account: %d accounts, %d files", len(accs), n)

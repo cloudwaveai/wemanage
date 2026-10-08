@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"aiseat/internal/cpa"
 	"aiseat/internal/secure"
 	"aiseat/internal/store"
 )
@@ -169,6 +170,12 @@ func (s *Server) completeCodexLogin(w http.ResponseWriter, r *http.Request, ob s
 	}
 
 	if acc, err := s.deps.Store.GetAccountByCPAName(ctx, name); err == nil {
+		// The new file replaced the old one, routing prefix and egress included.
+		if grp, err := s.deps.Store.GetIPGroup(ctx, s.deps.Box, acc.IPGroupID); err == nil {
+			if err := cpa.ApplyExpected(ctx, s.deps.CPA, acc, acc.Prefix(), grp.ProxyURL); err != nil {
+				_ = s.deps.Store.SetCPADrift(ctx, acc.ID, "apply on relogin failed: "+err.Error())
+			}
+		}
 		_ = s.deps.Store.CompleteOnboarding(ctx, ob.State, acc.ID)
 		s.audit(r, "account_relogin", "account", fmt.Sprint(acc.ID), map[string]any{"email": tok.email, "via": "codex"})
 		writeJSON(w, http.StatusOK, map[string]any{"account_id": acc.ID, "email": tok.email, "provider": store.ProviderCodex, "updated": true})
