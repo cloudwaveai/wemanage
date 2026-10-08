@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	"aiseat/internal/store"
@@ -71,6 +72,62 @@ type APICallRequest struct {
 	URL       string            `json:"url"`
 	Header    map[string]string `json:"header,omitempty"`
 	Data      string            `json:"data,omitempty"`
+}
+
+// apiCallHeaderOrder is the order api-call headers are sent in. Order
+// matters upstream: ChatGPT's accounts/check answers 403 when Accept comes
+// before Authorization (what encoding/json's sorted map keys give) and 200
+// in this order, the Codex CLI's (checked 2026-10-08). Other headers follow,
+// sorted.
+var apiCallHeaderOrder = []string{"Authorization", "Accept", "Content-Type", "ChatGPT-Account-Id", "User-Agent", "originator", "Version", "Session-Id"}
+
+// MarshalJSON writes the request with its headers in apiCallHeaderOrder.
+func (r APICallRequest) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	str := func(v string) { e, _ := json.Marshal(v); b.Write(e) }
+	b.WriteString(`{"auth_index":`)
+	str(r.AuthIndex)
+	b.WriteString(`,"method":`)
+	str(r.Method)
+	b.WriteString(`,"url":`)
+	str(r.URL)
+	if len(r.Header) > 0 {
+		b.WriteString(`,"header":{`)
+		seen := map[string]bool{}
+		first := true
+		put := func(k string) {
+			if !first {
+				b.WriteByte(',')
+			}
+			first = false
+			str(k)
+			b.WriteByte(':')
+			str(r.Header[k])
+			seen[k] = true
+		}
+		for _, k := range apiCallHeaderOrder {
+			if _, ok := r.Header[k]; ok {
+				put(k)
+			}
+		}
+		rest := make([]string, 0, len(r.Header))
+		for k := range r.Header {
+			if !seen[k] {
+				rest = append(rest, k)
+			}
+		}
+		sort.Strings(rest)
+		for _, k := range rest {
+			put(k)
+		}
+		b.WriteByte('}')
+	}
+	if r.Data != "" {
+		b.WriteString(`,"data":`)
+		str(r.Data)
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
 }
 
 // APICallResponse is the upstream response relayed by api-call.

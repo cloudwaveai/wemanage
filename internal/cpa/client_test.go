@@ -230,3 +230,21 @@ func TestAuthHeaderOnEveryRequest(t *testing.T) {
 	_ = c.PostOAuthCallback(ctx, "codex", "http://x")
 	_, _ = c.AuthStatus(ctx, "s")
 }
+
+// api-call headers go out Authorization first, then Accept: ChatGPT's
+// accounts/check refuses the alphabetical order encoding/json would give.
+func TestAPICallHeaderOrder(t *testing.T) {
+	b, err := json.Marshal(APICallRequest{AuthIndex: "i", Method: "GET", URL: "https://x", Data: `{"a":1}`,
+		Header: map[string]string{"User-Agent": "ua", "Accept": "application/json", "X-Extra": "1", "ChatGPT-Account-Id": "acc", "Authorization": "Bearer $TOKEN$"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"auth_index":"i","method":"GET","url":"https://x","header":{"Authorization":"Bearer $TOKEN$","Accept":"application/json","ChatGPT-Account-Id":"acc","User-Agent":"ua","X-Extra":"1"},"data":"{\"a\":1}"}`
+	if string(b) != want {
+		t.Fatalf("got  %s\nwant %s", b, want)
+	}
+	var back APICallRequest
+	if err := json.Unmarshal(b, &back); err != nil || back.Header["Accept"] != "application/json" || back.Data != `{"a":1}` {
+		t.Fatalf("round trip: %+v %v", back, err)
+	}
+}
