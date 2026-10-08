@@ -68,9 +68,13 @@ INSERT INTO providers (id, app_type, name, settings_config, website_url) VALUES 
 	if out, err := mk.CombinedOutput(); err != nil {
 		t.Fatalf("db: %v %s", err, out)
 	}
+	// A CC Switch running on this machine must not make the script wait.
+	bin := filepath.Join(home, "bin")
+	_ = os.MkdirAll(bin, 0o755)
+	_ = os.WriteFile(filepath.Join(bin, "pgrep"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
 	run := func() string {
 		cmd := exec.Command("sh", "-c", script())
-		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "SHELL=/bin/zsh"}
+		cmd.Env = []string{"HOME=" + home, "PATH=" + bin + ":" + os.Getenv("PATH"), "SHELL=/bin/zsh"}
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("install: %v\n%s", err, out)

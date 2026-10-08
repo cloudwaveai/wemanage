@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -169,5 +170,16 @@ func TestGenericLoginAddsProviderAccounts(t *testing.T) {
 	}
 	if got["xai"] != "xai-me.json" || got["antigravity"] != "antigravity-me.json" {
 		t.Fatalf("accounts: %+v", got)
+	}
+}
+
+func TestCodexLoginURLIsTheOfficialOne(t *testing.T) {
+	in := "https://auth.openai.com/oauth/authorize?client_id=app_X&code_challenge=c&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&prompt=login&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile+offline_access&state=st"
+	out := web.CodexLoginURL(in)
+	u, _ := url.Parse(out)
+	q := u.Query()
+	if q.Has("prompt") || q.Get("originator") != "codex_cli_rs" || q.Get("state") != "st" || q.Get("code_challenge") != "c" ||
+		q.Get("redirect_uri") != "http://localhost:1455/auth/callback" || u.Host != "auth.openai.com" {
+		t.Fatalf("login url: %s", out)
 	}
 }

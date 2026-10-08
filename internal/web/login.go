@@ -109,6 +109,9 @@ func (s *Server) startLogin(w http.ResponseWriter, r *http.Request, provider str
 		writeErr(w, http.StatusBadGateway, "CPA 没能开始 "+p.Label+" 登录："+err.Error())
 		return
 	}
+	if p.ID == store.ProviderCodex {
+		ls.URL = codexLoginURL(ls.URL)
+	}
 	names := make([]string, 0, len(known))
 	for _, f := range known {
 		names = append(names, f.Name)
@@ -222,6 +225,25 @@ func (s *Server) handleLoginComplete(w http.ResponseWriter, r *http.Request) {
 	_ = s.deps.Store.CompleteOnboarding(ctx, body.State, acc.ID)
 	s.audit(r, "account_added", "account", fmt.Sprint(acc.ID), map[string]any{"email": acc.Email, "via": p.ID, "cpa_name": newFile.Name})
 	writeJSON(w, http.StatusOK, map[string]any{"account_id": acc.ID, "email": acc.Email, "provider": p.ID})
+}
+
+// codexLoginURL makes CPA's ChatGPT login link the official Codex CLI's: no
+// prompt=login, which makes OpenAI ask for the password again even in a
+// browser already signed in to that account (and that password step is where
+// logins were failing), and the CLI's originator. Client, redirect, scopes,
+// state and PKCE stay CPA's, so CPA completes the login as before.
+func codexLoginURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Del("prompt")
+	if q.Get("originator") == "" {
+		q.Set("originator", "codex_cli_rs")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // oauthCallbackError explains a callback CPA refused. 410 means this login is

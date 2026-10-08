@@ -287,7 +287,10 @@ export function AddAccountWizard({
                     </span>
                   </div>
                   <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                    用无痕窗口，避免登录成你平时浏览器里已登录的账号。登录完成后，跳转到的
+                    {login.provider === "codex"
+                      ? "浏览器里已经登录了要添加的这个账号的话，会直接跳到授权页，不用再输密码；登录的是别的账号，先在 chatgpt.com 退出，或者换无痕窗口。"
+                      : "用无痕窗口，避免登录成你平时浏览器里已登录的账号。"}
+                    登录完成后，跳转到的
                     <code className="mx-1 font-mono">{login.callback}</code>
                     页面打不开是正常的，复制地址栏的完整 URL 粘回下面。也可以直接
                     <a

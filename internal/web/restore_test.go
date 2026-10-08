@@ -57,8 +57,13 @@ INSERT INTO providers VALUES ('c','claude','x', json_object('config', '[model_pr
 		}
 	}
 
+	// A CC Switch running on this machine must not get in the way.
+	bin := filepath.Join(home, "bin")
+	_ = os.MkdirAll(bin, 0o755)
+	_ = os.WriteFile(filepath.Join(bin, "pgrep"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
+	path := bin + ":" + os.Getenv("PATH")
 	run := exec.Command("sh", "-c", script)
-	run.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	run.Env = []string{"HOME=" + home, "PATH=" + path}
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("restore: %v\n%s", err, out)
@@ -99,7 +104,7 @@ INSERT INTO providers VALUES ('c','claude','x', json_object('config', '[model_pr
 	t.Logf("restore output:\n%s", out)
 	// A second run finds nothing to do.
 	run = exec.Command("sh", "-c", script)
-	run.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	run.Env = []string{"HOME=" + home, "PATH=" + path}
 	if out, err := run.CombinedOutput(); err != nil || !strings.Contains(string(out), "没有网关配置") {
 		t.Fatalf("second run: %v\n%s", err, out)
 	}
