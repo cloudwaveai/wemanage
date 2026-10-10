@@ -21,6 +21,14 @@
 - 终端里设了代理（`HTTPS_PROXY` 等）时，把网关域名加进直连名单（`NO_PROXY`），避免每次请求多绕几秒；
 - 命令里不含 Key 本身，只有一个 10 分钟内有效、只能用一次的安装码，贴到哪里都不会泄露 Key。
 
+### ChatGPT 桌面版
+
+ChatGPT 桌面版里的「工作」就是 Codex，和命令行、VS Code 插件读同一份配置（`~/.codex/config.toml`），装好上面的命令就一起改好了，不用单独设置。两点注意：
+
+- 它只在启动时读配置：装好或切换之后，要按 ⌘Q 完全退出 ChatGPT 再打开（Windows 从托盘退出），只关窗口不行。命令检测到 ChatGPT 正在运行时会提醒你。
+- 「聊天」不走公司网关，用的还是你在 ChatGPT 里登录的账号。
+- 桌面应用读不到 `~/.zshrc` 里的 `NO_PROXY`：开着 Clash 等代理的话，要在代理软件里把 `cloudwaveai.cn` 设为直连（DIRECT），否则每次请求都会绕一圈代理。
+
 ### 用 CC Switch 的人
 
 电脑上装了 CC Switch（macOS / Linux）时，上面的一条命令不会改 Codex 的配置文件，而是：

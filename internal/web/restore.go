@@ -81,6 +81,11 @@ if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1 &&
   echo "你现在用的是 CC Switch 里的「公司 AI 网关」：打开 CC Switch → Codex，点「OpenAI Official」就切回官方了。"
 fi
 
+# ChatGPT 桌面版的「工作」就是 Codex，读同一份配置，但只在启动时读。
+if pgrep -f "ChatGPT.app/Contents/Resources/codex-cli" >/dev/null 2>&1 || pgrep -x ChatGPT >/dev/null 2>&1; then
+  echo "检测到 ChatGPT 桌面版正在运行：请按 ⌘Q 完全退出 ChatGPT 再打开，「工作」（Codex）才会换回你自己的账号。"
+fi
+
 AUTH="$DIR/auth.json"
 if [ -f "$AUTH" ] && grep -q '"refresh_token"' "$AUTH"; then
   echo "完成。重新打开 Codex（桌面版要完全退出再打开）就是你自己的 ChatGPT 账号。"
@@ -117,6 +122,9 @@ if ((Test-Path $config) -and (Select-String -Path $config -Pattern 'model_provid
 $db = Join-Path $HOME '.cc-switch\cc-switch.db'
 if ((Test-Path $db) -and (Select-String -Path $db -Pattern 'model_providers.aiseat' -SimpleMatch -Quiet)) {
   Write-Host -ForegroundColor Yellow '！CC Switch 的供应商里也存了网关配置：打开 CC Switch → Codex，编辑「OpenAI Official」（或你平时用的那个），删掉 model_provider = "aiseat" 这一行和 [model_providers.aiseat] 整段，保存。'
+}
+if (Get-Process -Name ChatGPT -ErrorAction SilentlyContinue) {
+  Write-Host '检测到 ChatGPT 桌面版正在运行：请从托盘完全退出 ChatGPT 再打开，「工作」（Codex）才会换回你自己的账号。'
 }
 Write-Host '完成。重新打开 Codex 就是你自己的 ChatGPT 账号；没登录过的话运行 codex login。'
 Write-Host '以后要再用公司网关，回门户「我的 Key」重新生成安装命令即可。'

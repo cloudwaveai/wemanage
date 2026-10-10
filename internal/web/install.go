@@ -212,6 +212,13 @@ strip() {
   '
 }
 
+desktop_hint() {
+  # ChatGPT 桌面版的「工作」就是 Codex，读同一份 ~/.codex 配置，但只在启动时读。
+  if pgrep -f "ChatGPT.app/Contents/Resources/codex-cli" >/dev/null 2>&1 || pgrep -x ChatGPT >/dev/null 2>&1; then
+    echo "检测到 ChatGPT 桌面版正在运行：它的「工作」（Codex）只在启动时读配置，请按 ⌘Q 完全退出 ChatGPT 再打开。「聊天」不走公司网关，还是你登录的 ChatGPT 账号。"
+  fi
+}
+
 no_proxy_rc() {
   if [ -n "${HTTPS_PROXY:-}${https_proxy:-}${ALL_PROXY:-}${all_proxy:-}" ]; then
     case "${SHELL:-}" in
@@ -283,7 +290,8 @@ AISEAT_CC
     echo "提示：CC Switch 里的「${OLD}」是以前导入的网关，没有生图和联网搜索，可以删掉。"
   fi
   no_proxy_rc
-  echo "完成。打开 CC Switch → Codex，在「公司 AI 网关」上点「启用」，再重新打开 Codex。以后要用自己的官方账号，在 CC Switch 里点「OpenAI Official」。"
+  desktop_hint
+  echo "完成。打开 CC Switch → Codex，在「公司 AI 网关」上点「启用」，再重新打开 Codex（ChatGPT 桌面版的「工作」要 ⌘Q 完全退出后再打开）。以后要用自己的官方账号，在 CC Switch 里点「OpenAI Official」。"
   exit 0
 fi
 
@@ -308,8 +316,9 @@ chmod 600 "$CONFIG"
 echo "✓ 已写入 ${CONFIG}"
 no_proxy_rc
 echo "以后要切回自己的官方账号，运行：curl -fsSL ` + portal + `/restore | sh"
-if command -v codex >/dev/null 2>&1; then
-  echo "完成。重新打开 Codex 就会用公司网关。"
+desktop_hint
+if command -v codex >/dev/null 2>&1 || [ -d /Applications/ChatGPT.app ]; then
+  echo "完成。重新打开 Codex 就会用公司网关（命令行、VS Code 插件和 ChatGPT 桌面版的「工作」都读这份配置）。"
 else
   echo "完成。还没装 Codex：npm install -g @openai/codex（或 brew install codex），装好后运行 codex 即可。"
 fi
@@ -357,8 +366,11 @@ if ($env:HTTPS_PROXY -or $env:ALL_PROXY) {
 if (Test-Path (Join-Path $HOME '.cc-switch')) {
   Write-Host "注意：你装了 CC Switch。以后要切回官方登录，请运行 irm ` + portal + `/restore.ps1 | iex ，不要只在 CC Switch 里切换（CC Switch 会把这份网关配置存进它当前的供应商，切回去还是网关）。"
 }
+if (Get-Process -Name ChatGPT -ErrorAction SilentlyContinue) {
+  Write-Host '检测到 ChatGPT 桌面版正在运行：它的「工作」（Codex）只在启动时读配置，请从托盘完全退出 ChatGPT 再打开。「聊天」不走公司网关。'
+}
 if (Get-Command codex -ErrorAction SilentlyContinue) {
-  Write-Host '完成。重新打开 Codex 就会用公司网关。'
+  Write-Host '完成。重新打开 Codex 就会用公司网关（命令行、VS Code 插件和 ChatGPT 桌面版的「工作」都读这份配置）。'
 } else {
   Write-Host '完成。还没装 Codex：npm install -g @openai/codex，装好后运行 codex 即可。'
 }

@@ -204,7 +204,7 @@ function steps(me: Me, installed: boolean, setInstalled: (v: boolean) => void, p
             ③ 检查：在终端运行下面这条，显示出版本号就说明装好了。
             <Cmd text="codex --version" />
           </div>
-          <p>也可以用 Codex 桌面版或 VS Code 里的 Codex 插件，它们和命令行读同一份配置；不过下一步的安装命令仍要在终端里运行一次。</p>
+          <p>也可以用 ChatGPT 桌面版的「工作」（就是 Codex）或 VS Code 里的 Codex 插件，它们和命令行读同一份配置；不过下一步的安装命令仍要在终端里运行一次。ChatGPT 桌面版的「聊天」不走公司网关。</p>
         </>
       ),
       action: (
@@ -231,7 +231,7 @@ function steps(me: Me, installed: boolean, setInstalled: (v: boolean) => void, p
       how: (
         <>
           <p>
-            复制生成 Key 弹窗里的安装命令，粘贴到终端里回车，看到“完成”后重新打开 Codex。
+            复制生成 Key 弹窗里的安装命令，粘贴到终端里回车，看到“完成”后重新打开 Codex（ChatGPT 桌面版要按 ⌘Q 完全退出再打开）。
             命令 10 分钟内有效、只能用一次，里面不含 Key 本身。
           </p>
           <OpenTerminal />
