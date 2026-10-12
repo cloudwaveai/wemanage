@@ -244,6 +244,36 @@ func (c *Client) APICall(ctx context.Context, call APICallRequest) (APICallRespo
 	return out, nil
 }
 
+// APICallFresh is APICall for the named credential, surviving an access
+// token the upstream no longer takes. CPA refreshes tokens on a timer and when
+// a proxied request gets a 401, but not for api-call; ChatGPT dropped an
+// account's token when it was upgraded to Pro (2026-10-12), and every quota
+// and subscription check then got 401 token_expired, days before the next
+// timed refresh. On a 401 CPA refreshes the credential and the call is made
+// once more; if the refresh fails, the first answer stands.
+func (c *Client) APICallFresh(ctx context.Context, name string, call APICallRequest) (APICallResponse, error) {
+	resp, err := c.APICall(ctx, call)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized || name == "" {
+		return resp, err
+	}
+	if c.RefreshAuthFile(ctx, name) != nil {
+		return resp, nil
+	}
+	return c.APICall(ctx, call)
+}
+
+// RefreshAuthFile makes CPA refresh a credential's tokens now
+// (POST /v0/management/auth-files/refresh?name=x.json).
+func (c *Client) RefreshAuthFile(ctx context.Context, name string) error {
+	q := url.Values{}
+	q.Set("name", name)
+	req, err := c.newRequest(ctx, http.MethodPost, managementBase+"/auth-files/refresh", q, nil)
+	if err != nil {
+		return err
+	}
+	return c.do(req, nil)
+}
+
 // StaticModels returns CPA's built-in model catalogue for a channel
 // (GET /v0/management/model-definitions/{channel}), e.g. "codex" or "kimi".
 func (c *Client) StaticModels(ctx context.Context, channel string) ([]store.ModelInfo, error) {

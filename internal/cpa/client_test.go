@@ -248,3 +248,59 @@ func TestAPICallHeaderOrder(t *testing.T) {
 		t.Fatalf("round trip: %+v %v", back, err)
 	}
 }
+
+// A 401 from upstream makes CPA refresh the credential, then the call is made
+// once more; a failed refresh leaves the 401 answer.
+func TestAPICallFreshRefreshesOn401(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		refreshOK  bool
+		wantStatus int
+		wantCalls  int
+	}{
+		{"refreshed", true, 200, 2},
+		{"refresh fails", false, 401, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls, refreshes := 0, []string{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assertAuth(t, r)
+				switch r.URL.Path {
+				case "/v0/management/api-call":
+					calls++
+					if len(refreshes) == 0 || !tc.refreshOK {
+						io.WriteString(w, `{"status_code":401,"body":"{\"error\":{\"code\":\"token_expired\"}}"}`)
+						return
+					}
+					io.WriteString(w, `{"status_code":200,"body":"{\"plan_type\":\"pro\"}"}`)
+				case "/v0/management/auth-files/refresh":
+					if r.Method != http.MethodPost {
+						t.Errorf("refresh method = %s", r.Method)
+					}
+					refreshes = append(refreshes, r.URL.Query().Get("name"))
+					if !tc.refreshOK {
+						w.WriteHeader(http.StatusInternalServerError)
+						io.WriteString(w, `{"error":"invalid_grant"}`)
+						return
+					}
+					io.WriteString(w, `{"ok":true}`)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			c := NewClient(srv.URL, testKey, srv.Client())
+			resp, err := c.APICallFresh(context.Background(), "codex-1.json", APICallRequest{AuthIndex: "i", Method: "GET", URL: "https://x"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != tc.wantStatus || calls != tc.wantCalls {
+				t.Fatalf("status %d after %d calls, want %d after %d", resp.StatusCode, calls, tc.wantStatus, tc.wantCalls)
+			}
+			if len(refreshes) != 1 || refreshes[0] != "codex-1.json" {
+				t.Fatalf("refreshes = %v", refreshes)
+			}
+		})
+	}
+}

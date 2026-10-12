@@ -70,7 +70,7 @@ func (p *QuotaProber) chatgptCall(ctx context.Context, acc store.Account, method
 	if id := f.IDToken.ChatGPTAccountID; id != "" {
 		call.Header["ChatGPT-Account-Id"] = id
 	}
-	resp, err := p.CPA.APICall(ctx, call)
+	resp, err := p.CPA.APICallFresh(ctx, acc.CPAAuthName, call)
 	if err != nil {
 		return resp, err
 	}

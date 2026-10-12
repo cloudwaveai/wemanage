@@ -378,3 +378,56 @@ func TestCheckSubscription(t *testing.T) {
 		t.Fatalf("retried %v, want only the failed one", checked)
 	}
 }
+
+// ChatGPT drops an account's token when its plan changes. The probe then has
+// CPA refresh the credential and asks again, and the account takes the new
+// plan.
+func TestQuotaProbeRefreshesDroppedToken(t *testing.T) {
+	st, ctx := newStore(t)
+	acc := mkAccount(t, st, ctx, newBox(t), "upgraded.json")
+	plus := "plus"
+	if err := st.UpdateAccount(ctx, acc.ID, store.AccountPatch{PlanType: &plus}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	refreshed := ""
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v0/management/auth-files", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{
+			{"name": "upgraded.json", "auth_index": "idx-up", "provider": "codex", "id_token": map[string]any{"plan_type": "plus"}}}})
+	})
+	mux.HandleFunc("/v0/management/auth-files/refresh", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		refreshed = r.URL.Query().Get("name")
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	mux.HandleFunc("/v0/management/api-call", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		done := refreshed != ""
+		mu.Unlock()
+		if !done {
+			_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 401, "body": `{"error":{"code":"token_expired"}}`})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status_code": 200, "body": `{"plan_type":"pro","rate_limit":{
+			"primary_window":{"used_percent":3,"limit_window_seconds":604800,"reset_at":1790172800}}}`})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	p := &health.QuotaProber{Store: st, CPA: cpa.NewClient(srv.URL, "mk", srv.Client()), Settings: settings.NewService(st)}
+	if _, err := p.Refresh(ctx, acc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if refreshed != "upgraded.json" {
+		t.Fatalf("refreshed %q, want upgraded.json", refreshed)
+	}
+	got, err := st.GetAccount(ctx, acc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PlanType != "pro" {
+		t.Fatalf("plan = %q, want pro", got.PlanType)
+	}
+}

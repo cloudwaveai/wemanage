@@ -39,7 +39,7 @@ const (
 // SearchBackend is what web search needs from CPA's management API.
 type SearchBackend interface {
 	ListAuthFiles(ctx context.Context) ([]cpa.AuthFile, error)
-	APICall(ctx context.Context, call cpa.APICallRequest) (cpa.APICallResponse, error)
+	APICallFresh(ctx context.Context, name string, call cpa.APICallRequest) (cpa.APICallResponse, error)
 }
 
 // authFileCache keeps CPA's credential list for a few minutes, so a search
@@ -207,7 +207,7 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	callCtx, cancel := context.WithTimeout(ctx, searchTimeout)
 	defer cancel()
-	resp, err := h.deps.CPA.APICall(callCtx, call)
+	resp, err := h.deps.CPA.APICallFresh(callCtx, acc.CPAAuthName, call)
 	if err != nil {
 		fail(http.StatusBadGateway, "upstream_unreachable", "上游服务暂时连不上，请稍后重试。", err)
 		return

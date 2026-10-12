@@ -176,7 +176,7 @@ func (p *QuotaProber) probe(ctx context.Context, acc store.Account, files map[st
 		call.URL = KimiUsageURL
 		call.Header = map[string]string{"Authorization": "Bearer $TOKEN$"}
 	}
-	resp, err := p.CPA.APICall(ctx, call)
+	resp, err := p.CPA.APICallFresh(ctx, acc.CPAAuthName, call)
 	if err != nil {
 		return store.QuotaSnapshot{}, err
 	}

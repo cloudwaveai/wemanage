@@ -30,7 +30,7 @@ func (f *fakeSearch) ListAuthFiles(context.Context) ([]cpa.AuthFile, error) {
 	return []cpa.AuthFile{a}, nil
 }
 
-func (f *fakeSearch) APICall(_ context.Context, call cpa.APICallRequest) (cpa.APICallResponse, error) {
+func (f *fakeSearch) APICallFresh(_ context.Context, _ string, call cpa.APICallRequest) (cpa.APICallResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, call)
