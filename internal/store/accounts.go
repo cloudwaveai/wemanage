@@ -322,3 +322,15 @@ func prefixCols(alias, cols string) string {
 	}
 	return out
 }
+
+// SetPlanType records the plan the upstream reports for an account and says
+// whether it changed. A change also marks the account's subscription for an
+// early check, since a plan change moves the renewal date.
+func (s *Store) SetPlanType(ctx context.Context, id int64, plan string) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `UPDATE upstream_accounts SET plan_type=$2 WHERE id=$1 AND plan_type IS DISTINCT FROM $2`, id, plan)
+	if err != nil || tag.RowsAffected() == 0 {
+		return false, err
+	}
+	_, err = s.Pool.Exec(ctx, `UPDATE account_subscriptions SET checked_at='epoch' WHERE account_id=$1`, id)
+	return true, err
+}

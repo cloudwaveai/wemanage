@@ -604,6 +604,7 @@ func (s *wsSession) recordRateLimits(data []byte) {
 	set("X-Codex-Secondary-Used-Percent", rl.Get("secondary.used_percent"))
 	set("X-Codex-Secondary-Window-Minutes", rl.Get("secondary.window_minutes"))
 	set("X-Codex-Secondary-Reset-At", rl.Get("secondary.reset_at"))
+	set("X-Codex-Plan-Type", gjson.GetBytes(data, "plan_type"))
 	accID := s.acc.ID
 	go func() {
 		_ = health.RecordQuotaFromHeaders(context.Background(), s.h.deps.Store, accID, hdr, time.Now())

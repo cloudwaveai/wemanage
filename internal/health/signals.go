@@ -61,13 +61,22 @@ const (
 	hdrSecondaryWindowMinutes = "X-Codex-Secondary-Window-Minutes"
 	hdrSecondaryResetAfter    = "X-Codex-Secondary-Reset-After-Seconds"
 	hdrSecondaryResetAt       = "X-Codex-Secondary-Reset-At"
+
+	hdrPlanType = "X-Codex-Plan-Type"
 )
 
 // RecordQuotaFromHeaders parses CPA passthrough quota headers into a
 // QuotaSnapshot and stores it. Missing headers yield nil pointers. Reset-At is
 // unix seconds; when only Reset-After-Seconds is present, reset = now + seconds.
 // If neither the primary nor the secondary window is present, nothing is stored.
+// The plan the headers report (X-Codex-Plan-Type) becomes the account's plan:
+// busy accounts are never probed, so their traffic is how an upgrade shows.
 func RecordQuotaFromHeaders(ctx context.Context, st *store.Store, accountID int64, h http.Header, now time.Time) error {
+	if plan := h.Get(hdrPlanType); validPlanType(plan) {
+		if _, err := st.SetPlanType(ctx, accountID, plan); err != nil {
+			return err
+		}
+	}
 	pUsed := parseFloatHeader(h, hdrPrimaryUsedPct)
 	pWin := parseIntHeader(h, hdrPrimaryWindowMinutes)
 	pReset := parseResetHeader(h, hdrPrimaryResetAt, hdrPrimaryResetAfter, now)
@@ -92,6 +101,20 @@ func RecordQuotaFromHeaders(ctx context.Context, st *store.Store, accountID int6
 		SecondaryWindowMinutes: sWin,
 		SecondaryResetAt:       sReset,
 	}))
+}
+
+// validPlanType accepts what ChatGPT calls its plans ("plus", "pro",
+// "team", …): a short lowercase word.
+func validPlanType(p string) bool {
+	if p == "" || len(p) > 32 {
+		return false
+	}
+	for _, r := range p {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // HasQuotaHeaders reports whether a response carries any quota header.

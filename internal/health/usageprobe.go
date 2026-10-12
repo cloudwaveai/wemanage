@@ -198,7 +198,7 @@ func (p *QuotaProber) probe(ctx context.Context, acc store.Account, files map[st
 		return store.QuotaSnapshot{}, err
 	}
 	if plan != "" && plan != acc.PlanType {
-		if err := p.Store.UpdateAccount(ctx, acc.ID, store.AccountPatch{PlanType: &plan}); err != nil {
+		if _, err := p.Store.SetPlanType(ctx, acc.ID, plan); err != nil {
 			p.logger().Warn("quota probe: update plan", "account", acc.ID, "err", err)
 		}
 	}

@@ -165,6 +165,61 @@ func TestRecordQuotaFromHeaders(t *testing.T) {
 	}
 }
 
+// The plan traffic reports becomes the account's plan; a change sends the
+// subscription to be checked again at the next round.
+func TestRecordQuotaFromHeadersPlan(t *testing.T) {
+	st, ctx := newStore(t)
+	a := mkAccount(t, st, ctx, newBox(t), "plan.json")
+	plus := "plus"
+	if err := st.UpdateAccount(ctx, a.ID, store.AccountPatch{PlanType: &plus}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSubscription(ctx, store.Subscription{AccountID: a.ID, Plan: "plus", Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	record := func(plan string) {
+		t.Helper()
+		h := http.Header{}
+		h.Set("X-Codex-Secondary-Used-Percent", "1")
+		h.Set("X-Codex-Plan-Type", plan)
+		if err := health.RecordQuotaFromHeaders(ctx, st, a.ID, h, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkedAt := func() time.Time {
+		t.Helper()
+		subs, err := st.Subscriptions(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return subs[a.ID].CheckedAt
+	}
+	planOf := func() string {
+		t.Helper()
+		got, err := st.GetAccount(ctx, a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.PlanType
+	}
+
+	record("plus") // unchanged: the subscription stays fresh
+	if time.Since(checkedAt()) > time.Minute {
+		t.Fatal("an unchanged plan marked the subscription for checking")
+	}
+	record("Pro <b>") // not a plan name: ignored
+	if planOf() != "plus" {
+		t.Fatalf("plan = %q after a malformed header", planOf())
+	}
+	record("pro")
+	if planOf() != "pro" {
+		t.Fatalf("plan = %q, want pro", planOf())
+	}
+	if time.Since(checkedAt()) < health.SubscriptionMaxAge {
+		t.Fatal("a plan change did not mark the subscription for checking")
+	}
+}
+
 func TestCheckDegradation(t *testing.T) {
 	st, ctx := newStore(t)
 	box := newBox(t)

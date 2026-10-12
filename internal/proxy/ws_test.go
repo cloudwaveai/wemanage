@@ -55,7 +55,7 @@ func (f *fakeCPAWS) handler(t *testing.T) http.Handler {
 				continue
 			}
 			send(map[string]any{"type": "response.created", "response": map[string]any{"id": id}})
-			send(map[string]any{"type": "codex.rate_limits", "rate_limits": map[string]any{
+			send(map[string]any{"type": "codex.rate_limits", "plan_type": "pro", "rate_limits": map[string]any{
 				"primary":   map[string]any{"used_percent": 12.5, "window_minutes": 300, "reset_at": time.Now().Add(time.Hour).Unix()},
 				"secondary": map[string]any{"used_percent": 40.0, "window_minutes": 10080, "reset_at": time.Now().Add(48 * time.Hour).Unix()},
 			}})
@@ -194,6 +194,10 @@ func TestWSRelayLogsAndRewrites(t *testing.T) {
 			t.Fatalf("quota snapshot not recorded: %+v %v", q, err)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	// ...and its plan_type the account's plan.
+	if acc, err := h.st.GetAccount(h.ctx, accs[0].ID); err != nil || acc.PlanType != "pro" {
+		t.Fatalf("plan = %q %v, want pro", acc.PlanType, err)
 	}
 	// The device was registered from the per-turn installation id.
 	devs, _ := h.st.ListDevices(h.ctx, h.empID)
