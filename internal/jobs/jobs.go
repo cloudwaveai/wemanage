@@ -14,6 +14,7 @@ import (
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
+	"aiseat/internal/workdigest"
 
 	"github.com/robfig/cron/v3"
 )
@@ -26,6 +27,7 @@ type Deps struct {
 	Notifier      *notify.Notifier
 	Feishu        *feishu.Client
 	Report        report.Deps
+	Digest        *workdigest.Runner // optional
 	EgressEchoURL string
 	Loc           *time.Location
 	GitHub        health.GitHub
@@ -150,6 +152,17 @@ func Register(c *cron.Cron, d Deps) {
 		_, _ = c.AddFunc("@every 1h", func() {
 			if err := d.Risk.ExpirePending(ctx); err != nil {
 				log.Warn("risk expire pending", "err", err)
+			}
+		})
+	}
+
+	// Yesterday's work summaries for the work board — daily 01:30, after the
+	// day's late work is in and while the summarizing account is idle.
+	if d.Digest != nil {
+		_, _ = c.AddFunc("30 1 * * *", func() {
+			yesterday := d.Digest.Day(time.Now()).AddDate(0, 0, -1)
+			if err := d.Digest.RunDay(ctx, yesterday); err != nil {
+				log.Warn("work digest", "err", err)
 			}
 		})
 	}

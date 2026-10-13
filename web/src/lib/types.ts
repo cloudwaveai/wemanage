@@ -342,6 +342,9 @@ export interface Settings {
   // Content audit of the newest user message.
   content_audit_mode: ContentAuditMode;
   content_audit_rules: ContentAuditRule[] | null;
+  // Work board summaries: the ChatGPT account (0 = off) and model ("" = default).
+  work_digest_account_id?: number;
+  work_digest_model?: string;
 }
 
 // --- devices / networks / risk (snake_case) ---
@@ -474,4 +477,67 @@ export interface LoginProvider {
   note: string;
   paste: boolean; // redirect login: paste the final URL back
   callback?: string;
+}
+
+// --- work board (admin) ---
+export type WorkRange = "today" | "yesterday" | "7d" | "30d";
+
+export interface WorkEmployee {
+  employee_id: number;
+  name: string;
+  department_names: string[];
+  is_service: boolean;
+  status: string;
+  requests: number;
+  tokens_input: number; // includes cached
+  tokens_cached: number;
+  tokens_output: number; // includes reasoning
+  tokens_reasoning: number;
+  tokens_total: number; // input + output
+  sessions: number;
+  active_days: number;
+  last_active: string | null;
+  top_model: string;
+}
+
+export interface Workboard {
+  from: string;
+  to: string;
+  days: number;
+  totals: {
+    requests: number;
+    tokens_input: number;
+    tokens_cached: number;
+    tokens_output: number;
+    tokens_reasoning: number;
+    tokens_total: number;
+    active_employees: number;
+  };
+  employees: WorkEmployee[];
+  idle: { employee_id: number; name: string }[];
+  daily: { t: string; requests: number; tokens: number }[];
+}
+
+export type DigestStatus = "none" | "running" | "done" | "failed";
+
+export interface WorkDigests {
+  day: string; // YYYY-MM-DD
+  status: DigestStatus;
+  error?: string;
+  configured: boolean;
+  model?: string;
+  account?: { id: number; email: string; plan_type: string };
+  overview_md?: string;
+  started_at?: string;
+  finished_at?: string | null;
+  days: string[]; // days that have summaries, newest first
+  employees: {
+    employee_id: number;
+    name: string;
+    department_names: string[];
+    summary_md: string;
+    sessions: number;
+    messages: number;
+    generated_at: string;
+  }[];
 }

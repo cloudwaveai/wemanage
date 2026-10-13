@@ -13,6 +13,7 @@ import (
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
+	"aiseat/internal/workdigest"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -48,7 +49,9 @@ type Deps struct {
 	// Risk is the key-sharing engine (optional); used to refresh gate caches
 	// and notify on device/freeze changes.
 	Risk *risk.Engine
-	Log  *slog.Logger
+	// Digest writes the work board's daily summaries (optional).
+	Digest *workdigest.Runner
+	Log    *slog.Logger
 }
 
 // Server holds web dependencies.
@@ -115,6 +118,9 @@ func (s *Server) Mount(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireSuperAdmin)
 				r.Get("/admin/overview", s.handleOverview)
+				r.Get("/admin/workboard", s.handleWorkboard)
+				r.Get("/admin/workboard/digests", s.handleWorkDigests)
+				r.Post("/admin/workboard/digests/run", s.handleRunWorkDigest)
 				r.Get("/admin/employees", s.handleListEmployees)
 				r.Get("/admin/accounts", s.handleListAccounts)
 				r.Post("/admin/accounts/oauth-start", s.handleOAuthStart)

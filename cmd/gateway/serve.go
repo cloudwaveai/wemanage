@@ -27,6 +27,7 @@ import (
 	"aiseat/internal/store"
 	"aiseat/internal/web"
 	"aiseat/internal/webui"
+	"aiseat/internal/workdigest"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -130,7 +131,13 @@ func runServe() error {
 	superAdmins = append(superAdmins, cfg.BootstrapSuperAdmins...)
 	notifier := notify.NewNotifier(st, notifySender(fs), superAdmins)
 
+	digest := &workdigest.Runner{
+		Store: st, Settings: set, CPABaseURL: cfg.CPABaseURL, CPAAPIKey: cfg.CPAAPIKey,
+		Loc: cfg.Timezone, Log: log,
+	}
+
 	webSrv := web.NewServer(web.Deps{
+		Digest:               digest,
 		Loc:                  cfg.Timezone,
 		Models:               dp.AccountModels,
 		Quota:                quota,
@@ -155,6 +162,7 @@ func runServe() error {
 			Store: st, LLM: report.LLM{BaseURL: cfg.ReportLLMBaseURL, APIKey: cfg.ReportLLMAPIKey, Model: cfg.ReportLLMModel},
 			Sender: reportSender(fs), Loc: cfg.Timezone, Enabled: set.Get(ctx).ReportEnabled && cfg.ReportLLMAPIKey != "",
 		},
+		Digest:        digest,
 		EgressEchoURL: cfg.EgressEchoURL, Loc: cfg.Timezone,
 		GitHub: health.GitHub{}, Risk: riskEngine, Quota: quota, QuotaAlerts: quotaAlerter(st, fs, quota, cfg), Log: log,
 	})

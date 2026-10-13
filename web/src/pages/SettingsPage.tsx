@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import type { ContentAuditMode, ContentAuditRule, Settings } from "../lib/types";
+import type { AccountRow, ContentAuditMode, ContentAuditRule, Settings } from "../lib/types";
+import { isChatGPT } from "../lib/providers";
 import {
   Card,
   PageHeader,
@@ -129,6 +130,13 @@ export function SettingsPage() {
       toast(e instanceof Error ? e.message : "保存失败", "error"),
   });
 
+  // ChatGPT accounts that can write the work board's daily summaries.
+  const accounts = useQuery({
+    queryKey: ["admin-accounts"],
+    queryFn: () => api.get<{ accounts: AccountRow[] }>("/api/admin/accounts"),
+  });
+  const chatgptAccounts = (accounts.data?.accounts ?? []).filter((a) => isChatGPT(a.provider));
+
   const patch = (p: Partial<Settings>) =>
     setForm((f) => (f ? { ...f, ...p } : f));
 
@@ -228,6 +236,39 @@ export function SettingsPage() {
                 onChange={(v) => patch({ disable_websocket: v })}
                 hint="默认开启 WebSocket：与官方 Codex 连接 OpenAI 的方式一致。出现兼容问题时可临时关闭，员工的 Codex 会自动退回 HTTP，无需改配置。"
               />
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="mb-1 text-sm font-semibold text-slate-800">每日工作总结</h2>
+            <p className="mb-4 text-xs text-slate-400">
+              「工作看板」里每天的工作总结用哪个账号来写。每天 01:30 根据前一天的对话生成，会用掉这个账号的一些额度；不选就不生成。
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">用哪个账号</label>
+                <select
+                  value={form.work_digest_account_id ?? 0}
+                  onChange={(e) => patch({ work_digest_account_id: Number(e.target.value) })}
+                  className={inputCls}
+                >
+                  <option value={0}>不生成</option>
+                  {chatgptAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.email}（{a.plan_type || "ChatGPT"}）
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">模型</label>
+                <input
+                  value={form.work_digest_model ?? ""}
+                  onChange={(e) => patch({ work_digest_model: e.target.value.trim() })}
+                  placeholder={`留空则用 ${form.default_codex_model || "gpt-6-luna"}`}
+                  className={inputCls + " font-mono"}
+                />
+              </div>
             </div>
           </Card>
 

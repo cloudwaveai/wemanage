@@ -18,6 +18,7 @@ import { DevicesPage } from "./pages/DevicesPage";
 import { RiskPage } from "./pages/RiskPage";
 import { RiskEmployeePage } from "./pages/RiskEmployeePage";
 import { TeamPage } from "./pages/TeamPage";
+import { WorkboardPage } from "./pages/WorkboardPage";
 import type { Role } from "./lib/types";
 
 function FullScreen({ children }: { children: React.ReactNode }) {
@@ -77,6 +78,7 @@ export default function App() {
 
           {canOversee && <Route path="/team" element={<TeamPage />} />}
 
+          {isAdmin && <Route path="/workboard" element={<WorkboardPage />} />}
           {isAdmin && <Route path="/employees" element={<EmployeesPage />} />}
           {isAdmin && <Route path="/risk" element={<RiskPage />} />}
           {isAdmin && (

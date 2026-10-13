@@ -83,6 +83,12 @@ const ADMIN: NavItem[] = [
     icon: I("M3 12l9-9 9 9M5 10v10h14V10"),
   },
   {
+    to: "/workboard",
+    label: "工作看板",
+    roles: ["super_admin"],
+    icon: I("M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 012-2h2a2 2 0 012 2v0a2 2 0 01-2 2h-2a2 2 0 01-2-2zM9 12h6M9 16h4"),
+  },
+  {
     to: "/logs",
     label: "对话记录",
     roles: ["super_admin"],

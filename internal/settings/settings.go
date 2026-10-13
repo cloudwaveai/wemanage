@@ -75,6 +75,11 @@ type Settings struct {
 	// MaxAccountMembers is how many employees may share one account.
 	MaxAccountMembers int `json:"max_account_members"`
 
+	// The work board's daily summaries are written through this ChatGPT
+	// account (0 = off) with this model ("" = DefaultCodexModel).
+	WorkDigestAccountID int64  `json:"work_digest_account_id"`
+	WorkDigestModel     string `json:"work_digest_model"`
+
 	// Content audit of the newest user message, before it is sent upstream.
 	ContentAuditMode  string        `json:"content_audit_mode"` // off | warn | block
 	ContentAuditRules []ContentRule `json:"content_audit_rules"`
@@ -274,6 +279,12 @@ func Validate(s Settings) error {
 	}
 	if s.ModelMismatchThreshold < 1 {
 		return fmt.Errorf("model_mismatch_threshold must be >= 1")
+	}
+	if s.WorkDigestAccountID < 0 {
+		return fmt.Errorf("work_digest_account_id must be >= 0")
+	}
+	if strings.ContainsAny(s.WorkDigestModel, " /\t\n") {
+		return fmt.Errorf("work_digest_model must be a bare model name")
 	}
 	switch s.RiskMode {
 	case RiskLax, RiskStandard, RiskStrict:
