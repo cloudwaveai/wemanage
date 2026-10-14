@@ -562,7 +562,10 @@ func (s *wsSession) complete(t *wsTurn, status int, errType string, until time.T
 		h.deps.Recorder.Submit(t.rec)
 	}
 	ctx := context.Background()
-	if strings.Contains(errType, "rate_limit") || strings.Contains(errType, "usage_limit") || status == http.StatusTooManyRequests {
+	// Only a used-up quota (usage_limit_reached; until is then set) stops
+	// routing to the account; a brief limit such as "Codex is at capacity"
+	// (turn_rate_limit_exceeded) is the client's to retry.
+	if !until.IsZero() || strings.Contains(errType, "usage_limit") {
 		if until.IsZero() {
 			until = time.Now().Add(5 * time.Minute)
 		}

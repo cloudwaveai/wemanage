@@ -65,6 +65,10 @@ func (f *fakeCPAWS) handler(t *testing.T) http.Handler {
 				continue
 			case strings.Contains(in, "drop"): // upstream goes away mid-answer
 				return
+			case strings.Contains(in, "capacity"): // ChatGPT is full
+				send(map[string]any{"type": "error", "status": 429, "error": map[string]any{
+					"type": "rate_limit_error", "code": "turn_rate_limit_exceeded", "message": "Codex is at capacity, please try again later"}})
+				continue
 			}
 			send(map[string]any{"type": "response.completed", "response": map[string]any{
 				"id": id, "model": "gpt-5.1-codex",
@@ -299,5 +303,40 @@ func TestWSUnfinishedTurnSaysWhoClosed(t *testing.T) {
 			time.Sleep(50 * time.Millisecond)
 		}
 		_ = conn.Close()
+	}
+}
+
+// "Codex is at capacity" reaches Codex to retry and does not lock the
+// account.
+func TestWSCapacityErrorKeepsAccount(t *testing.T) {
+	h, _, url := wsRig(t)
+	conn, _, err := dialGW(t, url, h.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	sendCreate(t, conn, nil, "capacity")
+	ev := readUntil(t, conn, "error")
+	if !strings.Contains(fmt.Sprint(ev["error"]), "turn_rate_limit_exceeded") {
+		t.Fatalf("event = %v", ev)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		h.rec.Flush()
+		var status int
+		if err := h.st.Pool.QueryRow(h.ctx, `SELECT status_code FROM requests`).Scan(&status); err == nil {
+			if status != 429 {
+				t.Fatalf("logged %d, want 429", status)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("nothing logged")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	accs, _ := h.st.ListAccounts(h.ctx)
+	if accs[0].RateLimitedUntil != nil {
+		t.Fatalf("a capacity error rate-limited the account until %v", accs[0].RateLimitedUntil)
 	}
 }

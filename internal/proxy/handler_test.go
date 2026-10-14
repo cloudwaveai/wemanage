@@ -290,10 +290,15 @@ func TestProxyBriefUpstream429PassesThrough(t *testing.T) {
 	cpa := newFakeCPA()
 	cpa.status = 429
 	cpa.respHeader = map[string]string{"Retry-After": "5"}
-	r, _, key, _, _ := harness(t, cpa)
+	r, st, key, _, _ := harness(t, cpa)
 	w := doReq(t, r, key, `{"model":"gpt-5.1-codex","input":[]}`)
 	if w.Code != 429 || strings.Contains(w.Body.String(), "usage_limit_reached") {
 		t.Fatalf("status = %d %s, want the upstream 429 as it is", w.Code, w.Body.String())
+	}
+	// It does not lock the account: the next request goes upstream again.
+	accs, _ := st.ListAccounts(context.Background())
+	if len(accs) != 1 || accs[0].RateLimitedUntil != nil {
+		t.Fatalf("a brief 429 rate-limited the account: %+v", accs)
 	}
 }
 

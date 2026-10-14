@@ -587,7 +587,11 @@ func (h *Handler) quotaDue(accountID int64, status int) bool {
 
 func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *http.Response, model string, outcome capture.Outcome, set settings.Settings) {
 	switch {
-	case resp.StatusCode == http.StatusTooManyRequests:
+	case resp.StatusCode == http.StatusTooManyRequests && quotaUsedUp(resp.Header):
+		// Only a used-up quota stops routing to the account. Other 429s, like
+		// ChatGPT's "Codex is at capacity" (turn_rate_limit_exceeded,
+		// 2026-10-14), pass through for the client to retry; locking the
+		// account for them refused its other models too.
 		h.markRateLimited(ctx, acc.ID, parseRateLimitReset(resp.Header), nil)
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		_ = h.deps.Store.SetNeedsLogin(ctx, acc.ID, true)

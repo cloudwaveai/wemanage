@@ -67,3 +67,23 @@ func TestFmtReset(t *testing.T) {
 		t.Errorf("later: %q, want %q", got, want)
 	}
 }
+
+func TestQuotaUsedUp(t *testing.T) {
+	for _, c := range []struct {
+		h    map[string]string
+		want bool
+	}{
+		{map[string]string{"Retry-After": "5"}, false},
+		{map[string]string{"X-Codex-Primary-Used-Percent": "42"}, false},
+		{map[string]string{"X-Codex-Secondary-Used-Percent": "100"}, true},
+		{map[string]string{"X-Codex-Limit-Reached": "true"}, true},
+	} {
+		h := http.Header{}
+		for k, v := range c.h {
+			h.Set(k, v)
+		}
+		if got := quotaUsedUp(h); got != c.want {
+			t.Errorf("%v: %v, want %v", c.h, got, c.want)
+		}
+	}
+}

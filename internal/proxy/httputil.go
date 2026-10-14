@@ -59,6 +59,19 @@ func flushCopy(w http.ResponseWriter, src io.Reader) {
 	}
 }
 
+// quotaUsedUp reports whether upstream quota headers say a window is used up.
+func quotaUsedUp(h http.Header) bool {
+	if strings.EqualFold(h.Get("X-Codex-Limit-Reached"), "true") {
+		return true
+	}
+	for _, k := range []string{"X-Codex-Primary-Used-Percent", "X-Codex-Secondary-Used-Percent"} {
+		if v, err := strconv.ParseFloat(h.Get(k), 64); err == nil && v >= 100 {
+			return true
+		}
+	}
+	return false
+}
+
 // parseRateLimitReset derives a rate-limit deadline from upstream headers,
 // five minutes from now when they give none.
 func parseRateLimitReset(h http.Header) time.Time {
