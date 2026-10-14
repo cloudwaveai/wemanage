@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, LIVE_MS } from "../lib/api";
 import type { AccountRow, Overview } from "../lib/types";
 import {
   Card,
@@ -12,12 +12,14 @@ import {
   Meter,
 } from "../components/ui";
 import { fmtNum, fmtCompact, fmtDateTime } from "../lib/format";
-import { accountName, hasQuota, isChatGPT, providerName } from "../lib/providers";
+import { accountName, hasQuota, isChatGPT, providerName, NO_FIVE_HOUR, weeklyOnly } from "../lib/providers";
 
 export function OverviewPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["overview"],
     queryFn: () => api.get<Overview>("/api/admin/overview"),
+    refetchInterval: LIVE_MS, // new requests and quota land within about a minute
+    refetchOnWindowFocus: true,
   });
 
   const u = data?.usage_30d;
@@ -27,6 +29,8 @@ export function OverviewPage() {
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api.get<{ accounts: AccountRow[] }>("/api/admin/accounts"),
+    refetchInterval: LIVE_MS, // new requests and quota land within about a minute
+    refetchOnWindowFocus: true,
   });
   const health = data?.account_health ?? {};
   const alerts = data?.alerts ?? [];
@@ -129,7 +133,7 @@ function AccountQuotaCard({
         </div>
       </div>
       <p className="mb-4 text-xs text-slate-400">
-        5 小时 / 每周额度来自 ChatGPT、Kimi Code 官方接口（其它账号类型没有额度显示）；Token 为经过网关的用量。详情和手动刷新在「账号」页。
+        5 小时 / 每周额度来自 ChatGPT、Kimi Code 官方接口（其它账号类型没有额度显示）；Token 为经过网关的用量。有请求时一分钟内更新，页面每 15 秒自动刷新。
       </p>
       {rows.length === 0 ? (
         <Empty label="暂无账号" />
@@ -162,6 +166,7 @@ function AccountQuotaCard({
                       label="5 小时"
                       pct={a.quota?.primary_used_pct}
                       hint={resetHint(a.quota?.primary_reset_at)}
+                      emptyText={weeklyOnly(a.quota?.primary_used_pct, a.quota?.secondary_used_pct) ? NO_FIVE_HOUR : undefined}
                     />
                     <Meter
                       label="每周"

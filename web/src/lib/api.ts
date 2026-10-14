@@ -70,3 +70,7 @@ export const api = {
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   del: <T>(path: string, body?: unknown) => request<T>("DELETE", path, body),
 };
+
+// LIVE_MS is how often pages showing live usage refetch (paused while the tab
+// is hidden).
+export const LIVE_MS = 15_000;

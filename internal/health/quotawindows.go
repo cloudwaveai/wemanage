@@ -21,6 +21,7 @@ const (
 func NormalizeQuotaWindows(q store.QuotaSnapshot) store.QuotaSnapshot {
 	p := quotaWindow{q.PrimaryUsedPct, q.PrimaryWindowMinutes, q.PrimaryResetAt}
 	s := quotaWindow{q.SecondaryUsedPct, q.SecondaryWindowMinutes, q.SecondaryResetAt}
+	p, s = p.orNone(), s.orNone()
 	pLong, pKnown := p.isLong()
 	sLong, sKnown := s.isLong()
 	swap := false
@@ -44,6 +45,15 @@ type quotaWindow struct {
 	pct     *float64
 	minutes *int
 	resetAt *time.Time
+}
+
+// orNone drops a window of no length: a Pro plan, which has no 5-hour
+// limit, reports one as 0% of a 0-minute window resetting now (2026-10-14).
+func (w quotaWindow) orNone() quotaWindow {
+	if w.minutes != nil && *w.minutes == 0 {
+		return quotaWindow{}
+	}
+	return w
 }
 
 func (w quotaWindow) present() bool { return w.pct != nil || w.minutes != nil || w.resetAt != nil }

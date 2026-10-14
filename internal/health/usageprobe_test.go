@@ -226,6 +226,14 @@ func TestNormalizeQuotaWindows(t *testing.T) {
 	if *q.PrimaryUsedPct != 1 || *q.SecondaryUsedPct != 2 {
 		t.Fatalf("unknown: %+v", q)
 	}
+	// Pro traffic reports its missing 5-hour limit as a 0-minute window
+	// resetting now; that is no window.
+	now := time.Now()
+	q = health.NormalizeQuotaWindows(store.QuotaSnapshot{PrimaryUsedPct: f(0), PrimaryWindowMinutes: i(0), PrimaryResetAt: &now,
+		SecondaryUsedPct: f(14), SecondaryWindowMinutes: i(10080)})
+	if q.PrimaryUsedPct != nil || q.PrimaryResetAt != nil || q.SecondaryUsedPct == nil || *q.SecondaryUsedPct != 14 {
+		t.Fatalf("pro with an empty 5-hour slot: %+v", q)
+	}
 }
 
 // The body below is a real Kimi Code /usages response with IDs removed.

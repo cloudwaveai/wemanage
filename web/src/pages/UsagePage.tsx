@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { NO_FIVE_HOUR, weeklyOnly } from "../lib/providers";
 import { useAuth } from "../context/AuthContext";
 import type { UsageSummary, QuotaResp } from "../lib/types";
 import { ResetCreditsCard } from "../components/ResetCredits";
@@ -94,6 +95,7 @@ export function UsagePage() {
                           label="5 小时额度已用"
                           pct={a.quota.PrimaryUsedPct}
                           hint={a.quota.PrimaryResetAt ? `重置于 ${fmtDateTime(a.quota.PrimaryResetAt)}` : undefined}
+                          emptyText={weeklyOnly(a.quota.PrimaryUsedPct, a.quota.SecondaryUsedPct) ? NO_FIVE_HOUR : undefined}
                         />
                         <Meter
                           label="每周额度已用"

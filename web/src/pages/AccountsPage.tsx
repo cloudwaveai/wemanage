@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, LIVE_MS } from "../lib/api";
 import type { AccountModelsResp, AccountRow, EmployeeRow, IPGroupRow } from "../lib/types";
 import {
   Card,
@@ -17,7 +17,7 @@ import { AccountCard } from "../components/AccountCard";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { AddAccountWizard } from "../components/AddAccountWizard";
-import { accountName, hasQuota as providerHasQuota, isChatGPT, providerName } from "../lib/providers";
+import { accountName, hasQuota as providerHasQuota, isChatGPT, NO_FIVE_HOUR, providerName, weeklyOnly } from "../lib/providers";
 
 
 // QuotaRow is one compact quota window: label, bar, percent; times on hover.
@@ -26,12 +26,22 @@ function QuotaRow({
   pct,
   resetAt,
   at,
+  emptyText,
 }: {
   label: string;
   pct: number | null | undefined;
   resetAt: string | null | undefined;
   at: string | undefined;
+  emptyText?: string; // shown instead of the bar when there is no reading
 }) {
+  if (pct == null && emptyText) {
+    return (
+      <div className="flex items-center gap-2 text-xs">
+        <span className="w-5 shrink-0 text-slate-400">{label}</span>
+        <span className="text-slate-400">{emptyText}</span>
+      </div>
+    );
+  }
   const stale = !!resetAt && new Date(resetAt).getTime() < Date.now();
   const v = pct ?? 0;
   const color = v >= 90 ? "bg-rose-500" : v >= 70 ? "bg-amber-500" : "bg-indigo-500";
@@ -105,6 +115,8 @@ export function AccountsPage() {
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api.get<{ accounts: AccountRow[]; max_members: number }>("/api/admin/accounts"),
+    refetchInterval: LIVE_MS, // new requests and quota land within about a minute
+    refetchOnWindowFocus: true,
   });
   const maxMembers = accounts.data?.max_members ?? 3;
 
@@ -347,6 +359,7 @@ export function AccountsPage() {
                             pct={a.quota?.primary_used_pct}
                             resetAt={a.quota?.primary_reset_at}
                             at={a.quota?.at}
+                            emptyText={weeklyOnly(a.quota?.primary_used_pct, a.quota?.secondary_used_pct) ? NO_FIVE_HOUR : undefined}
                           />
                           <QuotaRow
                             label="周"

@@ -260,11 +260,23 @@ export function Meter({
   label,
   pct,
   hint,
+  emptyText,
 }: {
   label: string;
   pct: number | null | undefined;
   hint?: string;
+  emptyText?: string; // shown instead of the bar when there is no reading
 }) {
+  if ((pct === null || pct === undefined) && emptyText) {
+    return (
+      <div>
+        <div className="mb-1 flex items-center justify-between text-xs text-slate-600">
+          <span className="font-medium">{label}</span>
+          <span className="text-slate-400">{emptyText}</span>
+        </div>
+      </div>
+    );
+  }
   const v = pct ?? 0;
   const color =
     v >= 90 ? "bg-rose-500" : v >= 70 ? "bg-amber-500" : "bg-indigo-500";

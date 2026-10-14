@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../lib/api";
+import { api, LIVE_MS } from "../lib/api";
 import type { TeamMember, TeamUsageResp } from "../lib/types";
 import {
   Card,
@@ -58,6 +58,8 @@ export function TeamPage() {
   const q = useQuery({
     queryKey: ["team-usage", range],
     queryFn: () => api.get<TeamUsageResp>(`/api/team/usage?range=${range}`),
+    refetchInterval: LIVE_MS, // new requests and quota land within about a minute
+    refetchOnWindowFocus: true,
   });
 
   const u = q.data?.summary;

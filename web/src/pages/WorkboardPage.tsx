@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api } from "../lib/api";
+import { api, LIVE_MS } from "../lib/api";
 import type { WorkDigests, WorkRange, Workboard } from "../lib/types";
 import { Button, Card, ErrorBox, Loading, PageHeader, StatTile } from "../components/ui";
 import { useToast } from "../components/Toast";
@@ -329,6 +329,8 @@ export function WorkboardPage() {
     queryKey: ["workboard", range],
     queryFn: () => api.get<Workboard>(`/api/admin/workboard?range=${range}`),
     placeholderData: (prev) => prev,
+    refetchInterval: LIVE_MS, // new requests and quota land within about a minute
+    refetchOnWindowFocus: true,
   });
   const b = q.data;
   const t = b?.totals;

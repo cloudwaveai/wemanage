@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { AccountRow } from "../lib/types";
 import { StatusBadge } from "./ui";
 import { fmtCompact, fmtDateTime, fmtNum } from "../lib/format";
-import { accountName, hasQuota, isChatGPT, providerIcon, providerName } from "../lib/providers";
+import { accountName, hasQuota, isChatGPT, providerIcon, providerName, NO_FIVE_HOUR, weeklyOnly } from "../lib/providers";
 import { subscriptionView, toneText } from "../lib/subscription";
 
 // An account as a card, in the manner of CPA's management center: who it is
@@ -70,7 +70,13 @@ export function AccountCard({
 
         {hasQuota(a.provider) ? (
           <div className="space-y-2.5">
-            <QuotaMeter label="5 小时" pct={a.quota?.primary_used_pct} resetAt={a.quota?.primary_reset_at} at={a.quota?.at} />
+            <QuotaMeter
+              label="5 小时"
+              pct={a.quota?.primary_used_pct}
+              resetAt={a.quota?.primary_reset_at}
+              at={a.quota?.at}
+              emptyText={weeklyOnly(a.quota?.primary_used_pct, a.quota?.secondary_used_pct) ? NO_FIVE_HOUR : undefined}
+            />
             <QuotaMeter label="每周" pct={a.quota?.secondary_used_pct} resetAt={a.quota?.secondary_reset_at} at={a.quota?.at} />
           </div>
         ) : (
@@ -230,12 +236,22 @@ function QuotaMeter({
   pct,
   resetAt,
   at,
+  emptyText,
 }: {
   label: string;
   pct: number | null | undefined;
   resetAt: string | null | undefined;
   at: string | undefined;
+  emptyText?: string; // shown instead of the bar when there is no reading
 }) {
+  if (pct == null && emptyText) {
+    return (
+      <div className="flex items-baseline justify-between gap-2 text-xs">
+        <span className="text-slate-500">{label}</span>
+        <span className="text-slate-400">{emptyText}</span>
+      </div>
+    );
+  }
   const v = Math.min(Math.max(pct ?? 0, 0), 100);
   const bar =
     v >= 90 ? "bg-rose-500" : v >= 70 ? "bg-amber-500" : "bg-gradient-to-r from-indigo-500 to-violet-500";

@@ -49,3 +49,11 @@ const ICONS: Record<string, string> = {
 export function providerIcon(p?: string): string | undefined {
   return ICONS[p || "codex"];
 }
+
+// weeklyOnly: the latest quota reading has a weekly window and no 5-hour one,
+// which is how a Pro plan reports (it has no 5-hour limit).
+export function weeklyOnly(primaryPct: number | null | undefined, secondaryPct: number | null | undefined): boolean {
+  return primaryPct == null && secondaryPct != null;
+}
+
+export const NO_FIVE_HOUR = "无此限制"; // read beside a "5 小时" label
