@@ -69,19 +69,19 @@ function QuotaRow({
 }
 
 // SubscriptionCell is the subscription in the list view.
-function SubscriptionCell({ a }: { a: AccountRow }) {
+function SubscriptionCell({ a, onOpen }: { a: AccountRow; onOpen: () => void }) {
   if (!isChatGPT(a.provider)) return <span className="text-slate-300">—</span>;
   const s = a.subscription;
-  if (!s) return <span className="whitespace-nowrap text-xs text-slate-400">查询中…</span>;
+  if (!s) return <button type="button" onClick={onOpen} className="whitespace-nowrap text-xs text-slate-500 hover:text-indigo-600">尚未获取 · 查看</button>;
   const v = subscriptionView(s);
   return (
-    <div className="whitespace-nowrap" title={v.title}>
+    <button type="button" onClick={onOpen} className="whitespace-nowrap rounded text-left hover:text-indigo-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500" title="查看订阅详情">
       <div className={"text-sm " + toneText[v.tone]}>{v.main}</div>
       <div className="text-[11px] text-slate-400">
         {v.sub}
         {v.unverified && <span className="ml-1 text-amber-500">（未能核实）</span>}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -97,6 +97,9 @@ export function AccountsPage() {
   const [bindFor, setBindFor] = useState<AccountRow | null>(null);
   const [editFor, setEditFor] = useState<AccountRow | null>(null);
   const [modelsFor, setModelsFor] = useState<AccountRow | null>(null);
+  const [subscriptionFor, setSubscriptionFor] = useState<AccountRow | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "attention" | "limited" | "unassigned">("all");
   const [view, setView] = useState<"cards" | "table">(() => {
     try {
       return localStorage.getItem("accounts-view") === "table" ? "table" : "cards";
@@ -149,6 +152,12 @@ export function AccountsPage() {
   });
 
   const rows = accounts.data?.accounts ?? [];
+  const query = search.trim().toLowerCase();
+  const visibleRows = rows.filter((a) => {
+    const matches = !query || [accountName(a), a.email, providerName(a.provider), a.plan_type, a.ip_group_name, ...a.members.map((m) => m.name)].some((value) => value?.toLowerCase().includes(query));
+    const needsAttention = a.status !== "active" || a.needs_login || !!a.subscription?.delinquent;
+    return matches && (filter === "all" || (filter === "attention" && needsAttention) || (filter === "limited" && a.status === "rate_limited") || (filter === "unassigned" && a.members.length === 0));
+  });
   const confirmUnbind = (account: number, employee: number, name: string) => {
     if (window.confirm(`把 ${name} 从这个账号移除？`)) unbind.mutate({ account, employee });
   };
@@ -189,7 +198,7 @@ export function AccountsPage() {
           )}
           {nextRenewal && (
             <span title={nextRenewal.a.email}>
-              最近续费：{accountName(nextRenewal.a)} · <b className="text-slate-800">{subscriptionView(nextRenewal.a.subscription!).main}</b>
+              最近订阅变动：{accountName(nextRenewal.a)} · <b className="text-slate-800">{subscriptionView(nextRenewal.a.subscription!).main}</b>
             </span>
           )}
           <div className="ml-auto inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
@@ -222,9 +231,28 @@ export function AccountsPage() {
 
       {accounts.data && rows.length > 0 && <AdminQuotaControl accounts={rows} />}
 
-      {accounts.data && rows.length > 0 && view === "cards" && (
+      {accounts.data && rows.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <label className="min-w-0 flex-1 sm:max-w-sm">
+            <span className="sr-only">搜索账号或使用人</span>
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索账号、使用人、IP 组" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+          </label>
+          <label className="sr-only" htmlFor="account-filter">筛选账号状态</label>
+          <select id="account-filter" value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+            <option value="all">全部账号</option>
+            <option value="attention">需要处理</option>
+            <option value="limited">限流中</option>
+            <option value="unassigned">未分配</option>
+          </select>
+          <span className="text-xs text-slate-500">显示 {visibleRows.length} / {rows.length} 个账号</span>
+          {(search || filter !== "all") && <button onClick={() => { setSearch(""); setFilter("all"); }} className="text-xs font-medium text-indigo-600 hover:underline">清除筛选</button>}
+        </div>
+      )}
+      {accounts.data && rows.length > 0 && visibleRows.length === 0 && <Card><Empty label="没有符合条件的账号，请调整搜索或筛选。" /></Card>}
+
+      {accounts.data && visibleRows.length > 0 && view === "cards" && (
         <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {rows.map((a) => (
+          {visibleRows.map((a) => (
             <AccountCard
               key={a.id}
               a={a}
@@ -235,12 +263,13 @@ export function AccountsPage() {
               refreshing={refreshQuota.isPending}
               onModels={() => setModelsFor(a)}
               onEdit={() => setEditFor(a)}
+              onSubscription={() => setSubscriptionFor(a)}
             />
           ))}
         </div>
       )}
 
-      {accounts.data && rows.length > 0 && view === "table" && (
+      {accounts.data && visibleRows.length > 0 && view === "table" && (
         <Card className="overflow-hidden">
           <div className="scroll-thin overflow-x-auto">
             <table className="w-full min-w-[1080px] text-sm">
@@ -260,7 +289,7 @@ export function AccountsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((a) => (
+                {visibleRows.map((a) => (
                   <tr
                     key={a.id}
                     className="border-b border-slate-100 last:border-0 hover:bg-slate-50"
@@ -318,7 +347,7 @@ export function AccountsPage() {
                       {a.ip_group_name || "-"}
                     </td>
                     <td className="px-4 py-2.5">
-                      <SubscriptionCell a={a} />
+                      <SubscriptionCell a={a} onOpen={() => setSubscriptionFor(a)} />
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -430,6 +459,7 @@ export function AccountsPage() {
         </Card>
       )}
 
+      <SubscriptionDetails account={subscriptionFor && (rows.find((a) => a.id === subscriptionFor.id) ?? subscriptionFor)} onClose={() => setSubscriptionFor(null)} onRefresh={(id) => refreshQuota.mutate(id)} refreshing={refreshQuota.isPending} />
       <AddAccountWizard
         open={wizardOpen}
         onClose={() => setWizardOpen(false)}
@@ -452,6 +482,27 @@ export function AccountsPage() {
       />
     </div>
   );
+}
+
+// Subscription dates are upstream status, not a receipt or payment confirmation.
+function SubscriptionDetails({ account, onClose, onRefresh, refreshing }: { account: AccountRow | null; onClose: () => void; onRefresh: (id: number) => void; refreshing: boolean }) {
+  const s = account?.subscription;
+  const details = [
+    ["下次续费", s?.renews_at],
+    ["本期结束", s?.expires_at],
+    ["取消后结束", s?.cancels_at],
+  ] as const;
+  return <Modal open={!!account} onClose={onClose} title="订阅详情" footer={<><Button onClick={onClose}>关闭</Button><Button variant="primary" disabled={refreshing} onClick={() => account && onRefresh(account.id)}>{refreshing ? "刷新中…" : "刷新额度与订阅"}</Button></>}>
+    {account && <div className="space-y-4">
+      <div><p className="break-all font-medium text-slate-900">{accountName(account)}</p><p className="mt-1 text-sm text-slate-500">{account.plan_type || s?.plan || "套餐未知"} · {s ? subscriptionView(s).main : "订阅信息尚未获取"}</p></div>
+      {s?.error && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">最近一次查询失败；以下日期可能不是最新数据。</p>}
+      <dl className="divide-y divide-slate-100 rounded-xl border border-slate-200 px-4">
+        {details.map(([label, value]) => <div key={label} className="flex flex-wrap justify-between gap-2 py-3 text-sm"><dt className="text-slate-500">{label}</dt><dd className="tabular-nums text-slate-800">{value ? fmtDateTime(value) : "未提供"}</dd></div>)}
+        <div className="flex flex-wrap justify-between gap-2 py-3 text-sm"><dt className="text-slate-500">最近查询</dt><dd className="tabular-nums text-slate-800">{s?.checked_at ? fmtDateTime(s.checked_at) : "尚未查询"}</dd></div>
+      </dl>
+      <p className="text-xs leading-5 text-slate-500">日期来自上游订阅状态，按本机时区显示。实际扣款与账单请以 ChatGPT 账单为准；日期不代表账号添加到网关的时间。</p>
+    </div>}
+  </Modal>;
 }
 
 // ---------------------------------------------------------------- bind modal

@@ -43,6 +43,8 @@ export function subscriptionView(s: AccountSubscription): SubscriptionView {
   }
   if (s.active && s.renews_at) return { ...v, main: `${fmtDayShort(s.renews_at)} 续费`, sub: left(s.renews_at), tone: "normal" };
   if (s.active && s.expires_at) return { ...v, main: `${fmtDayShort(s.expires_at)} 到期`, sub: left(s.expires_at), tone: "normal" };
+  if (s.active) return { ...v, main: "订阅有效", sub: "续费时间暂不可用", tone: "normal" };
+  if (s.error && !s.expires_at) return { ...v, main: "订阅状态未知", sub: "查询失败，请稍后刷新", tone: "warn" };
   return { ...v, main: "未订阅", sub: s.expires_at ? `${fmtDayShort(s.expires_at)} 已结束` : "", tone: "bad" };
 }
 

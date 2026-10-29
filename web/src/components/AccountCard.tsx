@@ -18,6 +18,7 @@ export function AccountCard({
   refreshing,
   onModels,
   onEdit,
+  onSubscription,
 }: {
   a: AccountRow;
   maxMembers: number;
@@ -27,6 +28,7 @@ export function AccountCard({
   refreshing: boolean;
   onModels: () => void;
   onEdit: () => void;
+  onSubscription: () => void;
 }) {
   const icon = providerIcon(a.provider);
   const name = providerName(a.provider);
@@ -66,7 +68,7 @@ export function AccountCard({
       </header>
 
       <div className="flex-1 space-y-3.5 px-4 py-4">
-        {isChatGPT(a.provider) && <Subscription a={a} />}
+        {isChatGPT(a.provider) && <Subscription a={a} onOpen={onSubscription} />}
 
         {hasQuota(a.provider) ? (
           <div className="space-y-2.5">
@@ -191,14 +193,14 @@ function ActionButton({
   );
 }
 
-function Subscription({ a }: { a: AccountRow }) {
+function Subscription({ a, onOpen }: { a: AccountRow; onOpen: () => void }) {
   const s = a.subscription;
   if (!s) {
     return (
-      <div className="flex items-center justify-between rounded-xl border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-400">
+      <button type="button" onClick={onOpen} className="flex w-full items-center justify-between rounded-xl border border-dashed border-slate-200 px-3 py-2 text-left text-xs text-slate-500 hover:border-indigo-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
         <span>订阅</span>
-        <span>查询中…</span>
-      </div>
+        <span>尚未获取 · 查看</span>
+      </button>
     );
   }
   const v = subscriptionView(s);
@@ -209,14 +211,14 @@ function Subscription({ a }: { a: AccountRow }) {
         ? "border-amber-200 bg-amber-50"
         : "border-slate-200 bg-white";
   return (
-    <div className={`flex items-center justify-between rounded-xl border px-3 py-2 ${box}`} title={v.title}>
+    <button type="button" onClick={onOpen} className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition-colors hover:border-indigo-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 ${box}`} title="查看订阅详情">
       <span className="text-xs text-slate-400">订阅</span>
       <span className="text-right">
         <span className={`text-sm font-medium ${toneText[v.tone]}`}>{v.main}</span>
         {v.sub && <span className="ml-1.5 text-xs text-slate-400">{v.sub}</span>}
         {v.unverified && <span className="ml-1 text-xs text-amber-500">（未能核实）</span>}
       </span>
-    </div>
+    </button>
   );
 }
 
