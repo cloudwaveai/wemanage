@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
+  Area,
+  AreaChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -141,7 +143,7 @@ function EmployeeTable({ board, onSelect }: { board: Workboard; onSelect: (emplo
             <tr key={r.employee_id} className="border-b border-slate-100 last:border-0">
               <td className="py-2.5 pr-3">
                 <div className="font-medium text-slate-800">
-                  <button type="button" onClick={() => onSelect(r)} className="text-left text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600" aria-label={`查看 ${r.name} 的用量详情`}>{r.name}</button>
+                  <button type="button" onClick={() => onSelect(r)} className="group inline-flex items-center gap-1.5 text-left text-slate-800 transition-colors hover:text-indigo-700 focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600" aria-label={`查看 ${r.name} 的用量详情`}>{r.name}<span aria-hidden="true" className="text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-600">↗</span></button>
                   {r.is_service && (
                     <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-normal text-slate-500">服务账号</span>
                   )}
@@ -361,7 +363,7 @@ export function WorkboardPage() {
           )}
 
           <Card className="mt-5 p-5">
-            <h2 className="mb-3 text-sm font-semibold text-slate-800">每个人的用量</h2>
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><h2 className="text-sm font-semibold text-slate-800">每个人的用量</h2><span className="text-xs text-slate-400">点击姓名查看分时详情</span></div>
             <EmployeeTable board={b} onSelect={setSelected} />
             {b.idle.length > 0 && (
               <p className="mt-3 text-xs text-slate-400">
@@ -391,8 +393,6 @@ function EmployeeUsageDialog({ employee, initialRange, onClose }: { employee: { 
     refetchOnWindowFocus: true,
   });
   const d = q.data;
-  const chartScroll = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (chartScroll.current) chartScroll.current.scrollLeft = chartScroll.current.scrollWidth; }, [d?.from, d?.hourly.length]);
   const axisTime = (value: string, full = false) => {
     const date = new Date(value);
     const options: Intl.DateTimeFormatOptions = full
@@ -401,38 +401,51 @@ function EmployeeUsageDialog({ employee, initialRange, onClose }: { employee: { 
     try { return new Intl.DateTimeFormat("zh-CN", { ...options, timeZone: d?.timezone === "Local" ? undefined : d?.timezone }).format(date); }
     catch { return new Intl.DateTimeFormat("zh-CN", options).format(date); }
   };
-  return <Modal open onClose={onClose} width="max-w-5xl" title={`${employee.name} · 使用详情`} footer={<Button onClick={onClose}>关闭</Button>}>
-    <div className="flex flex-wrap items-center gap-3">
-      <RangePicker value={range} active={!day} onChange={(v) => { setRange(v); setDay(""); }} />
-      <label className="flex items-center gap-2 text-sm text-slate-600">指定日期<input type="date" max={ymd(new Date())} value={day} onChange={(e) => setDay(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+  return <Modal open onClose={onClose} width="max-w-5xl" title={`${employee.name} · 使用详情`} bodyClassName="max-h-[calc(100dvh-8rem)] overflow-y-auto px-5 pb-6 pt-4 sm:px-7">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="选择统计范围">
+        {RANGES.map((item) => <button key={item.v} type="button" aria-pressed={!day && range === item.v} onClick={() => { setRange(item.v); setDay(""); }} className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 ${!day && range === item.v ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>{item.label}</button>)}
+      </div>
+      <label className="flex items-center gap-2 text-sm text-slate-500">指定日期<input type="date" max={ymd(new Date())} value={day} onChange={(e) => setDay(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" /></label>
     </div>
     {q.isLoading && <Loading />}
     {q.error && (q.error instanceof ApiError && q.error.status === 404 ? <p className="mt-4 text-sm text-slate-600">此员工的使用详情不可查看。</p> : <ErrorBox error={q.error} />)}
     {d && <div className="mt-4 space-y-4">
-      <p className="text-xs text-slate-500">{axisTime(d.from, true)} 至 {axisTime(d.to, true)} · 按 {d.timezone === "Local" ? "浏览器本地时区" : d.timezone} 统计；仅包含经过网关的记录。</p>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatTile label="Token 合计" value={fmtNum(d.tokens_total)} hint={`${fmtNum(d.requests)} 条记录`} />
-        <StatTile label="输入" value={fmtNum(d.tokens_input)} hint={`其中缓存 ${fmtNum(d.tokens_cached)}`} />
-        <StatTile label="输出" value={fmtNum(d.tokens_output)} hint={`其中推理 ${fmtNum(d.tokens_reasoning)}`} />
-        <StatTile label="会话" value={fmtNum(d.sessions)} hint={`${fmtNum(d.requests)} 条记录`} />
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span>{axisTime(d.from, true)} — {axisTime(d.to, true)}</span>
+        <span>{d.timezone === "Local" ? "浏览器本地时区" : d.timezone} · 网关记录</span>
       </div>
+      <section aria-label="用量汇总" className="grid grid-cols-2 overflow-hidden rounded-xl bg-slate-50 md:grid-cols-4">
+        {[
+          { label: "Token 合计", value: d.tokens_total, hint: `${fmtNum(d.requests)} 条记录` },
+          { label: "输入", value: d.tokens_input, hint: `其中缓存 ${fmtNum(d.tokens_cached)}` },
+          { label: "输出", value: d.tokens_output, hint: `其中推理 ${fmtNum(d.tokens_reasoning)}` },
+          { label: "会话", value: d.sessions, hint: `${fmtNum(d.requests)} 条记录` },
+        ].map((item) => <div key={item.label} className="min-w-0 border-b border-r border-white px-4 py-3.5 last:border-r-0 md:border-b-0 md:px-5">
+          <div className="text-xs font-medium text-slate-500">{item.label}</div>
+          <div className="mt-1.5 break-words text-xl font-semibold tracking-tight text-slate-900 tabular-nums sm:text-2xl">{fmtNum(item.value)}</div>
+          <div className="mt-1 text-xs text-slate-500">{item.hint}</div>
+        </div>)}
+      </section>
       {d.imported_records > 0 && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">其中 {fmtNum(d.imported_records)} 条是本地历史补录，不代表实际 API 调用次数；补录的 Token 为 0。</p>}
-      <div className="rounded-lg border border-slate-200 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-800">每小时用量</h3><div className="flex gap-1"><Button variant={metric === "tokens" ? "primary" : "ghost"} onClick={() => setMetric("tokens")}>Token</Button><Button variant={metric === "requests" ? "primary" : "ghost"} onClick={() => setMetric("requests")}>记录数</Button></div></div>
-        <p className="mt-1 text-xs text-slate-500">每根柱表示一小时。较长时间范围可横向滚动。</p>
-        <div ref={chartScroll} className="mt-3 overflow-x-auto"><div style={{ width: Math.max(680, d.hourly.length * 12), height: 240 }}>
-          <ResponsiveContainer width="100%" height="100%"><BarChart data={d.hourly} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
-            <CartesianGrid stroke="#eef1f6" vertical={false} />
-            <XAxis dataKey="t" tickFormatter={(v: string) => axisTime(v)} tick={{ fontSize: 11, fill: "#64748b" }} minTickGap={28} tickLine={false} />
-            <YAxis tickFormatter={(v: number) => fmtCompact(v)} tick={{ fontSize: 11, fill: "#64748b" }} width={64} />
-            <Tooltip cursor={{ fill: "#f1f5f9" }} labelFormatter={(v) => axisTime(String(v), true)} formatter={(value) => [fmtNum(Number(value)), metric === "tokens" ? "Token" : "记录数"]} />
-            <Bar dataKey={metric} fill={BAR} maxBarSize={24} />
-          </BarChart></ResponsiveContainer>
-        </div></div>
+      <section aria-label="每小时用量" className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h3 className="text-sm font-semibold text-slate-900">每小时用量</h3><p className="mt-1 text-xs text-slate-500">移动到图上查看具体时间和数值。可指定日期查看当天。</p></div>
+          <div className="inline-flex rounded-lg bg-slate-100 p-1" aria-label="选择图表指标">{([{ key: "tokens", label: "Token" }, { key: "requests", label: "记录数" }] as const).map((item) => <button key={item.key} type="button" aria-pressed={metric === item.key} onClick={() => setMetric(item.key)} className={`rounded-md px-3 py-1 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 ${metric === item.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>{item.label}</button>)}</div>
+        </div>
+        <div className="mt-3 h-40 w-full" role="img" aria-label={`按小时统计的${metric === "tokens" ? "Token" : "记录数"}趋势图`}>
+          <ResponsiveContainer width="100%" height="100%"><AreaChart data={d.hourly} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid stroke="#edf0f5" vertical={false} />
+            <XAxis dataKey="t" tickFormatter={(v: string) => axisTime(v)} tick={{ fontSize: 11, fill: "#64748b" }} minTickGap={48} tickLine={false} axisLine={false} />
+            <YAxis tickFormatter={(v: number) => fmtCompact(v)} tick={{ fontSize: 11, fill: "#64748b" }} width={60} tickLine={false} axisLine={false} allowDecimals={metric === "tokens"} />
+            <Tooltip labelFormatter={(v) => axisTime(String(v), true)} formatter={(value) => [fmtNum(Number(value)), metric === "tokens" ? "Token" : "记录数"]} contentStyle={{ border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(30, 41, 59, 0.1)", fontSize: 12 }} />
+            <Area type="linear" dataKey={metric} stroke="#5b63bd" strokeWidth={2} fill="#e8eafd" fillOpacity={0.8} isAnimationActive={false} />
+          </AreaChart></ResponsiveContainer>
+        </div>
         {d.requests === 0 && <p className="mt-2 text-sm text-slate-500">这段时间没有网关记录。</p>}
-      </div>
-      <div><h3 className="mb-2 text-sm font-semibold text-slate-800">模型用量</h3>{d.by_model.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs text-slate-500"><th className="py-2">模型</th><th className="text-right">Token</th><th className="text-right">记录数</th></tr></thead><tbody>{d.by_model.map((m) => <tr key={m.key} className="border-b border-slate-100"><td className="py-2 font-mono text-xs">{!m.key || m.key === "(none)" ? "未记录" : m.key}</td><td className="text-right">{fmtNum(m.tokens_total)}</td><td className="text-right">{fmtNum(m.requests)}</td></tr>)}</tbody></table></div> : <p className="text-sm text-slate-500">没有模型用量记录。</p>}</div>
-      <Link className="inline-block text-sm font-medium text-indigo-600 hover:underline" to={`/logs?employee_id=${employee.employee_id}`} onClick={onClose}>查看该员工的请求记录 →</Link>
+        <details className="mt-3 border-t border-slate-100 pt-3"><summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-indigo-700">查看每小时明细</summary><div className="mt-2 max-h-48 overflow-auto"><table className="w-full text-left text-xs tabular-nums"><thead className="sticky top-0 bg-white text-slate-500"><tr><th className="py-2 font-medium">时间</th><th className="text-right font-medium">Token</th><th className="text-right font-medium">记录数</th></tr></thead><tbody>{d.hourly.map((point) => <tr key={point.t} className="border-t border-slate-100"><td className="py-1.5 text-slate-600">{axisTime(point.t, true)}</td><td className="text-right text-slate-800">{fmtNum(point.tokens)}</td><td className="text-right text-slate-800">{fmtNum(point.requests)}</td></tr>)}</tbody></table></div></details>
+      </section>
+      <section><div className="mb-2 flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-slate-900">模型用量</h3><Link className="text-xs font-medium text-indigo-600 hover:underline" to={`/logs?employee_id=${employee.employee_id}`} onClick={onClose}>查看请求记录 →</Link></div>{d.by_model.length ? <div className="overflow-x-auto rounded-lg border border-slate-200"><table className="w-full text-left text-sm"><thead className="bg-slate-50"><tr className="text-xs text-slate-500"><th className="px-3 py-2 font-medium">模型</th><th className="px-3 text-right font-medium">Token</th><th className="px-3 text-right font-medium">记录数</th></tr></thead><tbody>{d.by_model.map((m) => <tr key={m.key} className="border-t border-slate-100"><td className="px-3 py-2 font-mono text-xs">{!m.key || m.key === "(none)" ? "未记录" : m.key}</td><td className="px-3 text-right tabular-nums">{fmtNum(m.tokens_total)}</td><td className="px-3 text-right tabular-nums">{fmtNum(m.requests)}</td></tr>)}</tbody></table></div> : <p className="text-sm text-slate-500">没有模型用量记录。</p>}</section>
     </div>}
   </Modal>;
 }

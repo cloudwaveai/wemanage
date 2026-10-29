@@ -7,6 +7,7 @@ export function Modal({
   children,
   footer,
   width = "max-w-lg",
+  bodyClassName = "max-h-[70vh] overflow-y-auto px-5 py-4",
 }: {
   open: boolean;
   onClose?: () => void;
@@ -14,6 +15,7 @@ export function Modal({
   children: React.ReactNode;
   footer?: React.ReactNode;
   width?: string;
+  bodyClassName?: string;
 }) {
   if (!open) return null;
   return (
@@ -42,7 +44,7 @@ export function Modal({
             </button>
           )}
         </div>
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        <div className={bodyClassName}>{children}</div>
         {footer && (
           <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3.5">
             {footer}
