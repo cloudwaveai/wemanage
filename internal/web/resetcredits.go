@@ -71,23 +71,24 @@ func (s *Server) handleUseResetCredit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "你的 AI 账号没有重置卡")
 		return
 	}
+	s.useResetCredit(w, r, acc)
+}
+
+// useResetCredit is shared by self-service and administrators so both paths
+// use the same reconciliation and audit behavior.
+func (s *Server) useResetCredit(w http.ResponseWriter, r *http.Request, acc store.Account) {
 	code, err := s.deps.Quota.UseResetCredit(r.Context(), acc)
-	if code == health.ResetDone {
-		auditCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
-		defer cancel()
-		s.audit(r.WithContext(auditCtx), "reset_credit_use", "account", fmt.Sprint(acc.ID), map[string]any{"code": code, "routing_restored": err == nil})
-	}
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+	defer cancel()
+	s.audit(r.WithContext(auditCtx), "reset_credit_use", "account", fmt.Sprint(acc.ID), map[string]any{"code": code, "routing_restored": code == health.ResetDone && err == nil, "error": err != nil})
 	if err != nil {
 		s.deps.Log.Warn("use reset credit", "account", acc.ID, "err", err)
 		if code == health.ResetDone {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "code": "reset_routing_pending", "message": "重置卡已使用，但网关恢复未完成。请联系管理员处理，不要再次使用重置卡。"})
+			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "code": "reset_routing_pending", "error": "重置卡已使用，但网关恢复未完成。请联系管理员处理，不要再次使用重置卡。"})
 		} else {
 			writeErr(w, http.StatusBadGateway, "重置结果暂时无法确认，请先检查重置卡和额度，不要立即重复使用。")
 		}
 		return
-	}
-	if code != health.ResetDone {
-		s.audit(r, "reset_credit_use", "account", fmt.Sprint(acc.ID), map[string]any{"code": code})
 	}
 	msg := map[string]string{
 		health.ResetDone:           "额度已重置，5 小时和每周额度都重新开始计算。",

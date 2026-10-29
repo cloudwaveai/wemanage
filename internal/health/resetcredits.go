@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"aiseat/internal/cpa"
@@ -124,6 +125,10 @@ func (p *QuotaProber) AvailableResetCredits(ctx context.Context, accountID int64
 // first. On "reset" the account is usable again at once: the gateway stops
 // treating it as rate limited and takes a fresh quota snapshot.
 func (p *QuotaProber) UseResetCredit(ctx context.Context, acc store.Account) (string, error) {
+	lockValue, _ := p.creditLocks.LoadOrStore(acc.ID, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
 	credits, err := p.ResetCredits(ctx, acc)
 	if err != nil {
 		return "", err
@@ -187,4 +192,60 @@ func (p *QuotaProber) UseResetCredit(ctx context.Context, acc store.Account) (st
 		}
 	}
 	return out.Code, nil
+}
+
+// ErrQuotaStillLimited means the upstream has not confirmed that quota is available.
+var ErrQuotaStillLimited = errors.New("upstream quota is limited or its status is unclear")
+
+// ReconcileRateLimit clears stale routing cooldowns only after a fresh upstream
+// response explicitly confirms that the account's quota is available.
+func (p *QuotaProber) ReconcileRateLimit(ctx context.Context, acc store.Account) error {
+	if !acc.IsChatGPT() {
+		return ErrNoResetCredits
+	}
+	lockValue, _ := p.creditLocks.LoadOrStore(acc.ID, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	finish := func(bool) {}
+	if p.BeginAccountReset != nil {
+		finish = p.BeginAccountReset(acc.ID)
+	}
+	ok := false
+	defer func() { finish(ok) }()
+	resp, err := p.chatgptCall(ctx, acc, "GET", CodexUsageURL, "")
+	if err != nil {
+		return err
+	}
+	var raw struct {
+		RateLimit *struct {
+			Allowed      *bool `json:"allowed"`
+			LimitReached *bool `json:"limit_reached"`
+		} `json:"rate_limit"`
+	}
+	if json.Unmarshal([]byte(resp.Body), &raw) != nil || raw.RateLimit == nil || raw.RateLimit.Allowed == nil || !*raw.RateLimit.Allowed || raw.RateLimit.LimitReached == nil || *raw.RateLimit.LimitReached {
+		return ErrQuotaStillLimited
+	}
+	q, _, err := ParseCodexUsage([]byte(resp.Body), time.Now())
+	if err != nil || (q.PrimaryUsedPct == nil && q.SecondaryUsedPct == nil) || (q.PrimaryUsedPct != nil && *q.PrimaryUsedPct >= 100) || (q.SecondaryUsedPct != nil && *q.SecondaryUsedPct >= 100) {
+		return ErrQuotaStillLimited
+	}
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+	defer cancel()
+	files, err := p.authFiles(finishCtx)
+	if err != nil {
+		return err
+	}
+	file, exists := files[acc.CPAAuthName]
+	if !exists || file.AuthIndex == "" {
+		return errors.New("CPA credential not found")
+	}
+	if err := p.CPA.ResetQuota(finishCtx, file.AuthIndex); err != nil {
+		return err
+	}
+	if err := p.Store.SetRateLimitedUntil(finishCtx, acc.ID, nil); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }

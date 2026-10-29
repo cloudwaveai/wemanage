@@ -41,8 +41,9 @@ type QuotaProber struct {
 	// MaxAge is how old the newest snapshot may get before a probe (default 30m).
 	MaxAge time.Duration
 
-	mu   sync.Mutex
-	last map[int64]time.Time // accountID -> last probe, for Refresh's rate limit
+	creditLocks sync.Map // account ID -> *sync.Mutex
+	mu          sync.Mutex
+	last        map[int64]time.Time // accountID -> last probe, for Refresh's rate limit
 }
 
 // RunStale probes every active, logged-in account with a quota endpoint whose

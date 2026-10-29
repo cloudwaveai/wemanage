@@ -14,6 +14,7 @@ import {
 import { fmtCompact, fmtDateTime, fmtNum } from "../lib/format";
 import { daysLeft, subscriptionView, toneText } from "../lib/subscription";
 import { AccountCard } from "../components/AccountCard";
+import { AdminQuotaControl } from "../components/AdminQuotaControl";
 import { Modal } from "../components/Modal";
 import { useToast } from "../components/Toast";
 import { AddAccountWizard } from "../components/AddAccountWizard";
@@ -218,6 +219,8 @@ export function AccountsPage() {
           <Empty label="暂无账号，点右上角「添加账号」" />
         </Card>
       )}
+
+      {accounts.data && rows.length > 0 && <AdminQuotaControl accounts={rows} />}
 
       {accounts.data && rows.length > 0 && view === "cards" && (
         <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
