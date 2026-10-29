@@ -29,6 +29,7 @@ type RequestListItem struct {
 // RequestFilter narrows a log search. Empty fields are ignored.
 type RequestFilter struct {
 	EmployeeIDs []int64 // nil = all (subject to caller's RBAC scope)
+	ViewerID    int64   // when set, private employees are visible only to themselves
 	From        time.Time
 	To          time.Time
 	Query       string // substring match against extracted texts
@@ -46,6 +47,10 @@ func (s *Store) ListRequests(ctx context.Context, f RequestFilter) ([]RequestLis
 	}
 	where := "WHERE 1=1"
 	args := []any{}
+	if f.ViewerID != 0 {
+		args = append(args, f.ViewerID)
+		where += " AND (r.employee_id = $1 OR NOT EXISTS (SELECT 1 FROM employees p WHERE p.id=r.employee_id AND (p.private_work_since IS NOT NULL OR p.name='林伊默')))"
+	}
 	if f.EmployeeIDs != nil {
 		args = append(args, f.EmployeeIDs)
 		where += " AND r.employee_id = ANY($" + itoa(int64(len(args))) + ")"

@@ -38,16 +38,17 @@ type RedactionRule struct {
 
 // Settings is the full tunable configuration.
 type Settings struct {
-	DefaultMaxConcurrency  int                 `json:"default_max_concurrency"`
-	QueueTimeoutSeconds    int                 `json:"queue_timeout_seconds"`
-	RetentionDays          int                 `json:"retention_days"`
-	CodexProfile           CodexProfile        `json:"codex_profile"`
-	ClientRules            []ClientRule        `json:"client_rules"`
-	RedactionRules         []RedactionRule     `json:"redaction_rules"`
-	ModelMismatchThreshold int                 `json:"model_mismatch_threshold"`
-	ReportEnabled          bool                `json:"report_enabled"`
-	ReportLLMModel         string              `json:"report_llm_model"`
-	DefaultDeviceProfile   store.DeviceProfile `json:"default_device_profile"`
+	DefaultMaxConcurrency    int                 `json:"default_max_concurrency"`
+	QueueTimeoutSeconds      int                 `json:"queue_timeout_seconds"`
+	RetentionDays            int                 `json:"retention_days"`
+	PurgeConversationContent bool                `json:"purge_conversation_content"`
+	CodexProfile             CodexProfile        `json:"codex_profile"`
+	ClientRules              []ClientRule        `json:"client_rules"`
+	RedactionRules           []RedactionRule     `json:"redaction_rules"`
+	ModelMismatchThreshold   int                 `json:"model_mismatch_threshold"`
+	ReportEnabled            bool                `json:"report_enabled"`
+	ReportLLMModel           string              `json:"report_llm_model"`
+	DefaultDeviceProfile     store.DeviceProfile `json:"default_device_profile"`
 
 	// Risk controls (anti key-sharing).
 	RiskMode                 string `json:"risk_mode"`       // lax | standard | strict

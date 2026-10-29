@@ -88,6 +88,10 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		refused.write(w, kind)
 		return
 	}
+	if refused == nil && prin.APIChannelID != nil {
+		oaError(w, http.StatusForbidden, "该渠道密钥不支持此接口。", "invalid_request_error", "channel_protocol_mismatch")
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxSearchBodyBytes))
 	if err != nil || !gjson.ValidBytes(body) {
 		oaError(w, http.StatusBadRequest, "invalid request body", "invalid_request_error", "bad_body")

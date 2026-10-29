@@ -70,6 +70,14 @@ func (s *Server) handleAdminBriefing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err == nil {
+		cutoff, e := s.deps.Store.PrivacyCutoff(ctx)
+		if e != nil {
+			writeErr(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		if cutoff != nil && (row.GeneratedAt == nil || row.GeneratedAt.Before(*cutoff)) {
+			row.ContentMD = ""
+		}
 		if row.Status == "running" {
 			if rangeRunning || s.deps.Digest.BriefingRangeRunning(me.ID, from, to) {
 				out["running"] = true

@@ -198,18 +198,17 @@ func (s *Store) ListEmployees(ctx context.Context, f EmployeeFilter) ([]Employee
 					'plan_type', a.plan_type, 'status', a.status, 'needs_login', a.needs_login,
 					'rate_limited_until', a.rate_limited_until) ORDER BY m.created_at, a.id)
 				FROM account_members m JOIN upstream_accounts a ON a.id = m.account_id WHERE m.employee_id = e.id), '[]'),
-			COALESCE(k.key_prefix,''),
+			COALESCE((SELECT key_prefix FROM api_keys WHERE employee_id=e.id AND revoked_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1),''),
 			COALESCE(ARRAY_AGG(d.name) FILTER (WHERE d.name IS NOT NULL), '{}'),
 			e.frozen_at, e.frozen_reason,
 			(SELECT COUNT(*) FROM risk_events r WHERE r.employee_id = e.id AND r.resolved_at IS NULL),
 			e.remote_allowed, e.is_service
 		FROM employees e
-		LEFT JOIN api_keys k ON k.employee_id = e.id AND k.revoked_at IS NULL
-		LEFT JOIN employee_departments ed ON ed.employee_id = e.id
+				LEFT JOIN employee_departments ed ON ed.employee_id = e.id
 		LEFT JOIN departments d ON d.id = ed.department_id
 		WHERE ($1::bigint[] IS NULL OR e.id = ANY($1))
 		  AND ($2 = '' OR e.status = $2)
-		GROUP BY e.id, k.key_prefix
+		GROUP BY e.id
 		ORDER BY e.id`
 	rows, err := s.Pool.Query(ctx, sql, nullableIDs(f.IDs), f.Status)
 	if err != nil {
@@ -245,4 +244,37 @@ func nullableIDs(ids []int64) []int64 {
 		return nil
 	}
 	return ids
+}
+
+// PrivateWork reports whether the employee's work is private to its owner.
+func (s *Store) PrivateWork(ctx context.Context, id int64) (bool, error) {
+	var private bool
+	err := s.Pool.QueryRow(ctx, `SELECT (private_work_since IS NOT NULL OR name='林伊默') FROM employees WHERE id=$1`, id).Scan(&private)
+	return private, err
+}
+
+// PrivacyCutoff marks the earliest time shared aggregates can have been created
+// after the protected employee was excluded. Existing aggregates stay stored.
+func (s *Store) PrivacyCutoff(ctx context.Context) (*time.Time, error) {
+	var t *time.Time
+	err := s.Pool.QueryRow(ctx, `SELECT max(private_work_since) FROM employees WHERE private_work_since IS NOT NULL`).Scan(&t)
+	return t, err
+}
+
+// SharedWorkEmployeeIDs returns the non-private identities for shared reports.
+func (s *Store) SharedWorkEmployeeIDs(ctx context.Context) ([]int64, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT id FROM employees WHERE private_work_since IS NULL AND name <> '林伊默'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

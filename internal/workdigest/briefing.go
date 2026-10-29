@@ -190,8 +190,27 @@ func (r *Runner) briefingMaterial(ctx context.Context, from, to time.Time) (stri
 		return "", false, nil
 	}
 
-	// Usage: per-day totals and per-employee for the window, from SQL only.
-	usage, err := r.Store.Usage(ctx, from, to, nil)
+	// Usage in shared reports excludes private employees as well as their text.
+	cutoff, err := r.Store.PrivacyCutoff(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	var sharedIDs []int64
+	allowed := map[int64]bool{}
+	if cutoff != nil {
+		sharedIDs, err = r.Store.SharedWorkEmployeeIDs(ctx)
+		if err != nil {
+			return "", false, err
+		}
+		for _, id := range sharedIDs {
+			allowed[id] = true
+		}
+		// Store.Usage treats an empty ID list as all employees.
+		if len(sharedIDs) == 0 {
+			sharedIDs = []int64{-1}
+		}
+	}
+	usage, err := r.Store.Usage(ctx, from, to, sharedIDs)
 	if err != nil {
 		return "", false, err
 	}
@@ -199,8 +218,15 @@ func (r *Runner) briefingMaterial(ctx context.Context, from, to time.Time) (stri
 	if err != nil {
 		return "", false, err
 	}
+	if cutoff != nil {
+		for id := range work {
+			if !allowed[id] {
+				delete(work, id)
+			}
+		}
+	}
 	dayOrigin := time.Date(from.In(loc).Year(), from.In(loc).Month(), from.In(loc).Day(), 0, 0, 0, 0, loc)
-	series, err := r.Store.UsageSeries(ctx, from, to, nil, 24*time.Hour, dayOrigin)
+	series, err := r.Store.UsageSeries(ctx, from, to, sharedIDs, 24*time.Hour, dayOrigin)
 	if err != nil {
 		return "", false, err
 	}
@@ -383,6 +409,11 @@ func (r *Runner) prepareBriefing(ctx context.Context, from, to time.Time) (strin
 // runBriefing finishes a row already marked running by the caller.
 func (r *Runner) runBriefing(ctx context.Context, emp store.Employee, prompt string, send bool,
 	from, to time.Time, material string) error {
+	startedAt := time.Now()
+	privacyUnchanged := func() (bool, error) {
+		cutoff, err := r.Store.PrivacyCutoff(ctx)
+		return err == nil && (cutoff == nil || !cutoff.After(startedAt)), err
+	}
 	finish := func(content, model, status, msg string, sent bool) error {
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
@@ -396,8 +427,22 @@ func (r *Runner) runBriefing(ctx context.Context, emp store.Employee, prompt str
 			return err
 		}
 	}
+	if ok, err := privacyUnchanged(); !ok {
+		if err == nil {
+			err = errors.New("隐私设置已变更，请重新生成简报")
+		}
+		_ = finish("", "", "failed", err.Error(), false)
+		return err
+	}
 	content, model, err := r.generateBriefing(ctx, prompt, material)
 	if err != nil {
+		_ = finish("", "", "failed", err.Error(), false)
+		return err
+	}
+	if ok, err := privacyUnchanged(); !ok {
+		if err == nil {
+			err = errors.New("隐私设置已变更，请重新生成简报")
+		}
 		_ = finish("", "", "failed", err.Error(), false)
 		return err
 	}

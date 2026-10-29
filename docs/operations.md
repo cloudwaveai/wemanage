@@ -163,3 +163,5 @@ tar czf auths-$(date +%F).tgz -C deploy/cpa auths
   - 查询失败会记在网关日志里，搜 `quota probe` / `quota refresh`。
   - 5 小时和每周按窗口长度区分，不按上游字段的先后位置。Pro 账号有时只报一个每周窗口。
 - **看 CPA 明细**：临时把 `cpa/config.yaml` 的 `request-log` 设为 true 并重启 cpa（排障后记得关掉，避免重复留存明文）。
+
+- **工作数据与应用 API 渠道**：项目归属、复盘口径、隐私边界、保留策略和渠道接入见 [工作数据说明](work-data-current-state.md)。

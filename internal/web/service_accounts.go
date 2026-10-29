@@ -37,9 +37,7 @@ func (s *Server) handleCreateServiceAccount(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"id": emp.ID, "name": emp.Name})
 }
 
-// handleIssueServiceKey issues a service account's key, revoking the previous
-// one. The plaintext is returned this once. People issue their own keys in
-// the portal; only service accounts get theirs here.
+// handleIssueServiceKey issues an additional key for a service account.
 func (s *Server) handleIssueServiceKey(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -56,11 +54,76 @@ func (s *Server) handleIssueServiceKey(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "员工的 Key 由本人在门户生成；这里只能给服务账号生成")
 		return
 	}
-	plain, key, err := s.deps.Store.IssueKey(ctx, id)
+	var body struct {
+		Label     string `json:"label"`
+		ChannelID *int64 `json:"channel_id"`
+		ProjectID *int64 `json:"project_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	body.Label = strings.TrimSpace(body.Label)
+	if len([]rune(body.Label)) > 50 {
+		writeErr(w, http.StatusBadRequest, "名称最多 50 个字")
+		return
+	}
+	if body.ChannelID != nil {
+		channel, err := s.deps.Store.GetAPIChannel(ctx, *body.ChannelID)
+		if err != nil || !channel.Active {
+			writeErr(w, http.StatusBadRequest, "上游渠道不可用")
+			return
+		}
+	}
+	plain, key, err := s.deps.Store.IssueServiceKey(ctx, id, body.Label, body.ChannelID, body.ProjectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "cannot issue key")
 		return
 	}
-	s.audit(r, "service_key_issue", "employee", fmt.Sprint(id), map[string]any{"name": emp.Name, "prefix": key.KeyPrefix})
-	writeJSON(w, http.StatusOK, map[string]any{"key": plain, "prefix": key.KeyPrefix})
+	s.audit(r, "service_key_issue", "employee", fmt.Sprint(id), map[string]any{"name": emp.Name, "prefix": key.Prefix})
+	writeJSON(w, http.StatusOK, map[string]any{"key": plain, "prefix": key.Prefix, "id": key.ID})
+}
+
+func (s *Server) handleServiceKeys(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	emp, err := s.deps.Store.GetEmployee(r.Context(), id)
+	if err != nil || !emp.IsService {
+		writeErr(w, http.StatusNotFound, "service account not found")
+		return
+	}
+	keys, err := s.deps.Store.ListServiceKeys(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
+}
+
+func (s *Server) handleRevokeServiceKey(w http.ResponseWriter, r *http.Request) {
+	id, e1 := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	keyID, e2 := strconv.ParseInt(chi.URLParam(r, "keyID"), 10, 64)
+	if e1 != nil || e2 != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	emp, err := s.deps.Store.GetEmployee(r.Context(), id)
+	if err != nil || !emp.IsService {
+		writeErr(w, http.StatusNotFound, "service account not found")
+		return
+	}
+	ok, err := s.deps.Store.RevokeServiceKey(r.Context(), id, keyID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot revoke")
+		return
+	}
+	if !ok {
+		writeErr(w, http.StatusNotFound, "key not found")
+		return
+	}
+	s.audit(r, "service_key_revoke", "employee", fmt.Sprint(id), map[string]any{"key_id": keyID})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

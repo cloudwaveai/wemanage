@@ -203,10 +203,10 @@ export function SettingsPage() {
                 hint="1 – 600"
               />
               <NumberField
-                label="原文保留天数"
+                label="自动清理阈值（天）"
                 value={form.retention_days}
                 onChange={(v) => patch({ retention_days: v })}
-                hint="7 – 3650"
+                hint="仅在开启正文自动清理时生效；7 – 3650 天"
               />
               <NumberField
                 label="模型不一致阈值"
@@ -214,6 +214,9 @@ export function SettingsPage() {
                 onChange={(v) => patch({ model_mismatch_threshold: v })}
                 hint="≥ 1"
               />
+            </div>
+            <div className="mt-4">
+              <ToggleField label="自动清理过期正文与总结" checked={form.purge_conversation_content} onChange={(v) => { if (!v || window.confirm("开启后，超过保留期的对话正文和总结会被永久删除。确认开启？")) patch({ purge_conversation_content: v }); }} hint="默认关闭，保留全部正文；清理启用后无法在系统中撤销。" />
             </div>
             <div className="mt-5 max-w-md">
               <label className="mb-1 block text-xs font-medium text-slate-500">

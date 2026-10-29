@@ -335,7 +335,7 @@ export function AccountsPage() {
                         )}
                         {a.allow_third_party && (
                           <span
-                            title="允许 Claude Code、OpenCode、Command Code 等第三方客户端"
+                            title="允许应用 API 和其他客户端使用此账号"
                             className="whitespace-nowrap rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-700"
                           >
                             第三方
@@ -704,9 +704,9 @@ function EditModal({
               className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
             />
             <span>
-              允许 Claude Code、OpenCode、Command Code 等第三方客户端
+              允许应用 API 和其他客户端使用此账号
               <span className="mt-0.5 block text-xs text-slate-400">
-                它们走同样的 OpenAI Responses 接口。请求特征和官方 Codex 不同，账号被风控的可能更大，只给确有需要的账号打开。
+                关闭时通常仅允许 Codex（全局开关开启时除外）；开启后已绑定的服务账号可通过网关调用。不同客户端的请求特征可能影响上游账号风控。
               </span>
             </span>
           </label>

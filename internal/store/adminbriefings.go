@@ -146,7 +146,7 @@ func (s *Store) DeleteExpiredAdminBriefings(ctx context.Context, before time.Tim
 // oldest first. Material for the weekly briefing is assembled from these.
 func (s *Store) WorkDigestDaysInRange(ctx context.Context, from, to time.Time) ([]WorkDigestDay, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT day, overview_md, model, status, error, started_at, finished_at
+		SELECT day, CASE WHEN privacy_safe OR NOT EXISTS (SELECT 1 FROM employees WHERE private_work_since IS NOT NULL OR name='林伊默') THEN overview_md ELSE '' END, model, status, error, started_at, finished_at
 		FROM work_digest_days WHERE day >= $1::date AND day < $2::date ORDER BY day`, from, to)
 	if err != nil {
 		return nil, err

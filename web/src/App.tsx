@@ -20,6 +20,8 @@ import { RiskEmployeePage } from "./pages/RiskEmployeePage";
 import { TeamPage } from "./pages/TeamPage";
 import { WorkboardPage } from "./pages/WorkboardPage";
 import { BriefingPage } from "./pages/BriefingPage";
+import { ChannelsPage } from "./pages/ChannelsPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import type { Role } from "./lib/types";
 
 function FullScreen({ children }: { children: React.ReactNode }) {
@@ -87,6 +89,8 @@ export default function App() {
             <Route path="/risk/employees/:id" element={<RiskEmployeePage />} />
           )}
           {isAdmin && <Route path="/accounts" element={<AccountsPage />} />}
+          {isAdmin && <Route path="/api-channels" element={<ChannelsPage />} />}
+          {isAdmin && <Route path="/projects" element={<ProjectsPage />} />}
           {isAdmin && <Route path="/ip-groups" element={<IPGroupsPage />} />}
           {isAdmin && <Route path="/audit" element={<AuditPage />} />}
           {isAdmin && <Route path="/settings" element={<SettingsPage />} />}

@@ -1,9 +1,11 @@
-import type React from "react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { LogDetail, TranscriptSegment } from "../lib/types";
-import { Card, PageHeader, Loading, ErrorBox } from "../components/ui";
+import { Button, Card, PageHeader, Loading, ErrorBox } from "../components/ui";
+import type { Project } from "./ProjectsPage";
+import { useToast } from "../components/Toast";
 import { fmtDateTime, fmtNum } from "../lib/format";
 
 function prettyData(data: unknown): string {
@@ -80,6 +82,11 @@ function SegmentList({
 
 export function LogDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const [project,setProject] = useState("");
+  const { toast } = useToast();
+  const qc = useQueryClient();
+  const projects = useQuery({queryKey:["projects"],queryFn:()=>api.get<{projects:Project[]}>("/api/admin/projects")});
+  const assign = useMutation({mutationFn:()=>api.post(`/api/admin/requests/${id}/project`,{project_id:Number(project)}),onSuccess:()=>{qc.invalidateQueries({queryKey:["log",id]});qc.invalidateQueries({queryKey:["project-usage"]});toast("项目归属已保存","success")},onError:(e:unknown)=>toast(e instanceof Error?e.message:"保存失败","error")});
   const { data, isLoading, error } = useQuery({
     queryKey: ["log", id],
     queryFn: () => api.get<LogDetail>(`/api/logs/${id}`),
@@ -96,7 +103,7 @@ export function LogDetailPage() {
           ← 返回日志列表
         </Link>
       </div>
-      <PageHeader title="请求详情" desc="重建的请求与响应原文。" />
+      <PageHeader title="请求详情" desc="网关保存的记录与重建后的脱敏内容。" />
 
       {isLoading && <Loading />}
       {error && <ErrorBox error={error} />}
@@ -134,6 +141,12 @@ export function LogDetailPage() {
             </div>
           </Card>
 
+          <Card className="p-5">
+            <h2 className="text-sm font-semibold">项目归属</h2>
+            <p className="mt-1 text-xs text-slate-500">当前：{projects.data?.projects.find(p=>p.id===data.project_id)?.name || "未分配"}{data.project_manual ? "（已手动指定）" : data.project_id ? "（来自应用密钥）" : ""}。修改归属时保留历史，原始记录不变。</p>
+            {<div className="mt-3 flex gap-2"><select className="rounded border border-slate-300 px-2 py-1.5 text-sm" value={project} onChange={e=>setProject(e.target.value)}><option value="">选择项目</option>{projects.data?.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><Button disabled={!project||assign.isPending} onClick={()=>assign.mutate()}>保存归属</Button></div>}
+          </Card>
+          <Card className="p-5"><details><summary className="cursor-pointer text-sm font-semibold">读取记录字段</summary><p className="mt-2 text-xs text-slate-500">字段为网关保存的元数据和重建后的脱敏片段，不是未经处理的网络报文。时间采用 ISO 8601 格式；Token 的缓存属于输入、推理属于输出。</p><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-50 p-3 text-xs">{JSON.stringify(data,null,2)}</pre></details></Card>
           {data.transcript.purged ? (
             <Card className="p-8 text-center">
               <p className="text-sm text-slate-500">原文已按保留策略清除</p>

@@ -118,7 +118,7 @@ func runServe() error {
 
 	// Data plane.
 	dp := proxy.NewHandler(proxy.HandlerDeps{
-		Store: st, Settings: set, Limiter: proxy.NewLimiter(), Recorder: rec,
+		Store: st, Settings: set, Box: box, Limiter: proxy.NewLimiter(), Recorder: rec,
 		CPABaseURL: cfg.CPABaseURL, CPAAPIKey: cfg.CPAAPIKey, Upstream: upstream, Log: log,
 		Risk: riskEngine, TrustProxy: cfg.TrustProxyHeaders,
 		PortalURL: cfg.PublicBaseURL, Loc: cfg.Timezone,

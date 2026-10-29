@@ -50,6 +50,10 @@ func (h *Handler) handleImages(op string) http.HandlerFunc {
 			refused.write(w, kind)
 			return
 		}
+		if refused == nil && prin.APIChannelID != nil {
+			oaError(w, http.StatusForbidden, "该渠道密钥不支持此接口。", "invalid_request_error", "channel_protocol_mismatch")
+			return
+		}
 		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
 			oaError(w, http.StatusUnsupportedMediaType, "only JSON image requests are supported", "invalid_request_error", "unsupported_media_type")
 			return

@@ -165,6 +165,7 @@ type KeyPrincipal struct {
 	FrozenReason     string
 	RemoteAllowed    bool
 	IsService        bool // a service account (see Employee.IsService)
+	APIChannelID     *int64
 	// Accounts are the employee's accounts, oldest binding first.
 	Accounts []Account
 }

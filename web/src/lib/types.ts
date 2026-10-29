@@ -171,6 +171,14 @@ export interface Transcript {
 }
 export interface LogDetail {
   id: string;
+  project_id: number | null;
+  project_manual: boolean;
+  account_id: number | null;
+  api_key_id: number | null;
+  session_id: number | null;
+  duration_ms: number;
+  queued_ms: number;
+  stream: boolean;
   started_at: string;
   employee_id: number;
   client_kind: string;
@@ -322,6 +330,7 @@ export interface Settings {
   default_max_concurrency: number;
   queue_timeout_seconds: number;
   retention_days: number;
+  purge_conversation_content: boolean;
   codex_profile: CodexProfile;
   client_rules: ClientRule[] | null;
   redaction_rules: RedactionRule[] | null;

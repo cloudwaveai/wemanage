@@ -92,6 +92,10 @@ func (h *Handler) handleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	clientIP := risk.ClientIP(r, h.deps.TrustProxy)
 	token := bearer(r)
 	prin, refused := h.authorize(ctx, token)
+	if refused == nil && prin.APIChannelID != nil {
+		oaError(w, http.StatusUpgradeRequired, "渠道密钥请使用 HTTP。", "invalid_request_error", "websocket_unsupported")
+		return
+	}
 	// A refused handshake has no request body; it is logged as an empty turn.
 	session := h.sessionSeed(kind, r.Header, nil, prin.EmployeeID)
 	rec := &recorder.Record{

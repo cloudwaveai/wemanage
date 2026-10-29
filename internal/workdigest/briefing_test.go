@@ -447,3 +447,42 @@ func TestWeekBriefingWithoutFeishu(t *testing.T) {
 		t.Fatalf("without Feishu = %+v", row)
 	}
 }
+
+func TestBriefingExcludesPrivateEmployeeAndUsage(t *testing.T) {
+	f := setup(t)
+	f.configure(t)
+	from, to := f.runner.WeekBriefingWindow(time.Now())
+	if !to.After(from) {
+		t.Skip("no completed weekday in the current week")
+	}
+	seedWeek(t, f, aFriday(time.Now(), to.Location()))
+	owner, err := f.st.UpsertEmployeeByOpenID(f.ctx, store.Employee{FeishuOpenID: "ou_private", Name: "林伊默"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := from.Add(time.Hour)
+	if err := f.st.SaveWorkDigest(f.ctx, store.WorkDigest{Day: from, EmployeeID: owner.ID, SummaryMD: "PRIVATE-SUMMARY"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.InsertRequest(f.ctx, store.RequestRow{ID: [16]byte{99, 99}, StartedAt: at, EmployeeID: owner.ID, ClientKind: "codex", Endpoint: "responses", ModelRequested: "private-model", StatusCode: 200, TokensInput: 987654}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runner.StartBriefing(f.ctx, f.alice, "", false, from, to); err != nil {
+		t.Fatal(err)
+	}
+	row := waitBriefing(t, f, f.alice.ID, from, to)
+	if row.Status != "test" {
+		t.Fatalf("briefing: %+v", row)
+	}
+	f.cpa.mu.Lock()
+	defer f.cpa.mu.Unlock()
+	if len(f.cpa.inputs) == 0 {
+		t.Fatal("no model input")
+	}
+	material := f.cpa.inputs[len(f.cpa.inputs)-1]
+	for _, secret := range []string{"林伊默", "PRIVATE-SUMMARY", "private-model", "987,654"} {
+		if strings.Contains(material, secret) {
+			t.Fatalf("private material leaked: %q", secret)
+		}
+	}
+}

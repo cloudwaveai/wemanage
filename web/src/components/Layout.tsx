@@ -119,6 +119,16 @@ const ADMIN: NavItem[] = [
     icon: I("M4 7h16M4 7a2 2 0 012-2h12a2 2 0 012 2M4 7v10a2 2 0 002 2h12a2 2 0 002-2V7M9 12h6"),
   },
   {
+    to: "/projects", label: "项目与用量", roles: ["super_admin"],
+    icon: I("M3 6h7l2 2h9v11H3z"),
+  },
+  {
+    to: "/api-channels",
+    label: "API 渠道",
+    roles: ["super_admin"],
+    icon: I("M4 8h16M4 16h16M8 5v6M16 13v6"),
+  },
+  {
     to: "/ip-groups",
     label: "IP 组",
     roles: ["super_admin"],

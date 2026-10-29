@@ -73,8 +73,8 @@ func TestWorkboard(t *testing.T) {
 	if got.Totals.TokensTotal != 1910 || got.Totals.ActiveEmployees != 2 {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
-	if len(got.Employees) != 2 || got.Employees[0].Name != "ou_alice" || got.Employees[0].TokensTotal != 1800 ||
-		got.Employees[0].Requests != 2 || got.Employees[0].TopModel != "gpt-6-luna" {
+	if len(got.Employees) != 2 || got.Employees[1].Name != "ou_alice" || got.Employees[1].TokensTotal != 1800 ||
+		got.Employees[1].Requests != 2 || got.Employees[1].TopModel != "gpt-6-luna" {
 		t.Fatalf("employees = %+v", got.Employees)
 	}
 	if len(got.Idle) != 1 || got.Idle[0].Name != "carol" {

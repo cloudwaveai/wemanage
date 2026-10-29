@@ -115,10 +115,9 @@ function DailyChart({ data }: { data: Workboard["daily"] }) {
 
 function EmployeeTable({ board }: { board: Workboard }) {
   const rows = board.employees;
-  const max = Math.max(1, ...rows.map((r) => r.tokens_total));
   const multiDay = board.days > 1;
   if (!rows.length) {
-    return <p className="py-8 text-center text-sm text-slate-400">这段时间没有人使用。</p>;
+    return <p className="py-8 text-center text-sm text-slate-400">这段时间没有网关用量记录。</p>;
   }
   return (
     <div className="scroll-thin -mx-5 overflow-x-auto px-5">
@@ -151,14 +150,7 @@ function EmployeeTable({ board }: { board: Workboard }) {
                 )}
               </td>
               <td className="py-2.5 pr-3">
-                <div className="flex items-center gap-2">
-                  <div className="h-2 w-28 shrink-0 rounded-full bg-indigo-50">
-                    <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.max(2, (r.tokens_total / max) * 100)}%` }} />
-                  </div>
-                  <span className="font-medium text-slate-800" title={fmtNum(r.tokens_total)}>
-                    {fmtCompact(r.tokens_total)}
-                  </span>
-                </div>
+                <span className="font-medium text-slate-800" title={fmtNum(r.tokens_total)}>{fmtCompact(r.tokens_total)}</span>
               </td>
               <td className="py-2.5 pr-3 text-right text-slate-600" title={`其中缓存 ${fmtNum(r.tokens_cached)}`}>
                 {fmtCompact(r.tokens_input)}
@@ -337,7 +329,7 @@ export function WorkboardPage() {
 
   return (
     <div>
-      <PageHeader title="工作看板" desc="所有员工的 Token 用量，和每天在做什么。" />
+      <PageHeader title="工作看板" desc="查看已接入网关的用量和工作记录。样本尚不完整，不能据此评价个人表现或决定压缩成本。" />
 
       <div className="mb-4">
         <RangePicker value={range} onChange={setRange} />
@@ -355,7 +347,7 @@ export function WorkboardPage() {
             <StatTile
               label="使用人数"
               value={t.active_employees}
-              hint={b.idle.length ? `另有 ${b.idle.length} 人没用` : "所有人都用了"}
+              hint={b.idle.length ? `另有 ${b.idle.length} 人没有网关记录` : "已有网关记录"}
             />
           </div>
 
@@ -371,7 +363,7 @@ export function WorkboardPage() {
             <EmployeeTable board={b} />
             {b.idle.length > 0 && (
               <p className="mt-3 text-xs text-slate-400">
-                这段时间没用过：{b.idle.map((e) => e.name).join("、")}
+                这段时间没有网关记录（可能使用了其他工具）：{b.idle.map((e) => e.name).join("、")}
               </p>
             )}
           </Card>

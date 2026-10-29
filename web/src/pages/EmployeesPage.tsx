@@ -17,6 +17,11 @@ import { CodeBlock } from "../components/CopyButton";
 import { useToast } from "../components/Toast";
 import { useAuth } from "../context/AuthContext";
 import { accountName } from "../lib/providers";
+import { fmtDateTime } from "../lib/format";
+import type { APIChannel } from "./ChannelsPage";
+import type { Project } from "./ProjectsPage";
+
+type ServiceKey = { id: number; label: string; prefix: string; channel_id: number | null; project_id: number | null; created_at: string; last_used_at: string | null };
 
 
 export function EmployeesPage() {
@@ -27,11 +32,27 @@ export function EmployeesPage() {
   const [creating, setCreating] = useState(false);
   const [svcName, setSvcName] = useState("");
   const [keyFor, setKeyFor] = useState<EmployeeRow | null>(null);
+  const [keyLabel, setKeyLabel] = useState("");
+  const [keyChannel, setKeyChannel] = useState("");
+  const [keyProject, setKeyProject] = useState("");
+  const projects = useQuery({ queryKey: ["projects"], queryFn: () => api.get<{ projects: Project[] }>("/api/admin/projects") });
+  const channels = useQuery({ queryKey: ["api-channels"], queryFn: () => api.get<{ channels: APIChannel[] }>("/api/admin/api-channels") });
   const [issued, setIssued] = useState<{ name: string; key: string } | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin-employees"],
     queryFn: () =>
       api.get<{ employees: EmployeeRow[] }>("/api/admin/employees"),
+  });
+
+  const serviceKeys = useQuery({
+    queryKey: ["service-keys", keyFor?.id],
+    queryFn: () => api.get<{ keys: ServiceKey[] }>(`/api/admin/employees/${keyFor!.id}/keys`),
+    enabled: !!keyFor,
+  });
+  const revokeKey = useMutation({
+    mutationFn: (id: number) => api.del(`/api/admin/employees/${keyFor!.id}/keys/${id}`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["service-keys", keyFor?.id] }); qc.invalidateQueries({ queryKey: ["admin-employees"] }); toast("已撤销；网关缓存更新后生效", "success"); },
+    onError: (err: unknown) => toast(err instanceof Error ? err.message : "撤销失败", "error"),
   });
 
   const setAdmin = useMutation({
@@ -71,10 +92,13 @@ export function EmployeesPage() {
 
   const issueKey = useMutation({
     mutationFn: (e: EmployeeRow) =>
-      api.post<{ key: string }>(`/api/admin/employees/${e.id}/key`, {}),
+      api.post<{ key: string }>(`/api/admin/employees/${e.id}/key`, { label: keyLabel.trim(), channel_id: keyChannel ? Number(keyChannel) : null, project_id: keyProject ? Number(keyProject) : null }),
     onSuccess: (r, e) => {
       qc.invalidateQueries({ queryKey: ["admin-employees"] });
-      setKeyFor(null);
+      qc.invalidateQueries({ queryKey: ["service-keys", e.id] });
+      setKeyLabel("");
+      setKeyChannel("");
+      setKeyProject("");
       setIssued({ name: e.name, key: r.key });
     },
     onError: (err: unknown) =>
@@ -198,7 +222,7 @@ export function EmployeesPage() {
                           className="ml-1 !px-2 !py-1 font-sans text-xs"
                           onClick={() => setKeyFor(e)}
                         >
-                          {e.active_key_prefix ? "重置" : "生成"}
+                          管理密钥
                         </Button>
                       )}
                     </td>
@@ -308,26 +332,27 @@ export function EmployeesPage() {
       <Modal
         open={!!keyFor}
         onClose={() => setKeyFor(null)}
-        title={keyFor?.active_key_prefix ? "重置服务账号 Key" : "生成服务账号 Key"}
-        footer={
-          <>
-            <Button onClick={() => setKeyFor(null)}>取消</Button>
-            <Button
-              variant={keyFor?.active_key_prefix ? "danger" : "primary"}
-              disabled={issueKey.isPending}
-              onClick={() => keyFor && issueKey.mutate(keyFor)}
-            >
-              {issueKey.isPending ? "处理中…" : "确认"}
-            </Button>
-          </>
-        }
+        title={`管理 ${keyFor?.name ?? ""} 的应用密钥`}
+        footer={<Button onClick={() => setKeyFor(null)}>关闭</Button>}
       >
-        <p className="text-sm text-slate-600">
-          {keyFor?.active_key_prefix
-            ? `重置后 ${keyFor?.name} 的旧 Key 立即失效，要把新 Key 换到平台的渠道配置里。`
-            : `给 ${keyFor?.name} 生成一个 Key。`}
-        </p>
-        <p className="mt-2 text-xs text-slate-400">此操作会记录到审计。</p>
+        <p className="text-sm text-slate-600">每个应用使用独立密钥。新建不会替换其他密钥；撤销会在网关缓存刷新后生效，数据库断连时最长可能延迟 10 分钟。</p>
+        {serviceKeys.isLoading && <Loading />}
+        {serviceKeys.error && <ErrorBox error={serviceKeys.error} />}
+        <div className="mt-3 space-y-2">
+          {serviceKeys.data?.keys.map((key) => (
+            <div key={key.id} className="flex items-center justify-between gap-3 rounded border border-slate-200 p-3 text-sm">
+              <div><div>{key.label || "未命名"} {key.project_id ? `· ${projects.data?.projects.find((p) => p.id === key.project_id)?.name || "项目"}` : "· 未分配项目"} {key.channel_id ? `· ${channels.data?.channels.find((c) => c.id === key.channel_id)?.name || "渠道"}` : "· 订阅账号"} · <span className="font-mono">{key.prefix}…</span></div><div className="text-xs text-slate-500">创建于 {fmtDateTime(key.created_at)}{key.last_used_at && ` · 最近使用 ${fmtDateTime(key.last_used_at)}`}</div></div>
+              <Button variant="danger" disabled={revokeKey.isPending} onClick={() => { if (window.confirm(`撤销 ${key.label || key.prefix}？使用该密钥的应用将无法继续调用。`)) revokeKey.mutate(key.id); }}>撤销</Button>
+            </div>
+          ))}
+        </div>
+        <label className="mt-4 block text-sm text-slate-700">密钥用途<select className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" value={keyChannel} onChange={(e) => setKeyChannel(e.target.value)}><option value="">使用已绑定的订阅账号</option>{channels.data?.channels.filter((c) => c.active).map((c) => <option key={c.id} value={c.id}>{c.name}（{c.protocol}）</option>)}</select></label>
+        <label className="mt-3 block text-sm text-slate-700">项目归属<select className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2" value={keyProject} onChange={(e) => setKeyProject(e.target.value)}><option value="">暂不分配</option>{projects.data?.projects.map((p) => <option key={p.id} value={p.id}>{p.name}（{p.category === "client" ? "客户" : "基础建设"}）</option>)}</select></label>
+        <div className="mt-4 flex gap-2">
+          <input value={keyLabel} onChange={(e) => setKeyLabel(e.target.value)} maxLength={50} placeholder="应用名称，例如内部知识库" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+          <Button variant="primary" disabled={issueKey.isPending} onClick={() => keyFor && issueKey.mutate(keyFor)}>{issueKey.isPending ? "生成中…" : "新增密钥"}</Button>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">密钥只在生成时显示一次；操作会记录到审计。</p>
       </Modal>
 
       <Modal
@@ -337,7 +362,7 @@ export function EmployeesPage() {
         footer={<Button onClick={() => setIssued(null)}>我已保存</Button>}
       >
         <div className="space-y-3 text-sm text-slate-600">
-          <p>Key 只完整显示这一次，请复制到平台的渠道配置里（Base URL 填 https://ai.cloudwaveai.cn）。</p>
+          <p>Key 只完整显示这一次，请复制到平台的渠道配置里（Base URL 填 {window.location.origin}/v1）。</p>
           {issued && <CodeBlock code={issued.key} />}
         </div>
       </Modal>

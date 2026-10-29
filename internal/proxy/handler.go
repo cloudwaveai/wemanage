@@ -32,6 +32,7 @@ import (
 // HandlerDeps wires the data-plane dependencies.
 type HandlerDeps struct {
 	Store      *store.Store
+	Box        *secure.Box
 	Settings   *settings.Service
 	Limiter    *Limiter
 	Recorder   *recorder.Recorder
@@ -55,8 +56,9 @@ type HandlerDeps struct {
 
 // Handler implements the OpenAI-compatible data plane.
 type Handler struct {
-	deps  HandlerDeps
-	cache *principalCache
+	deps        HandlerDeps
+	cache       *principalCache
+	channelHTTP *http.Client
 
 	clsMu    sync.Mutex
 	cls      *Classifier
@@ -106,7 +108,7 @@ func NewHandler(deps HandlerDeps) *Handler {
 		deps.Log = slog.Default()
 	}
 	return &Handler{deps: deps, cache: newPrincipalCache(deps.Store, 3*time.Second),
-		observed: map[string]*observedEntry{}, quotaAt: map[int64]time.Time{}}
+		channelHTTP: newChannelClient(), observed: map[string]*observedEntry{}, quotaAt: map[int64]time.Time{}}
 }
 
 // Routes mounts the data-plane routes.
@@ -211,12 +213,19 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		}
 
 		// --- 2. Read body; from here on every outcome is logged ---
-		body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+		body, err := io.ReadAll(io.LimitReader(r.Body, (64<<20)+1))
 		if err != nil {
 			oaError(w, http.StatusBadRequest, "请求内容读取失败，请重试。", "invalid_request_error", "bad_body")
 			return
 		}
+		if len(body) > 64<<20 {
+			oaError(w, http.StatusRequestEntityTooLarge, "请求超过 64 MiB，请缩小后重试。", "invalid_request_error", "body_too_large")
+			return
+		}
 		model := stripPrefix(gjson.GetBytes(body, "model").String())
+		if prin.APIChannelID != nil {
+			model = gjson.GetBytes(body, "model").String()
+		}
 		stream := gjson.GetBytes(body, "stream").Bool()
 		reasoning := gjson.GetBytes(body, "reasoning.effort").String()
 		if reasoning == "" {
@@ -237,7 +246,7 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 		// --- 2a. Pick the account: allowed for this client and model, usable now ---
 		want := need{model: model, kind: kind, session: sessionSeed, exclude: map[int64]bool{}}
 		acc := store.Account{}
-		if refused == nil {
+		if refused == nil && prin.APIChannelID == nil {
 			acc, refused = h.pickAccount(prin, want, set, nil)
 		}
 		if acc.ID != 0 {
@@ -292,6 +301,10 @@ func (h *Handler) handleProxy(endpoint string) http.HandlerFunc {
 			return
 		}
 		h.observe(obs)
+		if prin.APIChannelID != nil {
+			h.forwardChannel(w, r, prin, body, endpoint, model, stream, start, set, &rec)
+			return
+		}
 
 		// --- 3..5. Send upstream; an account whose quota runs out hands the
 		// request to the employee's next usable account ---
@@ -630,6 +643,14 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 	prin, err := h.cache.Get(ctx, secure.HashAPIKey(token))
 	if err != nil && errors.Is(err, store.ErrNotFound) {
 		h.logAnonymous(r, kind, &refusal{code: "invalid_key"})
+	}
+	if err == nil && prin.APIChannelID != nil {
+		if prin.Frozen || prin.EmployeeStatus != "active" {
+			oaError(w, 403, "你的 Key 已被暂停，请联系管理员。", "invalid_request_error", "account_frozen")
+			return
+		}
+		h.channelModels(w, r, prin)
+		return
 	}
 	if err != nil || len(prin.Accounts) == 0 {
 		oaError(w, http.StatusForbidden, "Key 无效，或还没有分配 AI 账号。", "invalid_request_error", "no_account_bound")

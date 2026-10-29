@@ -178,7 +178,7 @@ func Register(c *cron.Cron, d Deps) {
 	// Retention cleanup — daily 03:30.
 	_, _ = c.AddFunc("30 3 * * *", func() {
 		set := d.Settings.Get(ctx)
-		if err := Retention(ctx, d.Store, set.RetentionDays, time.Now()); err != nil {
+		if err := Retention(ctx, d.Store, set.RetentionDays, set.PurgeConversationContent, time.Now()); err != nil {
 			log.Warn("retention", "err", err)
 		}
 	})

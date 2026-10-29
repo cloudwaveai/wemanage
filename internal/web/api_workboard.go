@@ -84,7 +84,7 @@ func (s *Server) handleWorkboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		return rows[i]["tokens_total"].(int64) > rows[j]["tokens_total"].(int64)
+		return rows[i]["name"].(string) < rows[j]["name"].(string)
 	})
 
 	out := map[string]any{

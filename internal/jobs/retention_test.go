@@ -33,7 +33,18 @@ func TestRetentionDeletesOldContentKeepsMetadata(t *testing.T) {
 	})
 	rec.Flush()
 
-	if err := jobs.Retention(ctx, st, 180, time.Now()); err != nil {
+	if err := jobs.Retention(ctx, st, 180, false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.GetRequestFull(ctx, oldID)
+	if err != nil || before.BodiesPurged {
+		t.Fatalf("default retention must preserve content: %+v %v", before, err)
+	}
+	var retained int
+	if err := st.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM request_texts`).Scan(&retained); err != nil || retained == 0 {
+		t.Fatalf("expected retained texts: %d %v", retained, err)
+	}
+	if err := jobs.Retention(ctx, st, 180, true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 

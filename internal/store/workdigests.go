@@ -45,7 +45,7 @@ func (s *Store) FinishWorkDigestDay(ctx context.Context, day time.Time, overview
 		UPDATE work_digest_days SET
 			overview_md = CASE WHEN $2 <> '' THEN $2 ELSE overview_md END,
 			model = CASE WHEN $2 <> '' THEN $3 ELSE model END,
-			status=$4, error=$5, finished_at=now()
+			status=$4, error=$5, finished_at=now(), privacy_safe=($4='done' AND $2 <> '' AND started_at >= COALESCE((SELECT max(private_work_since) FROM employees), '-infinity'::timestamptz))
 		WHERE day=$1`, day, overviewMD, model, status, errMsg)
 	return err
 }
@@ -54,7 +54,7 @@ func (s *Store) FinishWorkDigestDay(ctx context.Context, day time.Time, overview
 func (s *Store) GetWorkDigestDay(ctx context.Context, day time.Time) (WorkDigestDay, error) {
 	var d WorkDigestDay
 	err := s.Pool.QueryRow(ctx, `
-		SELECT day, overview_md, model, status, error, started_at, finished_at
+		SELECT day, CASE WHEN privacy_safe OR NOT EXISTS (SELECT 1 FROM employees WHERE private_work_since IS NOT NULL OR name='林伊默') THEN overview_md ELSE '' END, model, status, error, started_at, finished_at
 		FROM work_digest_days WHERE day=$1`, day).
 		Scan(&d.Day, &d.OverviewMD, &d.Model, &d.Status, &d.Error, &d.StartedAt, &d.FinishedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -98,7 +98,7 @@ func (s *Store) PruneWorkDigests(ctx context.Context, day time.Time, keep []int6
 	if keep == nil {
 		keep = []int64{}
 	}
-	_, err := s.Pool.Exec(ctx, `DELETE FROM work_digests WHERE day=$1 AND NOT (employee_id = ANY($2))`, day, keep)
+	_, err := s.Pool.Exec(ctx, `DELETE FROM work_digests WHERE day=$1 AND NOT (employee_id = ANY($2)) AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.id=employee_id AND (e.private_work_since IS NOT NULL OR e.name='林伊默'))`, day, keep)
 	return err
 }
 
@@ -106,7 +106,7 @@ func (s *Store) PruneWorkDigests(ctx context.Context, day time.Time, keep []int6
 func (s *Store) WorkDigests(ctx context.Context, day time.Time) ([]WorkDigest, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT day, employee_id, summary_md, sessions, messages, model, generated_at
-		FROM work_digests WHERE day=$1 ORDER BY employee_id`, day)
+		FROM work_digests wd WHERE day=$1 AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.id=wd.employee_id AND (e.private_work_since IS NOT NULL OR e.name='林伊默')) ORDER BY employee_id`, day)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +145,7 @@ type DayText struct {
 func (s *Store) TextEmployees(ctx context.Context, from, to time.Time) ([]int64, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT e.id FROM employees e
-		WHERE e.status='active' AND NOT e.is_service
+		WHERE e.status='active' AND NOT e.is_service AND e.private_work_since IS NULL AND e.name <> '林伊默'
 		  AND EXISTS (SELECT 1 FROM request_texts t WHERE t.employee_id=e.id AND t.started_at >= $1 AND t.started_at < $2)
 		ORDER BY e.id`, from, to)
 	if err != nil {

@@ -21,9 +21,10 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	emp := currentEmployee(r)
 	q := r.URL.Query()
 	f := store.RequestFilter{
-		Query:  q.Get("q"),
-		Client: q.Get("client"),
-		Model:  q.Get("model"),
+		ViewerID: emp.ID,
+		Query:    q.Get("q"),
+		Client:   q.Get("client"),
+		Model:    q.Get("model"),
 	}
 	if v := q.Get("from"); v != "" {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
@@ -95,6 +96,15 @@ func (s *Server) handleViewLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	private, err := s.deps.Store.PrivateWork(r.Context(), row.EmployeeID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	if private && row.EmployeeID != emp.ID {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
 	// Every transcript view is audited (who viewed whom).
 	s.audit(r, "view_transcript", "request", idHex, map[string]any{"subject_employee_id": row.EmployeeID})
 
@@ -103,7 +113,15 @@ func (s *Server) handleViewLog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "reconstruct failed")
 		return
 	}
+	projectID, projectManual, err := s.deps.Store.RequestProject(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "query failed")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"project_id": projectID, "project_manual": projectManual,
+		"account_id": row.AccountID, "api_key_id": row.APIKeyID, "session_id": row.SessionID,
+		"duration_ms": row.DurationMS, "queued_ms": row.QueuedMS, "stream": row.Stream,
 		"id":              idHex,
 		"started_at":      row.StartedAt,
 		"employee_id":     row.EmployeeID,
