@@ -89,6 +89,12 @@ const ADMIN: NavItem[] = [
     icon: I("M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 012-2h2a2 2 0 012 2v0a2 2 0 01-2 2h-2a2 2 0 01-2-2zM9 12h6M9 16h4"),
   },
   {
+    to: "/briefing",
+    label: "简报",
+    roles: ["super_admin"],
+    icon: I("M7 3h7l5 5v12a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1zM14 3v5h5M9 13h6M9 17h4"),
+  },
+  {
     to: "/logs",
     label: "对话记录",
     roles: ["super_admin"],

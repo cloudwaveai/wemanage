@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, LIVE_MS } from "../lib/api";
-import type { AccountRow, Overview } from "../lib/types";
+import type { AccountRow, Overview, UsageBreakdown } from "../lib/types";
 import {
   Card,
   PageHeader,
@@ -23,9 +23,7 @@ export function OverviewPage() {
   });
 
   const u = data?.usage_30d;
-  const totalTokens = u
-    ? u.tokens_input + u.tokens_cached + u.tokens_output + u.tokens_reasoning
-    : 0;
+  const totalTokens = u ? u.tokens_input + u.tokens_output : 0;
   const accounts = useQuery({
     queryKey: ["accounts"],
     queryFn: () => api.get<{ accounts: AccountRow[] }>("/api/admin/accounts"),
@@ -46,10 +44,16 @@ export function OverviewPage() {
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatTile label="30 天请求数" value={fmtNum(u?.requests ?? 0)} />
-            <StatTile label="30 天总 Token" value={fmtNum(totalTokens)} />
+            <StatTile
+              label="30 天总 Token"
+              value={fmtNum(totalTokens)}
+              hint={`输入 ${fmtCompact(u?.tokens_input)} · 输出 ${fmtCompact(u?.tokens_output)}`}
+            />
             <StatTile label="24h 活跃人数" value={fmtNum(data.active_24h)} />
             <StatTile label="账号总数" value={fmtNum(data.account_total)} />
           </div>
+
+          <ModelUsageCard rows={u?.by_model ?? []} />
 
           <AccountQuotaCard rows={accounts.data?.accounts ?? []} health={health} />
 
@@ -108,6 +112,79 @@ function resetHint(resetAt: string | null | undefined): string | undefined {
   return new Date(resetAt).getTime() < Date.now()
     ? "已过重置时间，等待下次更新"
     : `${fmtDateTime(resetAt)} 重置`;
+}
+
+// ModelUsageCard breaks the last 30 days of token usage down by model.
+function ModelUsageCard({ rows }: { rows: UsageBreakdown[] }) {
+  const sorted = [...rows].sort((a, b) => b.tokens_total - a.tokens_total);
+  const total = sorted.reduce((sum, r) => sum + r.tokens_total, 0);
+  const max = sorted.length ? sorted[0].tokens_total : 0;
+  return (
+    <Card className="p-5">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-slate-800">近 30 天模型用量</h2>
+        <span className="text-xs text-slate-400">{sorted.length} 个模型</span>
+      </div>
+      <p className="mb-4 text-xs text-slate-400">
+        Token 为经过网关的用量。缓存是输入的一部分，推理是输出的一部分，合计 = 输入 + 输出。
+      </p>
+      {sorted.length === 0 ? (
+        <Empty label="暂无模型用量" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-xs text-slate-400">
+                <th className="py-2 pr-3 text-left font-medium">模型</th>
+                <th className="py-2 pr-3 text-right font-medium">请求</th>
+                <th className="py-2 pr-3 text-right font-medium">输入</th>
+                <th className="py-2 pr-3 text-right font-medium">缓存</th>
+                <th className="py-2 pr-3 text-right font-medium">输出</th>
+                <th className="py-2 pr-3 text-right font-medium">推理</th>
+                <th className="py-2 pl-2 text-left font-medium">合计</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => (
+                <tr key={r.key} className="border-b border-slate-100 last:border-0">
+                  <td className="py-2.5 pr-3 font-mono text-xs text-slate-700">{r.key}</td>
+                  <td className="py-2.5 pr-3 text-right tabular-nums text-slate-600">{fmtNum(r.requests)}</td>
+                  <td className="py-2.5 pr-3 text-right tabular-nums text-slate-600" title={fmtNum(r.tokens_input)}>
+                    {fmtCompact(r.tokens_input)}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right tabular-nums text-slate-400" title={fmtNum(r.tokens_cached)}>
+                    {fmtCompact(r.tokens_cached)}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right tabular-nums text-slate-600" title={fmtNum(r.tokens_output)}>
+                    {fmtCompact(r.tokens_output)}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right tabular-nums text-slate-400" title={fmtNum(r.tokens_reasoning)}>
+                    {fmtCompact(r.tokens_reasoning)}
+                  </td>
+                  <td className="py-2.5 pl-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-20 shrink-0 rounded-full bg-indigo-50">
+                        <div
+                          className="h-full rounded-full bg-indigo-500"
+                          style={{ width: `${max ? Math.max(2, (r.tokens_total / max) * 100) : 0}%` }}
+                        />
+                      </div>
+                      <span className="tabular-nums font-medium text-slate-800" title={fmtNum(r.tokens_total)}>
+                        {fmtCompact(r.tokens_total)}
+                      </span>
+                      <span className="w-10 text-right text-xs tabular-nums text-slate-400">
+                        {total ? `${((r.tokens_total / total) * 100).toFixed(1)}%` : ""}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
 }
 
 // AccountQuotaCard shows every account's 5-hour / weekly quota and tokens.

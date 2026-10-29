@@ -59,7 +59,11 @@ export interface UsagePoint {
 export interface UsageBreakdown {
   key: string;
   requests: number;
-  tokens_total: number;
+  tokens_total: number; // input + output
+  tokens_input: number;
+  tokens_cached: number; // part of input
+  tokens_output: number;
+  tokens_reasoning: number; // part of output
 }
 export interface UsageSummary {
   requests: number;
@@ -540,4 +544,32 @@ export interface WorkDigests {
     messages: number;
     generated_at: string;
   }[];
+}
+
+export type BriefingStatus = "running" | "test" | "sent" | "failed";
+
+export interface AdminBriefingRow {
+  status: BriefingStatus;
+  content_md?: string;
+  error?: string;
+  model?: string;
+  generated_at?: string | null;
+  sent_at?: string | null;
+}
+
+// Dates are inclusive company-local calendar dates.
+export interface AdminBriefingConfig {
+  configured: boolean;
+  model?: string;
+  account?: { id: number; email: string; plan_type: string };
+  enabled: boolean;
+  prompt: string;
+  default_prompt: string;
+  from: string;
+  to: string;
+  today: string;
+  digest_days?: number;
+  running: boolean;
+  briefing?: AdminBriefingRow | null;
+  history?: (AdminBriefingRow & { from: string; to: string })[];
 }

@@ -48,9 +48,15 @@ type Runner struct {
 	HC         *http.Client // optional
 	Loc        *time.Location
 	Log        *slog.Logger
+	// Sender pushes the Friday admin briefings; nil stores them without
+	// pushing (Feishu not configured).
+	Sender Sender
 
 	mu      sync.Mutex
 	running bool
+	// briefRunning tracks per-admin briefing runs (Friday job, previews).
+	briefMu      sync.Mutex
+	briefRunning map[int64]briefingPeriod
 }
 
 // Day is local midnight of t's date.

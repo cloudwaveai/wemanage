@@ -91,7 +91,7 @@ func TestQuotaAlertOncePerWindow(t *testing.T) {
 	}
 	snap(100, reset)
 	msgs = run()
-	if len(msgs) != 2 || !strings.Contains(msgs[1], "5 小时额度已用完") || !strings.Contains(msgs[1], "原则上不用") ||
+	if len(msgs) != 2 || !strings.Contains(msgs[1], "5 小时额度已用完") || !strings.Contains(msgs[1], "也可以现在用重置卡") ||
 		!strings.Contains(msgs[1], "还有 2 张") {
 		t.Fatalf("used-up message: %q", msgs)
 	}

@@ -113,7 +113,7 @@ function AccountCredits({ rc, several }: { rc: AccountResetCredits; several: boo
             {several && <span className="text-xs font-normal text-slate-400">· {label}</span>}
           </h2>
           <p className="mt-1 text-xs text-slate-500">
-            用一张，这个账号的 5 小时和每周额度立即清零、重新开始计算。为降低账号风险，重置卡原则上不用，额度用完、确有急需时再用。
+            用一张，这个账号的 5 小时和每周额度立即清零、重新开始计算。用一张少一张，按需使用。
           </p>
         </div>
         <Button variant="primary" disabled={!rc.can_use || spend.isPending} onClick={() => setConfirm(true)}>
@@ -157,7 +157,7 @@ function AccountCredits({ rc, several }: { rc: AccountResetCredits; several: boo
         <p className="text-sm leading-relaxed text-slate-600">
           使用后，{several ? `账号「${label}」` : "你"}的 5 小时和每周额度会立即清零、重新开始计算。
           {list.length > 1 ? "会先用最早到期的那张。" : ""}
-          重置卡原则上不用，额度到时会自动恢复；确定现在确有急需吗？
+          重置卡用一张少一张，确定现在使用吗？
         </p>
       </Modal>
     </Card>

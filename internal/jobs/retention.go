@@ -31,6 +31,9 @@ func Retention(ctx context.Context, st *store.Store, retentionDays int, now time
 	if err := st.DeleteExpiredWorkDigests(ctx, cutoff); err != nil {
 		return err
 	}
+	if err := st.DeleteExpiredAdminBriefings(ctx, cutoff); err != nil {
+		return err
+	}
 	if _, err := st.MarkPurgedRequests(ctx, cutoff); err != nil {
 		return err
 	}

@@ -26,7 +26,8 @@ type fakeCPA struct {
 	reqs     []*http.Request
 	models   []string
 	inputs   []string
-	failWhen string // reply 500 when the system prompt contains this
+	systems  []string // the system prompt of each call
+	failWhen string   // reply 500 when the system prompt contains this
 }
 
 func (f *fakeCPA) server(t *testing.T) *httptest.Server {
@@ -45,6 +46,7 @@ func (f *fakeCPA) server(t *testing.T) *httptest.Server {
 		f.reqs = append(f.reqs, r)
 		f.models = append(f.models, in.Model)
 		f.inputs = append(f.inputs, in.Messages[1].Content)
+		f.systems = append(f.systems, in.Messages[0].Content)
 		f.mu.Unlock()
 		if f.failWhen != "" && strings.Contains(in.Messages[0].Content, f.failWhen) {
 			http.Error(w, `{"error":{"message":"boom"}}`, http.StatusInternalServerError)

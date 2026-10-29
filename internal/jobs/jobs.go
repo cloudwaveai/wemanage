@@ -165,6 +165,14 @@ func Register(c *cron.Cron, d Deps) {
 				log.Warn("work digest", "err", err)
 			}
 		})
+
+		// The admin weekly briefings — Fridays 10:00, from the week's daily
+		// summaries, one per super admin under their own prompt.
+		_, _ = c.AddFunc("0 10 * * 5", func() {
+			if err := d.Digest.RunWeekBriefings(ctx, time.Now()); err != nil {
+				log.Warn("admin briefings", "err", err)
+			}
+		})
 	}
 
 	// Retention cleanup — daily 03:30.

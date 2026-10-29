@@ -7,6 +7,43 @@ import (
 	"aiseat/internal/store"
 )
 
+func TestUsageBreaksTokensDownByModel(t *testing.T) {
+	st, ctx := newStore(t)
+	emp, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_by_model", Name: "m"})
+	now := time.Now()
+	rows := []store.RequestRow{
+		{ModelRequested: "gpt-6-luna", TokensInput: 100, TokensCached: 40, TokensOutput: 20, TokensReasoning: 10},
+		{ModelRequested: "gpt-6-luna", TokensInput: 50, TokensCached: 10, TokensOutput: 5},
+		{ModelRequested: "gpt-6-sol", TokensInput: 10, TokensOutput: 30, TokensReasoning: 20},
+	}
+	for i := range rows {
+		rows[i].ID = [16]byte{byte(i + 1)}
+		rows[i].StartedAt = now
+		rows[i].EmployeeID = emp.ID
+		rows[i].ClientKind = "codex"
+		rows[i].Endpoint = "responses"
+		rows[i].StatusCode = 200
+		if err := st.InsertRequest(ctx, rows[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u, err := st.Usage(ctx, now.Add(-time.Hour), now.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.ByModel) != 2 || u.ByModel[0].Key != "gpt-6-luna" {
+		t.Fatalf("by model = %+v", u.ByModel)
+	}
+	luna := u.ByModel[0]
+	if luna.Requests != 2 || luna.TokensTotal != 175 || luna.TokensInput != 150 ||
+		luna.TokensCached != 50 || luna.TokensOutput != 25 || luna.TokensReasoning != 10 {
+		t.Fatalf("luna = %+v", luna)
+	}
+	if sol := u.ByModel[1]; sol.TokensTotal != 40 || sol.TokensInput != 10 || sol.TokensOutput != 30 || sol.TokensReasoning != 20 {
+		t.Fatalf("sol = %+v", sol)
+	}
+}
+
 func TestUsageSeriesBucketsAndFillsGaps(t *testing.T) {
 	st, ctx := newStore(t)
 	emp, _ := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_series", Name: "s"})

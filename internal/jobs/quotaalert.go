@@ -92,7 +92,7 @@ func (a *QuotaAlerter) check(ctx context.Context, t store.QuotaAlertTarget, wind
 	} else if full {
 		text = fmt.Sprintf("【AI 网关】%s%s额度已用完，预计 %s 恢复。", which, label, when)
 		if cards := a.credits(ctx, t.AccountID); cards > 0 {
-			text += fmt.Sprintf("\n到时会自动恢复。重置卡原则上不用；确有急需的话，你还有 %d 张，可以在门户「我的用量」里使用：%s/usage", cards, portal)
+			text += fmt.Sprintf("\n到时会自动恢复，也可以现在用重置卡；你还有 %d 张，在门户「我的用量」里使用：%s/usage", cards, portal)
 		} else {
 			text += "到时会自动恢复，期间可以先处理不需要 AI 的工作。"
 		}

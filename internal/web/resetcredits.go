@@ -1,37 +1,13 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"aiseat/internal/health"
 	"aiseat/internal/store"
 )
-
-// resetCreditMinPct is how much of a window must be used before an employee
-// may spend a reset credit on it. Company policy is not to use reset credits
-// unless it cannot be helped (heavy resets can draw attention to an account),
-// so only a window that is used up qualifies.
-const resetCreditMinPct = 100
-
-// resetAllowed reports whether the account is out of quota, the one case a
-// reset credit may be spent, and if not, why.
-func (s *Server) resetAllowed(ctx context.Context, acc store.Account) (bool, string) {
-	if acc.RateLimitedUntil != nil && acc.RateLimitedUntil.After(time.Now()) {
-		return true, ""
-	}
-	if q, err := s.deps.Store.LatestQuota(ctx, acc.ID); err == nil {
-		for _, p := range []*float64{q.PrimaryUsedPct, q.SecondaryUsedPct} {
-			if p != nil && *p >= resetCreditMinPct {
-				return true, ""
-			}
-		}
-	}
-	return false, "为降低账号风险，重置卡原则上不用：5 小时或每周额度用完、确有急需时才能使用。"
-}
 
 // chatgptAccounts are the employee's accounts that can have reset credits.
 func (s *Server) chatgptAccounts(r *http.Request) []store.Account {
@@ -63,14 +39,14 @@ func (s *Server) handleMyResetCredits(w http.ResponseWriter, r *http.Request) {
 			out = append(out, entry)
 			continue
 		}
-		can, reason := s.resetAllowed(r.Context(), acc)
-		if c.Available == 0 {
-			can, reason = false, "暂时没有可用的重置卡。"
-		}
 		if c.Credits != nil {
 			entry["credits"] = c.Credits
 		}
-		entry["available"], entry["can_use"], entry["reason"] = c.Available, can, reason
+		entry["available"] = c.Available
+		entry["can_use"] = c.Available > 0
+		if c.Available == 0 {
+			entry["reason"] = "暂时没有可用的重置卡。"
+		}
 		out = append(out, entry)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": out})
@@ -91,10 +67,6 @@ func (s *Server) handleUseResetCredit(w http.ResponseWriter, r *http.Request) {
 	}
 	if acc.ID == 0 {
 		writeErr(w, http.StatusBadRequest, "你的 AI 账号没有重置卡")
-		return
-	}
-	if can, reason := s.resetAllowed(r.Context(), acc); !can {
-		writeErr(w, http.StatusConflict, reason)
 		return
 	}
 	code, err := s.deps.Quota.UseResetCredit(r.Context(), acc)

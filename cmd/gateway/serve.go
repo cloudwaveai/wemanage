@@ -133,7 +133,7 @@ func runServe() error {
 
 	digest := &workdigest.Runner{
 		Store: st, Settings: set, CPABaseURL: cfg.CPABaseURL, CPAAPIKey: cfg.CPAAPIKey,
-		Loc: cfg.Timezone, Log: log,
+		Loc: cfg.Timezone, Log: log, Sender: briefingSender(fs),
 	}
 
 	webSrv := web.NewServer(web.Deps{
@@ -206,6 +206,14 @@ func runServe() error {
 // interfaces, returning a true nil interface when feishu is not configured so
 // callers' nil checks work.
 func reportSender(fs *feishu.Client) report.Sender {
+	if fs == nil {
+		return nil
+	}
+	return fs
+}
+
+// briefingSender adapts feishu for the Friday admin briefings.
+func briefingSender(fs *feishu.Client) workdigest.Sender {
 	if fs == nil {
 		return nil
 	}

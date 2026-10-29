@@ -14,11 +14,16 @@ type UsagePoint struct {
 	TokensOutput int64     `json:"tokens_output"`
 }
 
-// UsageBreakdown is a per-key (model or client) aggregate.
+// UsageBreakdown is a per-key (model or client) aggregate. Cached tokens are
+// part of input and reasoning tokens part of output, so Total is their sum.
 type UsageBreakdown struct {
-	Key         string `json:"key"`
-	Requests    int64  `json:"requests"`
-	TokensTotal int64  `json:"tokens_total"`
+	Key             string `json:"key"`
+	Requests        int64  `json:"requests"`
+	TokensTotal     int64  `json:"tokens_total"`
+	TokensInput     int64  `json:"tokens_input"`
+	TokensCached    int64  `json:"tokens_cached"`
+	TokensOutput    int64  `json:"tokens_output"`
+	TokensReasoning int64  `json:"tokens_reasoning"`
 }
 
 // UsageSummary aggregates request volume and tokens.
@@ -85,11 +90,13 @@ func (s *Store) usageBreakdown(ctx context.Context, col string, from, to time.Ti
 	// col is a fixed internal identifier, never user input.
 	sql := `
 		SELECT COALESCE(NULLIF(` + col + `,''),'(none)'), COUNT(*),
-			COALESCE(SUM(tokens_input+tokens_output),0)
+			COALESCE(SUM(tokens_input+tokens_output),0),
+			COALESCE(SUM(tokens_input),0), COALESCE(SUM(tokens_cached),0),
+			COALESCE(SUM(tokens_output),0), COALESCE(SUM(tokens_reasoning),0)
 		FROM requests
 		WHERE started_at >= $1 AND started_at < $2
 		  AND ($3::bigint[] IS NULL OR employee_id = ANY($3))
-		GROUP BY 1 ORDER BY 2 DESC`
+		GROUP BY 1 ORDER BY 3 DESC`
 	rows, err := s.Pool.Query(ctx, sql, from, to, ids)
 	if err != nil {
 		return nil, err
@@ -98,7 +105,8 @@ func (s *Store) usageBreakdown(ctx context.Context, col string, from, to time.Ti
 	var out []UsageBreakdown
 	for rows.Next() {
 		var b UsageBreakdown
-		if err := rows.Scan(&b.Key, &b.Requests, &b.TokensTotal); err != nil {
+		if err := rows.Scan(&b.Key, &b.Requests, &b.TokensTotal,
+			&b.TokensInput, &b.TokensCached, &b.TokensOutput, &b.TokensReasoning); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
