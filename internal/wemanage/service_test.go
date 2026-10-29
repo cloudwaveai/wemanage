@@ -8,13 +8,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"aiseat/internal/feishu"
 	"aiseat/internal/store"
 	"aiseat/internal/testutil"
+	"aiseat/internal/web"
 	"aiseat/internal/wemanage"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -190,5 +194,87 @@ func TestCaseLifecycleAndPrivacy(t *testing.T) {
 	}
 	if status, _ := call(admin, "POST", fmt.Sprintf("/api/cases/%d/feedback", out.ID), `{"content":"不允许"}`, true); status != 404 {
 		t.Fatalf("private source mutation: %d", status)
+	}
+}
+
+// We-Manage reuses the gateway's Feishu OAuth flow and shared session.
+func TestFeishuLoginReturnsToWorkspace(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(testutil.NewDB(t))
+	if err := wemanage.Install(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureSuperAdmin(ctx, "ou_feishu_workspace", "管理员"); err != nil {
+		t.Fatal(err)
+	}
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open-apis/authen/v2/oauth/token":
+			_, _ = io.WriteString(w, `{"code":0,"access_token":"test-user-token"}`)
+		case "/open-apis/authen/v1/user_info":
+			_, _ = io.WriteString(w, `{"code":0,"data":{"open_id":"ou_feishu_workspace","name":"管理员"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer mock.Close()
+	feishuClient := feishu.NewClient(mock.URL, "test-app", "test-secret", mock.Client())
+	feishuClient.SetAuthBase(mock.URL)
+	gateway := web.NewServer(web.Deps{Store: st, Feishu: feishuClient, PublicBaseURL: "http://gateway.test"})
+	router := chi.NewRouter()
+	gateway.Mount(router)
+	gatewayHTTP := httptest.NewServer(router)
+	defer gatewayHTTP.Close()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Get(gatewayHTTP.URL + "/api/auth/feishu/login?next=%2Fwemanager%2F")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("start: %d", resp.StatusCode)
+	}
+	authURL, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := authURL.Query().Get("state")
+	if state == "" {
+		t.Fatal("missing OAuth state")
+	}
+	req, _ := http.NewRequest("GET", gatewayHTTP.URL+"/api/auth/feishu/callback?code=ok&state="+url.QueryEscape(state), nil)
+	for _, cookie := range resp.Cookies() {
+		req.AddCookie(cookie)
+	}
+	callback, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callback.Body.Close()
+	if callback.StatusCode != http.StatusFound || callback.Header.Get("Location") != "/wemanager/" {
+		t.Fatalf("callback %d location %q", callback.StatusCode, callback.Header.Get("Location"))
+	}
+	var session *http.Cookie
+	for _, c := range callback.Cookies() {
+		if c.Name == "aiseat_sess" {
+			session = c
+		}
+	}
+	if session == nil {
+		t.Fatal("missing gateway session")
+	}
+	workspace := httptest.NewServer((&wemanage.Service{Store: st}).Handler())
+	defer workspace.Close()
+	req, _ = http.NewRequest("GET", workspace.URL+"/api/session", nil)
+	req.AddCookie(session)
+	got, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Body.Close()
+	data, _ := io.ReadAll(got.Body)
+	if got.StatusCode != 200 || !strings.Contains(string(data), "管理员") {
+		t.Fatalf("workspace session %d %s", got.StatusCode, data)
 	}
 }

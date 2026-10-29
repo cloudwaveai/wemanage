@@ -93,12 +93,12 @@ func (s *Service) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie("aiseat_sess")
 		if err != nil || c.Value == "" {
-			fail(w, 401, "请先登录网关")
+			fail(w, 401, "请先使用飞书登录")
 			return
 		}
 		sess, err := s.Store.GetWebSession(r.Context(), c.Value)
 		if err != nil {
-			fail(w, 401, "登录已过期，请重新登录网关")
+			fail(w, 401, "登录已过期，请重新使用飞书登录")
 			return
 		}
 		emp, err := s.Store.GetEmployee(r.Context(), sess.EmployeeID)

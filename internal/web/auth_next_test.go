@@ -5,6 +5,7 @@ import "testing"
 func TestSafeNext(t *testing.T) {
 	for p, want := range map[string]bool{
 		"/devices":              true,
+		"/wemanager/":           true,
 		"/logs?from=2026-09-01": true,
 		"":                      false,
 		"devices":               false,
