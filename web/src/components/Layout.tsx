@@ -15,6 +15,7 @@ interface NavItem {
   icon: JSX.Element;
   roles: Role[];
   end?: boolean;
+  reloadDocument?: boolean;
 }
 
 const I = (path: string) => (
@@ -81,6 +82,10 @@ const ADMIN: NavItem[] = [
     roles: ["super_admin"],
     end: true,
     icon: I("M3 12l9-9 9 9M5 10v10h14V10"),
+  },
+  {
+    to: "/wemanager/", label: "We-Manage", roles: ["super_admin"], reloadDocument: true,
+    icon: I("M4 18V7m0 11h16M8 14l3-3 3 2 4-6"),
   },
   {
     to: "/workboard",
@@ -182,6 +187,7 @@ function NavSection({
             key={item.to}
             to={item.to}
             end={item.end}
+            reloadDocument={item.reloadDocument}
             onClick={onNavigate}
             className={({ isActive }) =>
               "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors " +
