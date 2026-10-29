@@ -1,9 +1,11 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"aiseat/internal/health"
 	"aiseat/internal/store"
@@ -70,12 +72,23 @@ func (s *Server) handleUseResetCredit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, err := s.deps.Quota.UseResetCredit(r.Context(), acc)
+	if code == health.ResetDone {
+		auditCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+		s.audit(r.WithContext(auditCtx), "reset_credit_use", "account", fmt.Sprint(acc.ID), map[string]any{"code": code, "routing_restored": err == nil})
+	}
 	if err != nil {
 		s.deps.Log.Warn("use reset credit", "account", acc.ID, "err", err)
-		writeErr(w, http.StatusBadGateway, "重置没有成功，请稍后再试")
+		if code == health.ResetDone {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "code": "reset_routing_pending", "message": "重置卡已使用，但网关恢复未完成。请联系管理员处理，不要再次使用重置卡。"})
+		} else {
+			writeErr(w, http.StatusBadGateway, "重置结果暂时无法确认，请先检查重置卡和额度，不要立即重复使用。")
+		}
 		return
 	}
-	s.audit(r, "reset_credit_use", "account", fmt.Sprint(acc.ID), map[string]any{"code": code})
+	if code != health.ResetDone {
+		s.audit(r, "reset_credit_use", "account", fmt.Sprint(acc.ID), map[string]any{"code": code})
+	}
 	msg := map[string]string{
 		health.ResetDone:           "额度已重置，5 小时和每周额度都重新开始计算。",
 		health.ResetNothingToReset: "现在没有需要重置的额度，重置卡没有被使用。",

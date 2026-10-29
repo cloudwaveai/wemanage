@@ -149,14 +149,40 @@ func (p *QuotaProber) UseResetCredit(ctx context.Context, acc store.Account) (st
 		return "", fmt.Errorf("reset credit: unexpected answer %.200s", resp.Body)
 	}
 	if out.Code == ResetDone {
-		if err := p.Store.SetRateLimitedUntil(ctx, acc.ID, nil); err != nil {
-			p.logger().Warn("reset credit: clear rate limit", "account", acc.ID, "err", err)
+		// The credit has already been spent. Finish reconciliation even if the
+		// caller disconnects, and report partial failure without suggesting retry.
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer cancel()
+		finished := false
+		var end func(bool)
+		if p.BeginAccountReset != nil {
+			end = p.BeginAccountReset(acc.ID)
+			defer func() {
+				if end != nil {
+					end(finished)
+				}
+			}()
 		}
-		files, err := p.authFiles(ctx)
-		if err == nil {
-			_, err = p.probe(ctx, acc, files)
-		}
+		files, err := p.authFiles(finishCtx)
 		if err != nil {
+			return out.Code, fmt.Errorf("reset succeeded, list credentials: %w", err)
+		}
+		f, ok := files[acc.CPAAuthName]
+		if !ok || f.AuthIndex == "" {
+			return out.Code, errors.New("reset succeeded, CPA credential not found")
+		}
+		if err := p.CPA.ResetQuota(finishCtx, f.AuthIndex); err != nil {
+			return out.Code, fmt.Errorf("reset succeeded, clear CPA cooldown: %w", err)
+		}
+		if err := p.Store.SetRateLimitedUntil(finishCtx, acc.ID, nil); err != nil {
+			return out.Code, fmt.Errorf("reset succeeded, clear gateway cooldown: %w", err)
+		}
+		finished = true
+		if end != nil {
+			end(true)
+			end = nil
+		}
+		if _, err := p.probe(finishCtx, acc, files); err != nil {
 			p.logger().Warn("reset credit: refresh quota", "account", acc.ID, "err", err)
 		}
 	}

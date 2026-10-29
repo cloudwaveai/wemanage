@@ -59,6 +59,7 @@ type Handler struct {
 	deps        HandlerDeps
 	cache       *principalCache
 	channelHTTP *http.Client
+	resetStates sync.Map // account ID -> *accountResetState
 
 	clsMu    sync.Mutex
 	cls      *Classifier
@@ -399,7 +400,7 @@ func (h *Handler) forward(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if until, ok := quotaReset(raw, resp.Header, time.Now()); ok {
 			done()
 			rec.ErrorBody = string(raw[:min(len(raw), 2000)])
-			h.markRateLimited(context.WithoutCancel(ctx), acc.ID, until, nil)
+			h.markRateLimited(context.WithoutCancel(ctx), acc.ID, until, rec.StartedAt, nil)
 			return nil, nil, h.usageLimited(until)
 		}
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
@@ -435,7 +436,7 @@ func (h *Handler) relay(ctx context.Context, w http.ResponseWriter, resp *http.R
 	h.deps.Recorder.Submit(*rec)
 
 	// --- 6. React to upstream status / degradation ---
-	h.reactToUpstream(context.WithoutCancel(ctx), acc, resp, model, outcome, set)
+	h.reactToUpstream(context.WithoutCancel(ctx), acc, resp, model, outcome, set, start)
 }
 
 // noteQuota records the quota an upstream response reports: in memory for
@@ -598,14 +599,14 @@ func (h *Handler) quotaDue(accountID int64, status int) bool {
 	return true
 }
 
-func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *http.Response, model string, outcome capture.Outcome, set settings.Settings) {
+func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *http.Response, model string, outcome capture.Outcome, set settings.Settings, started time.Time) {
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests && quotaUsedUp(resp.Header):
 		// Only a used-up quota stops routing to the account. Other 429s, like
 		// ChatGPT's "Codex is at capacity" (turn_rate_limit_exceeded,
 		// 2026-10-14), pass through for the client to retry; locking the
 		// account for them refused its other models too.
-		h.markRateLimited(ctx, acc.ID, parseRateLimitReset(resp.Header), nil)
+		h.markRateLimited(ctx, acc.ID, parseRateLimitReset(resp.Header), started, nil)
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		_ = h.deps.Store.SetNeedsLogin(ctx, acc.ID, true)
 		h.cache.forgetAccount(acc.ID)
@@ -619,8 +620,37 @@ func (h *Handler) reactToUpstream(ctx context.Context, acc store.Account, resp *
 	}
 }
 
+type accountResetState struct {
+	mu     sync.Mutex
+	cutoff time.Time
+}
+
+func (h *Handler) resetState(accountID int64) *accountResetState {
+	v, _ := h.resetStates.LoadOrStore(accountID, &accountResetState{})
+	return v.(*accountResetState)
+}
+
+// BeginAccountReset serializes reconciliation against late 429 responses.
+func (h *Handler) BeginAccountReset(accountID int64) func(bool) {
+	state := h.resetState(accountID)
+	state.mu.Lock()
+	return func(success bool) {
+		if success {
+			state.cutoff = time.Now()
+			h.cache.forgetAccount(accountID)
+		}
+		state.mu.Unlock()
+	}
+}
+
 // markRateLimited stops routing to an account until its limit resets.
-func (h *Handler) markRateLimited(ctx context.Context, accountID int64, until time.Time, extra map[string]any) {
+func (h *Handler) markRateLimited(ctx context.Context, accountID int64, until, started time.Time, extra map[string]any) {
+	state := h.resetState(accountID)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !started.IsZero() && started.Before(state.cutoff) {
+		return
+	}
 	_ = h.deps.Store.SetRateLimitedUntil(ctx, accountID, &until)
 	h.cache.forgetAccount(accountID)
 	detail := map[string]any{"until": until}

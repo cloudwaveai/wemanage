@@ -21,9 +21,18 @@ import (
 
 func TestResetCreditsUsableWhileQuotaRemains(t *testing.T) {
 	var consumed atomic.Int32
+	var failCleanup atomic.Bool
+	failCleanup.Store(true)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v0/management/auth-files", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{{"name": "c.json", "auth_index": "idx", "provider": "codex"}}})
+	})
+	mux.HandleFunc("/v0/management/reset-quota", func(w http.ResponseWriter, r *http.Request) {
+		if failCleanup.Load() {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("/v0/management/api-call", func(w http.ResponseWriter, r *http.Request) {
 		var c cpa.APICallRequest
@@ -71,7 +80,12 @@ func TestResetCreditsUsableWhileQuotaRemains(t *testing.T) {
 		t.Fatalf("one card: %s (want 1 card, usable)", raw)
 	}
 	resp, body := c.do(http.MethodPost, "/api/me/reset-credits/use", "")
-	if resp.StatusCode != 200 || !strings.Contains(string(body), `"code":"reset"`) || consumed.Load() != 1 {
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), `"code":"reset_routing_pending"`) || !strings.Contains(string(body), "不要再次使用") || consumed.Load() != 1 {
+		t.Fatalf("cleanup failure: %d %s", resp.StatusCode, body)
+	}
+	failCleanup.Store(false)
+	resp, body = c.do(http.MethodPost, "/api/me/reset-credits/use", "")
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"code":"reset"`) || consumed.Load() != 2 {
 		t.Fatalf("use while quota remains: %d %s", resp.StatusCode, body)
 	}
 }

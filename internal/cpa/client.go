@@ -274,6 +274,18 @@ func (c *Client) RefreshAuthFile(ctx context.Context, name string) error {
 	return c.do(req, nil)
 }
 
+// ResetQuota clears CPA's per-credential routing cooldown after an upstream reset.
+func (c *Client) ResetQuota(ctx context.Context, authIndex string) error {
+	if authIndex == "" {
+		return fmt.Errorf("cpa: missing auth index")
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, managementBase+"/reset-quota", nil, map[string]string{"auth_index": authIndex})
+	if err != nil {
+		return err
+	}
+	return c.do(req, nil)
+}
+
 // StaticModels returns CPA's built-in model catalogue for a channel
 // (GET /v0/management/model-definitions/{channel}), e.g. "codex" or "kimi".
 func (c *Client) StaticModels(ctx context.Context, channel string) ([]store.ModelInfo, error) {

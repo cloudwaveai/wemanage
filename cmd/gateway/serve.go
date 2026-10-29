@@ -126,6 +126,8 @@ func runServe() error {
 		CPA: cpa.NewClient(cfg.CPABaseURL, cfg.CPAManagementKey, &http.Client{Timeout: 100 * time.Second}),
 	})
 
+	quota.BeginAccountReset = dp.BeginAccountReset
+
 	// Web / management plane.
 	var superAdmins []string
 	superAdmins = append(superAdmins, cfg.BootstrapSuperAdmins...)

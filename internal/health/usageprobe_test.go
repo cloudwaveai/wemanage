@@ -74,6 +74,17 @@ func (f *fakeCPAQuota) server(t *testing.T) *httptest.Server {
 			{"name": "kimi.json", "auth_index": "idx-kimi", "provider": "kimi"},
 		}})
 	})
+	mux.HandleFunc("/v0/management/reset-quota", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			AuthIndex string `json:"auth_index"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if r.Method != http.MethodPost || body.AuthIndex != "idx-idle" {
+			http.Error(w, "bad credential", 400)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 	mux.HandleFunc("/v0/management/api-call", func(w http.ResponseWriter, r *http.Request) {
 		var c cpa.APICallRequest
 		_ = json.NewDecoder(r.Body).Decode(&c)

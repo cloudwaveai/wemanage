@@ -36,6 +36,8 @@ type QuotaProber struct {
 	CPA      *cpa.Client
 	Settings *settings.Service
 	Log      *slog.Logger
+	// BeginAccountReset coordinates reconciliation with in-flight requests.
+	BeginAccountReset func(int64) func(bool)
 	// MaxAge is how old the newest snapshot may get before a probe (default 30m).
 	MaxAge time.Duration
 

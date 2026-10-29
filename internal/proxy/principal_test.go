@@ -99,3 +99,32 @@ func TestBookkeepingWritesAreCoalesced(t *testing.T) {
 		t.Fatal("a rate-limit response must always record quota")
 	}
 }
+
+func TestAccountResetIgnoresOldLimitButKeepsNewLimit(t *testing.T) {
+	st := store.New(testutil.NewDB(t))
+	ctx := context.Background()
+	box, _ := secure.NewBox(make([]byte, 32))
+	group, err := st.CreateIPGroup(ctx, box, "reset-test", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc, err := st.CreateAccount(ctx, store.Account{CPAAuthName: "reset-test.json", IPGroupID: group.ID, Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(HandlerDeps{Store: st})
+	old := time.Now().Add(-time.Minute)
+	end := h.BeginAccountReset(acc.ID)
+	end(true)
+	until := time.Now().Add(time.Hour)
+	h.markRateLimited(ctx, acc.ID, until, old, nil)
+	got, err := st.GetAccount(ctx, acc.ID)
+	if err != nil || got.RateLimitedUntil != nil {
+		t.Fatalf("old response re-applied limit: %+v %v", got.RateLimitedUntil, err)
+	}
+	h.markRateLimited(ctx, acc.ID, until, time.Now(), nil)
+	got, err = st.GetAccount(ctx, acc.ID)
+	if err != nil || got.RateLimitedUntil == nil {
+		t.Fatalf("new limit was ignored: %+v %v", got.RateLimitedUntil, err)
+	}
+}

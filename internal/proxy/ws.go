@@ -573,7 +573,7 @@ func (s *wsSession) complete(t *wsTurn, status int, errType string, until time.T
 		if until.IsZero() {
 			until = time.Now().Add(5 * time.Minute)
 		}
-		h.markRateLimited(ctx, s.acc.ID, until, map[string]any{"via": "websocket"})
+		h.markRateLimited(ctx, s.acc.ID, until, t.rec.StartedAt, map[string]any{"via": "websocket"})
 	}
 	if s.acc.IsChatGPT() && outcome.Model != "" && t.model != "" && stripPrefix(outcome.Model) != t.model {
 		_, _ = h.deps.Store.AddSignal(ctx, s.acc.ID, "model_mismatch",
