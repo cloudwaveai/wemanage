@@ -3,6 +3,12 @@
 {$GATEWAY_DOMAIN} {
 	encode zstd gzip
 
+	# We-Manage 在阿里云；本地端口由受限 SSH 通道转发。
+	redir /wemanager /wemanager/ 308
+	handle_path /wemanager/* {
+		reverse_proxy 172.18.0.1:19082
+	}
+
 	# /v1/* 是数据面（员工的 AI 客户端）；SSE 需要关闭缓冲。
 	@stream path /v1/*
 	reverse_proxy @stream gateway:8080 {
