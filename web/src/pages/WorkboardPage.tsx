@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,13 +10,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, LIVE_MS } from "../lib/api";
-import type { WorkDigests, WorkRange, Workboard } from "../lib/types";
+import { api, ApiError, LIVE_MS } from "../lib/api";
+import type { EmployeeWorkUsage, WorkDigests, WorkRange, Workboard } from "../lib/types";
 import { Button, Card, ErrorBox, Loading, PageHeader, StatTile } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { Markdown } from "../lib/md";
 import { fmtCompact, fmtDateTime, fmtDayShort, fmtNum } from "../lib/format";
 import { providerName } from "../lib/providers";
+import { Modal } from "../components/Modal";
 
 const RANGES: { v: WorkRange; label: string }[] = [
   { v: "today", label: "今天" },
@@ -48,7 +49,7 @@ function dayLabel(day: string): string {
   return `${m} 月 ${d} 日 ${WEEKDAYS[date.getDay()]}${rel}`;
 }
 
-function RangePicker({ value, onChange }: { value: WorkRange; onChange: (v: WorkRange) => void }) {
+function RangePicker({ value, onChange, active = true }: { value: WorkRange; onChange: (v: WorkRange) => void; active?: boolean }) {
   return (
     <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5">
       {RANGES.map((r) => (
@@ -57,7 +58,7 @@ function RangePicker({ value, onChange }: { value: WorkRange; onChange: (v: Work
           onClick={() => onChange(r.v)}
           className={
             "rounded-md px-3 py-1.5 text-sm font-medium transition-colors " +
-            (value === r.v ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100")
+            (active && value === r.v ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100")
           }
         >
           {r.label}
@@ -113,7 +114,7 @@ function DailyChart({ data }: { data: Workboard["daily"] }) {
   );
 }
 
-function EmployeeTable({ board }: { board: Workboard }) {
+function EmployeeTable({ board, onSelect }: { board: Workboard; onSelect: (employee: { employee_id: number; name: string }) => void }) {
   const rows = board.employees;
   const multiDay = board.days > 1;
   if (!rows.length) {
@@ -140,7 +141,7 @@ function EmployeeTable({ board }: { board: Workboard }) {
             <tr key={r.employee_id} className="border-b border-slate-100 last:border-0">
               <td className="py-2.5 pr-3">
                 <div className="font-medium text-slate-800">
-                  {r.name}
+                  <button type="button" onClick={() => onSelect(r)} className="text-left text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600" aria-label={`查看 ${r.name} 的用量详情`}>{r.name}</button>
                   {r.is_service && (
                     <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-normal text-slate-500">服务账号</span>
                   )}
@@ -317,6 +318,7 @@ function Digests() {
 
 export function WorkboardPage() {
   const [range, setRange] = useState<WorkRange>("7d");
+  const [selected, setSelected] = useState<{ employee_id: number; name: string } | null>(null);
   const q = useQuery({
     queryKey: ["workboard", range],
     queryFn: () => api.get<Workboard>(`/api/admin/workboard?range=${range}`),
@@ -360,10 +362,10 @@ export function WorkboardPage() {
 
           <Card className="mt-5 p-5">
             <h2 className="mb-3 text-sm font-semibold text-slate-800">每个人的用量</h2>
-            <EmployeeTable board={b} />
+            <EmployeeTable board={b} onSelect={setSelected} />
             {b.idle.length > 0 && (
               <p className="mt-3 text-xs text-slate-400">
-                这段时间没有网关记录（可能使用了其他工具）：{b.idle.map((e) => e.name).join("、")}
+                这段时间没有网关记录（可能使用了其他工具）：{b.idle.map((e, i) => <span key={e.employee_id}>{i > 0 && "、"}<button type="button" className="text-indigo-600 hover:underline" onClick={() => setSelected(e)}>{e.name}</button></span>)}
               </p>
             )}
           </Card>
@@ -371,6 +373,66 @@ export function WorkboardPage() {
       )}
 
       <Digests />
+      {selected && <EmployeeUsageDialog employee={selected} initialRange={range} onClose={() => setSelected(null)} />}
     </div>
   );
+}
+
+
+function EmployeeUsageDialog({ employee, initialRange, onClose }: { employee: { employee_id: number; name: string }; initialRange: WorkRange; onClose: () => void }) {
+  const [range, setRange] = useState<WorkRange>(initialRange);
+  const [day, setDay] = useState("");
+  const [metric, setMetric] = useState<"tokens" | "requests">("tokens");
+  const params = new URLSearchParams(day ? { day } : { range });
+  const q = useQuery({
+    queryKey: ["employee-work-usage", employee.employee_id, range, day],
+    queryFn: () => api.get<EmployeeWorkUsage>(`/api/admin/workboard/employees/${employee.employee_id}?${params}`),
+    refetchInterval: LIVE_MS,
+    refetchOnWindowFocus: true,
+  });
+  const d = q.data;
+  const chartScroll = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (chartScroll.current) chartScroll.current.scrollLeft = chartScroll.current.scrollWidth; }, [d?.from, d?.hourly.length]);
+  const axisTime = (value: string, full = false) => {
+    const date = new Date(value);
+    const options: Intl.DateTimeFormatOptions = full
+      ? { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }
+      : d?.days === 1 ? { hour: "2-digit", minute: "2-digit", hour12: false } : { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false };
+    try { return new Intl.DateTimeFormat("zh-CN", { ...options, timeZone: d?.timezone === "Local" ? undefined : d?.timezone }).format(date); }
+    catch { return new Intl.DateTimeFormat("zh-CN", options).format(date); }
+  };
+  return <Modal open onClose={onClose} width="max-w-5xl" title={`${employee.name} · 使用详情`} footer={<Button onClick={onClose}>关闭</Button>}>
+    <div className="flex flex-wrap items-center gap-3">
+      <RangePicker value={range} active={!day} onChange={(v) => { setRange(v); setDay(""); }} />
+      <label className="flex items-center gap-2 text-sm text-slate-600">指定日期<input type="date" max={ymd(new Date())} value={day} onChange={(e) => setDay(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+    </div>
+    {q.isLoading && <Loading />}
+    {q.error && (q.error instanceof ApiError && q.error.status === 404 ? <p className="mt-4 text-sm text-slate-600">此员工的使用详情不可查看。</p> : <ErrorBox error={q.error} />)}
+    {d && <div className="mt-4 space-y-4">
+      <p className="text-xs text-slate-500">{axisTime(d.from, true)} 至 {axisTime(d.to, true)} · 按 {d.timezone === "Local" ? "浏览器本地时区" : d.timezone} 统计；仅包含经过网关的记录。</p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatTile label="Token 合计" value={fmtNum(d.tokens_total)} hint={`${fmtNum(d.requests)} 条记录`} />
+        <StatTile label="输入" value={fmtNum(d.tokens_input)} hint={`其中缓存 ${fmtNum(d.tokens_cached)}`} />
+        <StatTile label="输出" value={fmtNum(d.tokens_output)} hint={`其中推理 ${fmtNum(d.tokens_reasoning)}`} />
+        <StatTile label="会话" value={fmtNum(d.sessions)} hint={`${fmtNum(d.requests)} 条记录`} />
+      </div>
+      {d.imported_records > 0 && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">其中 {fmtNum(d.imported_records)} 条是本地历史补录，不代表实际 API 调用次数；补录的 Token 为 0。</p>}
+      <div className="rounded-lg border border-slate-200 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-800">每小时用量</h3><div className="flex gap-1"><Button variant={metric === "tokens" ? "primary" : "ghost"} onClick={() => setMetric("tokens")}>Token</Button><Button variant={metric === "requests" ? "primary" : "ghost"} onClick={() => setMetric("requests")}>记录数</Button></div></div>
+        <p className="mt-1 text-xs text-slate-500">每根柱表示一小时。较长时间范围可横向滚动。</p>
+        <div ref={chartScroll} className="mt-3 overflow-x-auto"><div style={{ width: Math.max(680, d.hourly.length * 12), height: 240 }}>
+          <ResponsiveContainer width="100%" height="100%"><BarChart data={d.hourly} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+            <CartesianGrid stroke="#eef1f6" vertical={false} />
+            <XAxis dataKey="t" tickFormatter={(v: string) => axisTime(v)} tick={{ fontSize: 11, fill: "#64748b" }} minTickGap={28} tickLine={false} />
+            <YAxis tickFormatter={(v: number) => fmtCompact(v)} tick={{ fontSize: 11, fill: "#64748b" }} width={64} />
+            <Tooltip cursor={{ fill: "#f1f5f9" }} labelFormatter={(v) => axisTime(String(v), true)} formatter={(value) => [fmtNum(Number(value)), metric === "tokens" ? "Token" : "记录数"]} />
+            <Bar dataKey={metric} fill={BAR} maxBarSize={24} />
+          </BarChart></ResponsiveContainer>
+        </div></div>
+        {d.requests === 0 && <p className="mt-2 text-sm text-slate-500">这段时间没有网关记录。</p>}
+      </div>
+      <div><h3 className="mb-2 text-sm font-semibold text-slate-800">模型用量</h3>{d.by_model.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs text-slate-500"><th className="py-2">模型</th><th className="text-right">Token</th><th className="text-right">记录数</th></tr></thead><tbody>{d.by_model.map((m) => <tr key={m.key} className="border-b border-slate-100"><td className="py-2 font-mono text-xs">{!m.key || m.key === "(none)" ? "未记录" : m.key}</td><td className="text-right">{fmtNum(m.tokens_total)}</td><td className="text-right">{fmtNum(m.requests)}</td></tr>)}</tbody></table></div> : <p className="text-sm text-slate-500">没有模型用量记录。</p>}</div>
+      <Link className="inline-block text-sm font-medium text-indigo-600 hover:underline" to={`/logs?employee_id=${employee.employee_id}`} onClick={onClose}>查看该员工的请求记录 →</Link>
+    </div>}
+  </Modal>;
 }

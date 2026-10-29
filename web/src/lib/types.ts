@@ -531,6 +531,26 @@ export interface Workboard {
   daily: { t: string; requests: number; tokens: number }[];
 }
 
+export interface EmployeeWorkUsage {
+  employee_id: number;
+  name: string;
+  is_service: boolean;
+  from: string;
+  to: string;
+  days: number;
+  timezone: string;
+  requests: number;
+  sessions: number;
+  imported_records: number;
+  tokens_input: number;
+  tokens_cached: number;
+  tokens_output: number;
+  tokens_reasoning: number;
+  tokens_total: number;
+  by_model: { key: string; requests: number; tokens_total: number; tokens_input: number; tokens_output: number }[];
+  hourly: { t: string; requests: number; tokens: number }[];
+}
+
 export type DigestStatus = "none" | "running" | "done" | "failed";
 
 export interface WorkDigests {

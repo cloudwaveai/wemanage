@@ -119,6 +119,7 @@ func (s *Server) Mount(r chi.Router) {
 				r.Use(s.requireSuperAdmin)
 				r.Get("/admin/overview", s.handleOverview)
 				r.Get("/admin/workboard", s.handleWorkboard)
+				r.Get("/admin/workboard/employees/{id}", s.handleEmployeeWorkUsage)
 				r.Get("/admin/workboard/digests", s.handleWorkDigests)
 				r.Post("/admin/workboard/digests/run", s.handleRunWorkDigest)
 				r.Get("/admin/briefing", s.handleAdminBriefing)

@@ -258,3 +258,9 @@ func (s *Store) WorkByEmployee(ctx context.Context, from, to time.Time, loc *tim
 	}
 	return out, rows.Err()
 }
+
+// EmployeeUsageCounts distinguishes imported messages from gateway requests.
+func (s *Store) EmployeeUsageCounts(ctx context.Context, employeeID int64, from, to time.Time) (sessions, imported int64, err error) {
+	err = s.Pool.QueryRow(ctx, `SELECT COUNT(DISTINCT session_id), COUNT(*) FILTER (WHERE endpoint='/local/codex-import') FROM requests WHERE employee_id=$1 AND started_at >= $2 AND started_at < $3`, employeeID, from, to).Scan(&sessions, &imported)
+	return
+}

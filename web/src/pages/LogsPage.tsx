@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import type { LogList, EmployeeRow } from "../lib/types";
@@ -54,8 +54,10 @@ export function LogsPage() {
   const navigate = useNavigate();
   const isAdmin = me?.role === "super_admin";
 
-  const [draft, setDraft] = useState<Filters>(EMPTY);
-  const [applied, setApplied] = useState<Filters>(EMPTY);
+  const [searchParams] = useSearchParams();
+  const initialFilters = { ...EMPTY, employee_id: isAdmin ? (searchParams.get("employee_id") || "") : "" };
+  const [draft, setDraft] = useState<Filters>(initialFilters);
+  const [applied, setApplied] = useState<Filters>(initialFilters);
   const [page, setPage] = useState(0);
 
   const employees = useQuery({
@@ -70,7 +72,7 @@ export function LogsPage() {
     if (applied.employee_id.trim())
       p.set("employee_id", applied.employee_id.trim());
     if (applied.from) p.set("from", new Date(applied.from + "T00:00:00").toISOString());
-    if (applied.to) p.set("to", new Date(applied.to + "T23:59:59").toISOString());
+    if (applied.to) { const end = new Date(applied.to + "T00:00:00"); end.setDate(end.getDate() + 1); p.set("to", end.toISOString()); }
     if (applied.q.trim()) p.set("q", applied.q.trim());
     if (applied.client.trim()) p.set("client", applied.client.trim());
     if (applied.model.trim()) p.set("model", applied.model.trim());
