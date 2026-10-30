@@ -91,3 +91,26 @@ func TestReplanRejectsEnabledAndAttemptedRuns(t *testing.T) {
 		t.Fatalf("modified on rejection: %d %v %v", count, superseded, err)
 	}
 }
+
+func TestReplanEvidencePreservesPriorPlanAndSelectsNewFormat(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(testutil.NewDB(t))
+	q := Queue{Store: st}
+	var old int64
+	if e := st.Pool.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,state) VALUES('2026-10-29','preparing') RETURNING id`).Scan(&old); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_batches(run_id,phase,ordinal,input_manifest,state) VALUES($1,'extract',0,'{"parts":[]}','queued')`, old); e != nil {
+		t.Fatal(e)
+	}
+	run, e := q.ReplanEvidenceSnapshot(ctx, old)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var format string
+	var superseded bool
+	var count int
+	if e = st.Pool.QueryRow(ctx, `SELECT n.plan_format,o.superseded,(SELECT count(*) FROM wm_full_journal_batches WHERE run_id=o.id) FROM wm_full_journal_runs n,wm_full_journal_runs o WHERE n.id=$1 AND o.id=$2`, run, old).Scan(&format, &superseded, &count); e != nil || format != evidenceFormat || !superseded || count != 1 {
+		t.Fatalf("new=%s old=%v batches=%d err=%v", format, superseded, count, e)
+	}
+}

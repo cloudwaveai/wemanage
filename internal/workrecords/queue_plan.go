@@ -33,12 +33,12 @@ func (q *Queue) PlanNext(ctx context.Context, run int64, maxBytes int) (bool, er
 		return false, err
 	}
 	defer tx.Rollback(context.Background())
-	var state string
+	var state, format string
 	var pending int
-	if err = tx.QueryRow(ctx, `SELECT state,(SELECT count(*) FROM wm_full_journal_sources WHERE run_id=$1 AND status='pending') FROM wm_full_journal_runs WHERE id=$1 FOR UPDATE`, run).Scan(&state, &pending); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT state,(SELECT count(*) FROM wm_full_journal_sources WHERE run_id=$1 AND status='pending'),plan_format FROM wm_full_journal_runs WHERE id=$1 AND NOT superseded FOR UPDATE`, run).Scan(&state, &pending, &format); err != nil {
 		return false, err
 	}
-	if state != "preparing" || pending != 0 {
+	if state != "preparing" || pending != 0 || format != "legacy" {
 		return false, errors.New("source snapshot not ready")
 	}
 	var private bool

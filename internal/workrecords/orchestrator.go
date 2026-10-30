@@ -41,6 +41,17 @@ func (q *Queue) Step(ctx context.Context, run int64, model ModelExtractor, solMo
 		if more {
 			return true, nil
 		}
+		var format string
+		if err = conn.QueryRow(ctx, `SELECT plan_format FROM wm_full_journal_runs WHERE id=$1`, run).Scan(&format); err != nil {
+			return false, err
+		}
+		if format == evidenceFormat {
+			err = q.PlanEvidenceRun(ctx, run, true, nil)
+			if errors.Is(err, errEvidenceInterrupted) {
+				return false, nil
+			}
+			return err == nil, err
+		}
 		more, err = q.PlanNext(ctx, run, 100000)
 		if err != nil {
 			return false, err

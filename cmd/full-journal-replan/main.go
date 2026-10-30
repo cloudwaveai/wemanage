@@ -12,8 +12,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 3 || (os.Args[1] != "clone" && os.Args[1] != "plan") {
-		fmt.Fprintln(os.Stderr, "usage: full-journal-replan clone|plan RUN_ID")
+	if len(os.Args) != 3 || (os.Args[1] != "clone" && os.Args[1] != "clone-evidence" && os.Args[1] != "plan") {
+		fmt.Fprintln(os.Stderr, "usage: full-journal-replan clone|clone-evidence|plan RUN_ID")
 		os.Exit(2)
 	}
 	id, err := strconv.ParseInt(os.Args[2], 10, 64)
@@ -29,8 +29,14 @@ func main() {
 	}
 	defer pool.Close()
 	q := &workrecords.Queue{Store: store.New(pool)}
-	if os.Args[1] == "clone" {
-		run, e := q.ReplanSnapshot(ctx, id)
+	if os.Args[1] == "clone" || os.Args[1] == "clone-evidence" {
+		var run int64
+		var e error
+		if os.Args[1] == "clone-evidence" {
+			run, e = q.ReplanEvidenceSnapshot(ctx, id)
+		} else {
+			run, e = q.ReplanSnapshot(ctx, id)
+		}
 		if e != nil {
 			fmt.Fprintln(os.Stderr, e)
 			os.Exit(1)

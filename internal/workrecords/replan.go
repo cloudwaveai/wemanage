@@ -11,6 +11,14 @@ import (
 // scheduling is paused. The transaction either publishes both version changes
 // and every copied row, or publishes nothing.
 func (q *Queue) ReplanSnapshot(ctx context.Context, old int64) (int64, error) {
+	return q.replanSnapshot(ctx, old, "legacy")
+}
+
+func (q *Queue) ReplanEvidenceSnapshot(ctx context.Context, old int64) (int64, error) {
+	return q.replanSnapshot(ctx, old, evidenceFormat)
+}
+
+func (q *Queue) replanSnapshot(ctx context.Context, old int64, format string) (int64, error) {
 	tx, err := q.Store.Pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -41,7 +49,7 @@ func (q *Queue) ReplanSnapshot(ctx context.Context, old int64) (int64, error) {
 		return 0, errors.New("snapshot is not safe to replan")
 	}
 	var run int64
-	err = tx.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,version,state,previous_run_id,source_count,missing_count) SELECT day,(SELECT max(x.version)+1 FROM wm_full_journal_runs x WHERE x.day=r.day),'preparing',previous_run_id,source_count,missing_count FROM wm_full_journal_runs r WHERE id=$1 RETURNING id`, old).Scan(&run)
+	err = tx.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,version,state,previous_run_id,source_count,missing_count,plan_format) SELECT day,(SELECT max(x.version)+1 FROM wm_full_journal_runs x WHERE x.day=r.day),'preparing',previous_run_id,source_count,missing_count,$2 FROM wm_full_journal_runs r WHERE id=$1 RETURNING id`, old, format).Scan(&run)
 	if err != nil {
 		return 0, err
 	}

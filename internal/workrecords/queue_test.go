@@ -64,6 +64,9 @@ func TestQueueSnapshotsAllSourcesAndPreservesPrivacy(t *testing.T) {
 	if err != nil || count != 1 || missing != 0 || segments != 1 || string(got) != string(data) {
 		t.Fatalf("snapshot count=%d missing=%d segments=%d err=%v", count, missing, segments, err)
 	}
+	if _, err = st.Pool.Exec(ctx, `UPDATE wm_full_journal_runs SET plan_format='legacy' WHERE id=$1`, run); err != nil {
+		t.Fatal(err)
+	}
 	if err = q.PlanRun(ctx, run, 4096); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +218,9 @@ func TestRepeatedHistoryUsesSingleSnapshotBlob(t *testing.T) {
 	var blobs, segments int
 	if err = st.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM wm_full_journal_blobs WHERE run_id=$1),(SELECT count(*) FROM wm_full_journal_segments s JOIN wm_full_journal_sources x ON x.id=s.source_id WHERE x.run_id=$1)`, run).Scan(&blobs, &segments); err != nil || blobs != 1 || segments != 2 {
 		t.Fatalf("blobs=%d segments=%d %v", blobs, segments, err)
+	}
+	if _, err = st.Pool.Exec(ctx, `UPDATE wm_full_journal_runs SET plan_format='legacy' WHERE id=$1`, run); err != nil {
+		t.Fatal(err)
 	}
 	if err = q.PlanRun(ctx, run, 4096); err != nil {
 		t.Fatal(err)

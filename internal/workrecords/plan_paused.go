@@ -21,6 +21,17 @@ func (q *Queue) PlanPaused(ctx context.Context, run int64, progress func(int)) e
 		return errors.New("scheduler active")
 	}
 	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock(7419752105)`)
+	var format string
+	if err = conn.QueryRow(ctx, `SELECT plan_format FROM wm_full_journal_runs WHERE id=$1`, run).Scan(&format); err != nil {
+		return err
+	}
+	if format == evidenceFormat {
+		return q.PlanEvidenceRun(ctx, run, false, func(n int64) {
+			if progress != nil {
+				progress(int(n))
+			}
+		})
+	}
 	for i := 0; ; i++ {
 		if err = ctx.Err(); err != nil {
 			return err

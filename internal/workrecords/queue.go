@@ -76,7 +76,7 @@ func (q *Queue) Start(ctx context.Context, day time.Time) (int64, error) {
 		return 0, err
 	}
 	var run int64
-	err = tx.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,version,state,previous_run_id) VALUES($1::date,COALESCE((SELECT max(version)+1 FROM wm_full_journal_runs WHERE day=$1::date),1),'preparing',(SELECT id FROM wm_full_journal_runs WHERE day=$1::date-1 AND state IN ('done','partial') ORDER BY version DESC LIMIT 1)) RETURNING id`, from).Scan(&run)
+	err = tx.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,version,state,previous_run_id,plan_format) VALUES($1::date,COALESCE((SELECT max(version)+1 FROM wm_full_journal_runs WHERE day=$1::date),1),'preparing',(SELECT id FROM wm_full_journal_runs WHERE day=$1::date-1 AND state IN ('done','partial') ORDER BY version DESC LIMIT 1),'session-evidence-v1') RETURNING id`, from).Scan(&run)
 	if err != nil {
 		return 0, err
 	}
