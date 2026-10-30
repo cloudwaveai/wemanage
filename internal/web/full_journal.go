@@ -127,7 +127,7 @@ func (s *Server) handleFullJournalRetry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var state string
-	err = tx.QueryRow(r.Context(), `SELECT r.state FROM wm_full_journal_runs r WHERE r.id=$2 AND `+fullJournalVisible+` FOR UPDATE`, currentEmployee(r).ID, id).Scan(&state)
+	err = tx.QueryRow(r.Context(), `SELECT r.state FROM wm_full_journal_runs r WHERE r.id=$2 AND NOT r.superseded AND `+fullJournalVisible+` FOR UPDATE`, currentEmployee(r).ID, id).Scan(&state)
 	if err != nil {
 		writeErr(w, 404, "任务不存在或无权访问")
 		return

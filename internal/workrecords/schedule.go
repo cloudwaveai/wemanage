@@ -60,7 +60,7 @@ func (q *Queue) Tick(ctx context.Context, model ModelExtractor, now time.Time) e
 		}
 	}
 	var run int64
-	err = conn.QueryRow(ctx, `SELECT r.id FROM wm_full_journal_runs r WHERE r.state IN ('preparing','queued','running') AND NOT EXISTS(SELECT 1 FROM wm_full_journal_batches b WHERE b.run_id=r.id AND b.state IN ('running','failed')) ORDER BY r.day,r.version LIMIT 1`).Scan(&run)
+	err = conn.QueryRow(ctx, `SELECT r.id FROM wm_full_journal_runs r WHERE NOT r.superseded AND r.state IN ('preparing','queued','running') AND NOT EXISTS(SELECT 1 FROM wm_full_journal_batches b WHERE b.run_id=r.id AND b.state IN ('running','failed')) ORDER BY r.day,r.version LIMIT 1`).Scan(&run)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

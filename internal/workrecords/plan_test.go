@@ -47,3 +47,55 @@ func TestPlanKeepsRepeatedOccurrencesAndSessionPrefix(t *testing.T) {
 		t.Fatalf("lost content or occurrence: reuse=%v b=%d", reuse, seenB)
 	}
 }
+
+func TestPlanReusesOnlyInitialInputOfSameOwnerAndSession(t *testing.T) {
+	seg := func(kind, value string) Segment {
+		return Segment{Kind: kind, Hash: sha256.Sum256([]byte(value)), Data: []byte(value)}
+	}
+	sid := int64(10)
+	params1, params2 := seg("params", "params1"), seg("params", "params2")
+	a, b, c := seg("input", "a"), seg("input", "b"), seg("input", "c")
+	records := []SourceRecord{
+		{SourceID: 1, EmployeeID: 1, SessionID: &sid, Record: Record{Request: []Segment{params1, a, b}}},
+		{SourceID: 2, EmployeeID: 1, SessionID: &sid, Record: Record{Request: []Segment{params2, a, b, c, c}}},
+		{SourceID: 3, EmployeeID: 2, SessionID: &sid, Record: Record{Request: []Segment{params2, a, b}}},
+		{SourceID: 4, EmployeeID: 1, SessionID: &sid, Record: Record{Request: []Segment{params2, a, c, b}}},
+	}
+	batches, err := Plan(records, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := map[int64][]PlannedPart{}
+	for _, batch := range batches {
+		for _, p := range batch.Parts {
+			parts[p.SourceID] = append(parts[p.SourceID], p)
+		}
+	}
+	check := func(source int64, from int64, start, previous, count int) {
+		t.Helper()
+		found := false
+		for _, p := range parts[source] {
+			if p.ReusedSegments > 0 {
+				if p.ReusedFrom != from || p.ReusedStart != start || p.ReusedPreviousStart != previous || p.ReusedSegments != count {
+					t.Fatalf("incorrect reference: %+v", p)
+				}
+				found = true
+			}
+		}
+		if (count > 0) != found {
+			t.Fatalf("source %d reference = %v", source, found)
+		}
+	}
+	check(2, 1, 1, 1, 2)
+	check(3, 0, 0, 0, 0)
+	check(4, 2, 1, 1, 1)
+	var values []string
+	for _, p := range parts[2] {
+		if p.ReusedSegments == 0 {
+			values = append(values, p.Text)
+		}
+	}
+	if strings.Join(values, ",") != "params2,c,c" {
+		t.Fatalf("lost or repeated input: %v", values)
+	}
+}

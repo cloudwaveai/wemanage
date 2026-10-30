@@ -17,21 +17,23 @@ type SourceRecord struct {
 	Record       Record
 }
 type PlannedPart struct {
-	SourceID       int64     `json:"source_id"`
-	EmployeeID     int64     `json:"employee_id"`
-	EmployeeName   string    `json:"employee_name,omitempty"`
-	SessionID      *int64    `json:"session_id"`
-	Time           time.Time `json:"time"`
-	Direction      string    `json:"direction"`
-	Kind           string    `json:"kind,omitempty"`
-	Ordinal        int       `json:"ordinal"`
-	Hash           string    `json:"hash"`
-	Start          int       `json:"start"`
-	End            int       `json:"end"`
-	Total          int       `json:"total"`
-	Text           string    `json:"text"`
-	ReusedFrom     int64     `json:"reused_from_source,omitempty"`
-	ReusedSegments int       `json:"reused_request_segments,omitempty"`
+	SourceID            int64     `json:"source_id"`
+	EmployeeID          int64     `json:"employee_id"`
+	EmployeeName        string    `json:"employee_name,omitempty"`
+	SessionID           *int64    `json:"session_id"`
+	Time                time.Time `json:"time"`
+	Direction           string    `json:"direction"`
+	Kind                string    `json:"kind,omitempty"`
+	Ordinal             int       `json:"ordinal"`
+	Hash                string    `json:"hash"`
+	Start               int       `json:"start"`
+	End                 int       `json:"end"`
+	Total               int       `json:"total"`
+	Text                string    `json:"text"`
+	ReusedFrom          int64     `json:"reused_from_source,omitempty"`
+	ReusedSegments      int       `json:"reused_request_segments,omitempty"`
+	ReusedStart         int       `json:"reused_start,omitempty"`
+	ReusedPreviousStart int       `json:"reused_previous_start,omitempty"`
 }
 type PlannedBatch struct {
 	Parts []PlannedPart `json:"parts"`
@@ -85,7 +87,7 @@ func (p *Planner) appendPart(part PlannedPart) error {
 	return nil
 }
 func (p *Planner) Add(record SourceRecord) error {
-	prefix := p.SharedPrefix(record)
+	reuse := p.SharedInput(record)
 	var prev prior
 	if record.SessionID != nil {
 		key := sessionKey{record.EmployeeID, *record.SessionID}
@@ -96,8 +98,8 @@ func (p *Planner) Add(record SourceRecord) error {
 		}
 		p.previous[key] = prior{source: record.SourceID, request: identity}
 	}
-	if prefix > 0 {
-		marker := PlannedPart{SourceID: record.SourceID, EmployeeID: record.EmployeeID, EmployeeName: record.EmployeeName, SessionID: record.SessionID, Time: record.StartedAt, Direction: "request", ReusedFrom: prev.source, ReusedSegments: prefix}
+	if reuse.count > 0 {
+		marker := PlannedPart{SourceID: record.SourceID, EmployeeID: record.EmployeeID, EmployeeName: record.EmployeeName, SessionID: record.SessionID, Time: record.StartedAt, Direction: "request", ReusedFrom: prev.source, ReusedSegments: reuse.count, ReusedStart: reuse.current, ReusedPreviousStart: reuse.previous}
 		if err := p.appendPart(marker); err != nil {
 			return err
 		}
@@ -105,9 +107,11 @@ func (p *Planner) Add(record SourceRecord) error {
 	for _, group := range []struct {
 		direction string
 		segments  []Segment
-		start     int
-	}{{"request", record.Record.Request, prefix}, {"response", record.Record.Response, 0}} {
-		for ordinal := group.start; ordinal < len(group.segments); ordinal++ {
+	}{{"request", record.Record.Request}, {"response", record.Record.Response}} {
+		for ordinal := 0; ordinal < len(group.segments); ordinal++ {
+			if group.direction == "request" && ordinal >= reuse.current && ordinal < reuse.current+reuse.count {
+				continue
+			}
 			seg := group.segments[ordinal]
 			parts, err := Split(seg, (p.maxBytes-2048)/6)
 			if err != nil {
@@ -124,18 +128,40 @@ func (p *Planner) Add(record SourceRecord) error {
 	return nil
 }
 
-// SharedPrefix lets a streaming reader avoid fetching bytes already emitted in
-// an earlier request. Add must still receive the entire ordered identity list.
-func (p *Planner) SharedPrefix(record SourceRecord) int {
+// inputReuse identifies only the matching initial input history. Parameter
+// segments and every occurrence after the first mismatch remain independent.
+type inputReuse struct{ current, previous, count int }
+
+func (p *Planner) SharedInput(record SourceRecord) inputReuse {
 	if record.SessionID == nil {
-		return 0
+		return inputReuse{}
 	}
 	prev := p.previous[sessionKey{record.EmployeeID, *record.SessionID}]
-	i := 0
-	for i < len(prev.request) && i < len(record.Record.Request) && prev.request[i].hash == record.Record.Request[i].Hash && prev.request[i].kind == record.Record.Request[i].Kind {
-		i++
+	currentStart, previousStart := -1, -1
+	for i, s := range record.Record.Request {
+		if s.Kind == "input" {
+			currentStart = i
+			break
+		}
 	}
-	return i
+	for i, s := range prev.request {
+		if s.kind == "input" {
+			previousStart = i
+			break
+		}
+	}
+	if currentStart < 0 || previousStart < 0 {
+		return inputReuse{}
+	}
+	n := 0
+	for currentStart+n < len(record.Record.Request) && previousStart+n < len(prev.request) {
+		a, b := record.Record.Request[currentStart+n], prev.request[previousStart+n]
+		if a.Kind != "input" || b.kind != "input" || a.Hash != b.hash {
+			break
+		}
+		n++
+	}
+	return inputReuse{current: currentStart, previous: previousStart, count: n}
 }
 func (p *Planner) Finish() error {
 	if len(p.current.Parts) == 0 {

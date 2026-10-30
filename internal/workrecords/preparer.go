@@ -34,7 +34,7 @@ func (q *Queue) PrepareAvailable(ctx context.Context) (int64, int, error) {
 		return 0, 0, nil
 	}
 	var run int64
-	err = conn.QueryRow(ctx, `SELECT id FROM wm_full_journal_runs WHERE state='preparing' ORDER BY day,version LIMIT 1`).Scan(&run)
+	err = conn.QueryRow(ctx, `SELECT id FROM wm_full_journal_runs WHERE state='preparing' AND NOT superseded ORDER BY day,version LIMIT 1`).Scan(&run)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, 0, nil
 	}

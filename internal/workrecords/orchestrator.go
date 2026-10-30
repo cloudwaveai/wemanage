@@ -24,7 +24,7 @@ func (q *Queue) Step(ctx context.Context, run int64, model ModelExtractor, solMo
 	}
 	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock(7419752104)`)
 	var state string
-	if err = conn.QueryRow(ctx, `SELECT state FROM wm_full_journal_runs WHERE id=$1`, run).Scan(&state); err != nil {
+	if err = conn.QueryRow(ctx, `SELECT state FROM wm_full_journal_runs WHERE id=$1 AND NOT superseded`, run).Scan(&state); err != nil {
 		return false, err
 	}
 	if state == "done" || state == "partial" {

@@ -184,10 +184,13 @@ func (q *Queue) PlanNext(ctx context.Context, run int64, maxBytes int) (bool, er
 		return false, errors.New("source has no snapshot segments")
 	}
 	src := SourceRecord{SourceID: id, EmployeeID: employee, EmployeeName: name, SessionID: session, StartedAt: at, Record: record}
-	prefix := planner.SharedPrefix(src)
+	reuse := planner.SharedInput(src)
 	needed := map[[32]byte]bool{}
 	args := [][]byte{}
-	for _, seg := range append(append([]Segment{}, record.Request[prefix:]...), record.Response...) {
+	for i, seg := range append(append([]Segment{}, record.Request...), record.Response...) {
+		if i < len(record.Request) && i >= reuse.current && i < reuse.current+reuse.count {
+			continue
+		}
 		if !needed[seg.Hash] {
 			needed[seg.Hash] = true
 			args = append(args, seg.Hash[:])
@@ -226,7 +229,10 @@ func (q *Queue) PlanNext(ctx context.Context, run int64, maxBytes int) (bool, er
 			return false, errors.New("snapshot blob missing")
 		}
 	}
-	for i := prefix; i < len(src.Record.Request); i++ {
+	for i := range src.Record.Request {
+		if i >= reuse.current && i < reuse.current+reuse.count {
+			continue
+		}
 		src.Record.Request[i].Data = dataByHash[src.Record.Request[i].Hash]
 	}
 	for i := range src.Record.Response {
@@ -238,8 +244,8 @@ func (q *Queue) PlanNext(ctx context.Context, run int64, maxBytes int) (bool, er
 	if err = planner.Finish(); err != nil {
 		return false, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE wm_full_journal_sources SET planned=true,reused_request_segments=$2,reused_from_source=$3 WHERE id=$1`, id, prefix, func() any {
-		if prefix > 0 {
+	if _, err = tx.Exec(ctx, `UPDATE wm_full_journal_sources SET planned=true,reused_request_segments=$2,reused_from_source=$3 WHERE id=$1`, id, reuse.count, func() any {
+		if reuse.count > 0 {
 			return previousID
 		}
 		return nil
