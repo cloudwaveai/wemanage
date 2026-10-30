@@ -16,6 +16,7 @@ import (
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
 	"aiseat/internal/workdigest"
+	"aiseat/internal/workrecords"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -52,9 +53,10 @@ type Deps struct {
 	// and notify on device/freeze changes.
 	Risk *risk.Engine
 	// Digest writes the work board's daily summaries (optional).
-	Digest    *workdigest.Runner
-	Knowledge *knowledge.Runner
-	Log       *slog.Logger
+	Digest      *workdigest.Runner
+	Knowledge   *knowledge.Runner
+	FullJournal *workrecords.Queue
+	Log         *slog.Logger
 }
 
 // Server holds web dependencies.
@@ -128,6 +130,10 @@ func (s *Server) Mount(r chi.Router) {
 				r.Put("/admin/knowledge/schedule", s.handleSetKnowledgeSchedule)
 				r.Post("/admin/knowledge/run", s.handleKnowledgeRun)
 				r.Post("/admin/knowledge/items/{id}/review", s.handleKnowledgeReview)
+				r.Get("/admin/full-journal", s.handleFullJournal)
+				r.Put("/admin/full-journal/settings", s.handleFullJournalSettings)
+				r.Post("/admin/full-journal/{id}/retry", s.handleFullJournalRetry)
+				r.Get("/admin/full-journal/sources/{id}", s.handleFullJournalSource)
 				r.Get("/admin/extraction/config", s.handleExtractionConfig)
 				r.Get("/admin/extraction/runs", s.handleExtractionRuns)
 				r.Post("/admin/extraction/run", s.handleExtractionRun)

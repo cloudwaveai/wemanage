@@ -29,6 +29,7 @@ import (
 	"aiseat/internal/web"
 	"aiseat/internal/webui"
 	"aiseat/internal/workdigest"
+	"aiseat/internal/workrecords"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -140,10 +141,12 @@ func runServe() error {
 	}
 
 	flywheel := &knowledge.Runner{Store: st, Extractor: digest, Loc: cfg.Timezone}
+	fullJournal := &workrecords.Queue{Store: st}
 
 	webSrv := web.NewServer(web.Deps{
 		Digest:               digest,
 		Knowledge:            flywheel,
+		FullJournal:          fullJournal,
 		Loc:                  cfg.Timezone,
 		Models:               dp.AccountModels,
 		Quota:                quota,
@@ -170,6 +173,7 @@ func runServe() error {
 		},
 		Digest:        digest,
 		Knowledge:     flywheel,
+		FullJournal:   fullJournal,
 		EgressEchoURL: cfg.EgressEchoURL, Loc: cfg.Timezone,
 		GitHub: health.GitHub{}, Risk: riskEngine, Quota: quota, QuotaAlerts: quotaAlerter(st, fs, quota, cfg), Log: log,
 	})

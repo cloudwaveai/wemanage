@@ -128,6 +128,10 @@ func (r *Runner) release() {
 
 // client builds the LLM from the settings: the chosen account and model.
 func (r *Runner) client(ctx context.Context) (llm, string, error) {
+	return r.clientWithModel(ctx, "")
+}
+
+func (r *Runner) clientWithModel(ctx context.Context, requestedModel string) (llm, string, error) {
 	set := r.Settings.Get(ctx)
 	if set.WorkDigestAccountID == 0 {
 		return llm{}, "", ErrNotConfigured
@@ -142,6 +146,12 @@ func (r *Runner) client(ctx context.Context) (llm, string, error) {
 	model := strings.TrimSpace(set.WorkDigestModel)
 	if model == "" {
 		model = set.DefaultCodexModel
+	}
+	if requestedModel != "" {
+		model = strings.TrimSpace(requestedModel)
+		if model == "" || len(model) > 100 || strings.ContainsAny(model, " /\"\n\r\t") || !acc.AllowsModel(model) {
+			return llm{}, "", errors.New("指定的总结模型无效或账号不允许使用")
+		}
 	}
 	hc := r.HC
 	if hc == nil {
@@ -278,4 +288,18 @@ func (r *Runner) Extract(ctx context.Context, system, material string) (string, 
 	}
 	text, usage, err := client.completeWithUsage(ctx, system, material)
 	return text, model, usage, err
+}
+
+// ExtractWithModel uses the same configured summary account without changing
+// the gateway's shared settings. Availability still depends on the upstream.
+func (r *Runner) ExtractWithModel(ctx context.Context, model, system, material string) (string, string, ModelUsage, error) {
+	if strings.TrimSpace(model) == "" {
+		return "", "", ModelUsage{}, errors.New("需要指定总结模型")
+	}
+	client, selected, err := r.clientWithModel(ctx, model)
+	if err != nil {
+		return "", "", ModelUsage{}, err
+	}
+	text, usage, err := client.completeWithUsage(ctx, system, material)
+	return text, selected, usage, err
 }

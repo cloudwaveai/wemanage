@@ -134,6 +134,24 @@ func (f *fixture) configure(t *testing.T) {
 	}
 }
 
+func TestExtractWithModelUsesExplicitAllowedModel(t *testing.T) {
+	f := setup(t)
+	f.configure(t)
+	if err := f.st.SetAccountModels(f.ctx, f.acc.ID, []string{"gpt-6.1-sol"}); err != nil {
+		t.Fatal(err)
+	}
+	_, model, _, err := f.runner.ExtractWithModel(f.ctx, "gpt-6.1-sol", "system", "material")
+	if err != nil || model != "gpt-6.1-sol" || len(f.cpa.models) != 1 || !strings.HasSuffix(f.cpa.models[0], "/gpt-6.1-sol") {
+		t.Fatalf("model=%s calls=%v err=%v", model, f.cpa.models, err)
+	}
+	if _, _, _, err = f.runner.ExtractWithModel(f.ctx, "gpt-6-luna", "system", "material"); err == nil || len(f.cpa.models) != 1 {
+		t.Fatal("unapproved model was called")
+	}
+	if _, _, _, err = f.runner.ExtractWithModel(f.ctx, "a/b", "system", "material"); err == nil {
+		t.Fatal("invalid model accepted")
+	}
+}
+
 func TestRunDay(t *testing.T) {
 	f := setup(t)
 	f.configure(t)

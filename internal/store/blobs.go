@@ -189,6 +189,69 @@ func (s *Store) GetBlob(ctx context.Context, hash [32]byte) (kind string, raw []
 	return kind, raw, err
 }
 
+// GetBlobs retrieves a record's unique segments in one database round trip.
+// Missing or corrupt entries fail the whole read; callers must not silently
+// treat a partial result as a complete record.
+func (s *Store) GetBlobs(ctx context.Context, hashes [][32]byte) (map[[32]byte]Blob, error) {
+	wanted := make(map[[32]byte]bool, len(hashes))
+	flat := make([][]byte, 0, len(hashes))
+	for _, h := range hashes {
+		if !wanted[h] {
+			wanted[h] = true
+			flat = append(flat, h[:])
+		}
+	}
+	out := make(map[[32]byte]Blob, len(wanted))
+	if len(flat) == 0 {
+		return out, nil
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT hash,kind,data_zstd FROM blobs WHERE hash=ANY($1)`, flat)
+	if err != nil {
+		return nil, err
+	}
+	var external [][32]byte
+	for rows.Next() {
+		var h, comp []byte
+		var kind string
+		if err = rows.Scan(&h, &kind, &comp); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if len(h) != 32 {
+			rows.Close()
+			return nil, errors.New("invalid blob hash")
+		}
+		var key [32]byte
+		copy(key[:], h)
+		if len(comp) == 0 {
+			external = append(external, key)
+			continue
+		}
+		data, e := zstdDec.DecodeAll(comp, nil)
+		if e != nil {
+			rows.Close()
+			return nil, e
+		}
+		out[key] = Blob{Hash: key, Kind: kind, Data: data}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for _, h := range external {
+		kind, data, e := s.GetBlob(ctx, h)
+		if e != nil {
+			return nil, e
+		}
+		out[h] = Blob{Hash: h, Kind: kind, Data: data}
+	}
+	if len(out) != len(wanted) {
+		return nil, ErrNotFound
+	}
+	return out, nil
+}
+
 // TouchBlobs bumps last_referenced_at for a set of hashes.
 func (s *Store) TouchBlobs(ctx context.Context, hashes [][32]byte, at time.Time) error {
 	if len(hashes) == 0 {

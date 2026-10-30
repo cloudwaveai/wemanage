@@ -16,6 +16,7 @@ import (
 	"aiseat/internal/settings"
 	"aiseat/internal/store"
 	"aiseat/internal/workdigest"
+	"aiseat/internal/workrecords"
 
 	"github.com/robfig/cron/v3"
 )
@@ -30,6 +31,7 @@ type Deps struct {
 	Report        report.Deps
 	Digest        *workdigest.Runner // optional
 	Knowledge     *knowledge.Runner  // optional
+	FullJournal   *workrecords.Queue // optional
 	EgressEchoURL string
 	Loc           *time.Location
 	GitHub        health.GitHub
@@ -184,6 +186,15 @@ func Register(c *cron.Cron, d Deps) {
 			defer cancel()
 			if err := d.Knowledge.Tick(taskCtx, time.Now()); err != nil {
 				log.Warn("knowledge flywheel", "err", err)
+			}
+		})
+	}
+	if d.FullJournal != nil && d.Digest != nil {
+		_, _ = c.AddFunc("@every 2m", func() {
+			taskCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+			if err := d.FullJournal.Tick(taskCtx, d.Digest, time.Now()); err != nil && taskCtx.Err() == nil {
+				log.Warn("full work journal", "err", err)
 			}
 		})
 	}

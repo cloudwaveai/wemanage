@@ -26,9 +26,11 @@ type Record struct {
 	Response []Segment
 }
 
+var ErrInvalidRecord = errors.New("invalid or incomplete stored record")
+
 func hashes(raw []byte) ([][32]byte, error) {
 	if len(raw)%32 != 0 {
-		return nil, errors.New("invalid segment index length")
+		return nil, fmt.Errorf("%w: invalid segment index length", ErrInvalidRecord)
 	}
 	out := make([][32]byte, len(raw)/32)
 	for i := range out {
@@ -44,7 +46,7 @@ func requestHashes(ctx context.Context, db Reader, id [16]byte) ([][32]byte, err
 	var chain []store.RequestEnc
 	for {
 		if seen[id] || len(chain) > 32 {
-			return nil, errors.New("invalid prefix chain")
+			return nil, fmt.Errorf("%w: invalid prefix chain", ErrInvalidRecord)
 		}
 		seen[id] = true
 		enc, err := db.GetRequestEnc(ctx, id)
@@ -66,11 +68,11 @@ func requestHashes(ctx context.Context, db Reader, id [16]byte) ([][32]byte, err
 		}
 		if enc.PrefixOf != nil {
 			if enc.PrefixLen < 0 || enc.PrefixLen > len(full) {
-				return nil, errors.New("invalid prefix length")
+				return nil, fmt.Errorf("%w: invalid prefix length", ErrInvalidRecord)
 			}
 			full = full[:enc.PrefixLen]
 		} else if enc.PrefixLen != 0 {
-			return nil, errors.New("invalid root prefix")
+			return nil, fmt.Errorf("%w: invalid root prefix", ErrInvalidRecord)
 		}
 		full = append(full, tail...)
 	}
@@ -82,7 +84,7 @@ func requestHashes(ctx context.Context, db Reader, id [16]byte) ([][32]byte, err
 // with truncated search-index text or present the day's report as complete.
 func Reconstruct(ctx context.Context, db Reader, row store.RequestRow) (Record, error) {
 	if row.BodiesPurged {
-		return Record{}, errors.New("record body purged")
+		return Record{}, fmt.Errorf("%w: record body purged", ErrInvalidRecord)
 	}
 	req, err := requestHashes(ctx, db, row.ID)
 	if err != nil {
@@ -93,17 +95,37 @@ func Reconstruct(ctx context.Context, db Reader, row store.RequestRow) (Record, 
 		return Record{}, err
 	}
 	if len(req)+len(resp) == 0 {
-		return Record{}, errors.New("record has no stored segments")
+		return Record{}, fmt.Errorf("%w: record has no stored segments", ErrInvalidRecord)
+	}
+	var bulk map[[32]byte]store.Blob
+	if reader, ok := db.(interface {
+		GetBlobs(context.Context, [][32]byte) (map[[32]byte]store.Blob, error)
+	}); ok {
+		bulk, err = reader.GetBlobs(ctx, append(append([][32]byte{}, req...), resp...))
+		if err != nil {
+			return Record{}, fmt.Errorf("segment unavailable: %w", err)
+		}
 	}
 	load := func(hs [][32]byte) ([]Segment, error) {
 		out := make([]Segment, 0, len(hs))
 		for _, h := range hs {
-			kind, data, err := db.GetBlob(ctx, h)
+			var kind string
+			var data []byte
+			var err error
+			if bulk != nil {
+				v, ok := bulk[h]
+				if !ok {
+					return nil, fmt.Errorf("%w: segment unavailable", ErrInvalidRecord)
+				}
+				kind, data = v.Kind, v.Data
+			} else {
+				kind, data, err = db.GetBlob(ctx, h)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("segment unavailable: %w", err)
 			}
 			if sha256.Sum256(data) != h {
-				return nil, errors.New("segment hash mismatch")
+				return nil, fmt.Errorf("%w: segment hash mismatch", ErrInvalidRecord)
 			}
 			out = append(out, Segment{Hash: h, Kind: kind, Data: data})
 		}
