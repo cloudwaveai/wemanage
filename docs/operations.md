@@ -115,7 +115,7 @@
 
 **要备份的**：PostgreSQL 数据库与 CPA 凭证目录（`deploy/cpa/auths`，含各账号 OAuth token）。
 
-生产的数据库在阿里云主机上（海外网关服务器通过 `DATABASE_URL` 远程连接），所以**数据库备份在阿里云本机做**：本地 `pg_dump` 走 loopback，几秒到几分钟完成，不占海外小盘，备份文件留在阿里云 `~/gateway-backups/`（每天 04:20 定时，保留最近 14 份，脚本 `deploy/aliyun/backup.sh`，密码在阿里云 `~/.gateway-backup.env`）。
+生产的数据库在阿里云主机上（海外网关服务器通过 `DATABASE_URL` 远程连接），所以**数据库备份在阿里云本机做**：本地 `pg_dump` 走 loopback，几秒到几分钟完成，不占海外小盘，备份文件留在阿里云 `~/gateway-backups/`（每天 04:20 定时，默认保留最近 1 份自动备份，脚本 `deploy/aliyun/backup.sh`，密码在阿里云 `~/.gateway-backup.env`）。备份写入临时文件，校验成功后才转为正式备份并轮换旧文件；更新前的手动备份不受自动轮换影响。
 
 ```bash
 # 阿里云主机上：手动立即备份（定时任务已装好，一般不用手动跑）

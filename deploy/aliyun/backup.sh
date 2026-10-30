@@ -9,13 +9,14 @@
 #      (user comes from the gateway's deploy/.env DATABASE_URL)
 #   2. cron, e.g. crontab -e:  20 4 * * * ~/gateway-backups/backup.sh >> ~/gateway-backups/backup.log 2>&1
 set -euo pipefail
+umask 077
 
 DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=${DB_PORT:-15432}
 DB_USER=${DB_USER:-gateway}
 DB_NAME=${DB_NAME:-gateway}
 BACKUP_DIR=${BACKUP_DIR:-$HOME/gateway-backups}
-KEEP=${KEEP:-14}
+KEEP=${KEEP:-1}
 
 if [[ -f "$HOME/.gateway-backup.env" ]]; then
   # shellcheck disable=SC1091
@@ -27,8 +28,12 @@ export PGPASSWORD="$DB_PASS"
 mkdir -p "$BACKUP_DIR"
 out="$BACKUP_DIR/gateway-$(date +%Y%m%dT%H%M%S).sql.gz"
 
-pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" | gzip > "$out"
-gzip -t "$out"
+tmp="${out}.partial"
+trap 'rm -f -- "$tmp"' EXIT
+pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" | gzip > "$tmp"
+gzip -t "$tmp"
+mv -- "$tmp" "$out"
+trap - EXIT
 
 # Rotate: everything older than the newest $KEEP.
 ls -1t "$BACKUP_DIR"/gateway-*.sql.gz | tail -n +"$((KEEP + 1))" | xargs -r rm -f
