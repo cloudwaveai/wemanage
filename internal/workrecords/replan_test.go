@@ -51,7 +51,7 @@ func TestReplanSnapshotKeepsOldPlanAndCopiesSnapshot(t *testing.T) {
 	if _, err = q.ReplanSnapshot(ctx, run); err == nil {
 		t.Fatal("superseded run replanned twice")
 	}
-	if err = q.PlanRun(ctx, clone, 4096); err != nil {
+	if err = q.PlanPaused(ctx, clone, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = q.Step(ctx, run, nil, ""); err == nil {
