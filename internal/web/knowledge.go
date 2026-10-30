@@ -164,7 +164,38 @@ func (s *Server) handleKnowledgeSchedule(w http.ResponseWriter, r *http.Request)
 	if model == "" {
 		model = set.DefaultCodexModel
 	}
-	writeJSON(w, 200, map[string]any{"enabled": enabled, "activated_at": activated, "model": model, "configured": s.deps.Knowledge != nil && set.WorkDigestAccountID > 0, "cadence": "约每 30 分钟检查：日报完成后整理前一日；每周一整理上一周"})
+	type preview struct {
+		Kind      string `json:"kind"`
+		From      string `json:"from"`
+		To        string `json:"to_exclusive"`
+		DaysReady int    `json:"days_ready"`
+		DaysTotal int    `json:"days_total"`
+		Digests   int    `json:"digests"`
+		Bytes     int64  `json:"bytes"`
+	}
+	queue := []preview{}
+	if s.deps.Knowledge != nil {
+		now := time.Now()
+		day := s.deps.Knowledge.Day(now)
+		week := s.deps.Knowledge.Week(now)
+		for _, period := range []struct {
+			kind     string
+			from, to time.Time
+			days     int
+		}{
+			{"daily", day.AddDate(0, 0, -1), day, 1},
+			{"weekly", week.AddDate(0, 0, -7), week, 7},
+		} {
+			p := preview{Kind: period.kind, From: period.from.Format(time.DateOnly), To: period.to.Format(time.DateOnly), DaysTotal: period.days}
+			err = s.deps.Store.Pool.QueryRow(r.Context(), `SELECT (SELECT count(*) FROM work_digest_days WHERE day >= $1::date AND day < $2::date AND status='done'), count(*), coalesce(sum(octet_length(wd.summary_md)),0) FROM work_digests wd JOIN work_digest_days d ON d.day=wd.day AND d.status='done' JOIN employees e ON e.id=wd.employee_id WHERE wd.day >= $1::date AND wd.day < $2::date AND e.private_work_since IS NULL AND e.name <> '林伊默'`, period.from, period.to).Scan(&p.DaysReady, &p.Digests, &p.Bytes)
+			if err != nil {
+				writeErr(w, 500, "读取待整理范围失败")
+				return
+			}
+			queue = append(queue, p)
+		}
+	}
+	writeJSON(w, 200, map[string]any{"enabled": enabled, "activated_at": activated, "model": model, "configured": s.deps.Knowledge != nil && set.WorkDigestAccountID > 0, "cadence": "约每 30 分钟检查：日报完成后整理前一日；每周一整理上一周", "queue_preview": queue})
 }
 func (s *Server) handleSetKnowledgeSchedule(w http.ResponseWriter, r *http.Request) {
 	var in struct {

@@ -151,7 +151,7 @@ func TestNotReadyAndPrivacyChange(t *testing.T) {
 func TestScheduleCatchupAndUpdatedDigest(t *testing.T) {
 	st, ctx, r, f, day, person, _ := setup(t)
 	digest(t, st, ctx, day, person.ID, "第一份日报")
-	if _, err := st.Pool.Exec(ctx, `UPDATE wm_knowledge_schedule SET activated_at=$1`, day.AddDate(0, 0, 1)); err != nil {
+	if _, err := st.Pool.Exec(ctx, `UPDATE wm_knowledge_schedule SET activated_at=$1, enabled=true`, day.AddDate(0, 0, 1)); err != nil {
 		t.Fatal(err)
 	}
 	f.replies = []string{`{"items":[]}`, `{"items":[]}`}
@@ -191,7 +191,7 @@ func TestWeeklyScheduleUsesAllSevenDays(t *testing.T) {
 	for i := 0; i < 7; i++ {
 		digest(t, st, ctx, monday.AddDate(0, 0, i), person.ID, fmt.Sprintf("第 %d 天的摘要", i+1))
 	}
-	if _, err := st.Pool.Exec(ctx, `UPDATE wm_knowledge_schedule SET activated_at=$1`, monday.Add(time.Hour)); err != nil {
+	if _, err := st.Pool.Exec(ctx, `UPDATE wm_knowledge_schedule SET activated_at=$1, enabled=true`, monday.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	f.replies = []string{`{"items":[]}`, `{"items":[]}`, `{"items":[]}`}

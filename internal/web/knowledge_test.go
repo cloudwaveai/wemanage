@@ -49,10 +49,21 @@ func TestKnowledgeAdminReviewAndPrivacy(t *testing.T) {
 	if resp, _ := ordinary.do("GET", "/api/admin/knowledge/runs", ""); resp.StatusCode != 403 {
 		t.Fatalf("non-admin %d", resp.StatusCode)
 	}
+	resp, body := admin.do("GET", "/api/admin/knowledge/schedule", "")
+	var plan struct {
+		Enabled bool `json:"enabled"`
+		Queue   []struct {
+			Digests int `json:"digests"`
+			Bytes   int `json:"bytes"`
+		} `json:"queue_preview"`
+	}
+	if err := json.Unmarshal(body, &plan); err != nil || resp.StatusCode != 200 || plan.Enabled || len(plan.Queue) != 2 || plan.Queue[0].Digests != 1 || plan.Queue[0].Bytes != len("项目检查后验证成功") {
+		t.Fatalf("queue preview %d %s %v", resp.StatusCode, body, err)
+	}
 	if resp, body := admin.do("POST", "/api/admin/knowledge/run", `{"kind":"daily"}`); resp.StatusCode != 200 {
 		t.Fatalf("run %d %s", resp.StatusCode, body)
 	}
-	resp, body := admin.do("GET", "/api/admin/knowledge/runs", "")
+	resp, body = admin.do("GET", "/api/admin/knowledge/runs", "")
 	if resp.StatusCode != 200 || !strings.Contains(string(body), "验证成功") {
 		t.Fatalf("list %d %s", resp.StatusCode, body)
 	}
@@ -81,6 +92,10 @@ func TestKnowledgeAdminReviewAndPrivacy(t *testing.T) {
 	resp, body = admin.do("GET", "/api/admin/knowledge/runs", "")
 	if resp.StatusCode != 200 || strings.Contains(string(body), "验证成功") || strings.Contains(string(body), "核对后的内容") {
 		t.Fatalf("private leak %d %s", resp.StatusCode, body)
+	}
+	resp, body = admin.do("GET", "/api/admin/knowledge/schedule", "")
+	if err := json.Unmarshal(body, &plan); err != nil || resp.StatusCode != 200 || len(plan.Queue) != 2 || plan.Queue[0].Digests != 0 || plan.Queue[0].Bytes != 0 {
+		t.Fatalf("private queue %d %s %v", resp.StatusCode, body, err)
 	}
 	if resp, _ := admin.do("PUT", "/api/admin/knowledge/schedule", `{"enabled":false}`); resp.StatusCode != 200 {
 		t.Fatalf("pause %d", resp.StatusCode)

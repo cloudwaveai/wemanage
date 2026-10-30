@@ -1,7 +1,7 @@
 -- +goose Up
 CREATE TABLE wm_knowledge_schedule (
  id SMALLINT PRIMARY KEY CHECK (id=1),
- enabled BOOLEAN NOT NULL DEFAULT true,
+ enabled BOOLEAN NOT NULL DEFAULT false,
  activated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
