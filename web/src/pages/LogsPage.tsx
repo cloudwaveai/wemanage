@@ -55,7 +55,8 @@ export function LogsPage() {
   const isAdmin = me?.role === "super_admin";
 
   const [searchParams] = useSearchParams();
-  const initialFilters = { ...EMPTY, employee_id: isAdmin ? (searchParams.get("employee_id") || "") : "" };
+  const validDate = (value: string | null) => value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+  const initialFilters = { ...EMPTY, employee_id: isAdmin ? (searchParams.get("employee_id") || "") : "", from: validDate(searchParams.get("from")), to: validDate(searchParams.get("to")) };
   const [draft, setDraft] = useState<Filters>(initialFilters);
   const [applied, setApplied] = useState<Filters>(initialFilters);
   const [page, setPage] = useState(0);

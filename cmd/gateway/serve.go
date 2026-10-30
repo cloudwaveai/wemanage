@@ -17,6 +17,7 @@ import (
 	"aiseat/internal/feishu"
 	"aiseat/internal/health"
 	"aiseat/internal/jobs"
+	"aiseat/internal/knowledge"
 	"aiseat/internal/notify"
 	"aiseat/internal/proxy"
 	"aiseat/internal/recorder"
@@ -138,8 +139,11 @@ func runServe() error {
 		Loc: cfg.Timezone, Log: log, Sender: briefingSender(fs),
 	}
 
+	flywheel := &knowledge.Runner{Store: st, Extractor: digest, Loc: cfg.Timezone}
+
 	webSrv := web.NewServer(web.Deps{
 		Digest:               digest,
+		Knowledge:            flywheel,
 		Loc:                  cfg.Timezone,
 		Models:               dp.AccountModels,
 		Quota:                quota,
@@ -165,6 +169,7 @@ func runServe() error {
 			Sender: reportSender(fs), Loc: cfg.Timezone, Enabled: set.Get(ctx).ReportEnabled && cfg.ReportLLMAPIKey != "",
 		},
 		Digest:        digest,
+		Knowledge:     flywheel,
 		EgressEchoURL: cfg.EgressEchoURL, Loc: cfg.Timezone,
 		GitHub: health.GitHub{}, Risk: riskEngine, Quota: quota, QuotaAlerts: quotaAlerter(st, fs, quota, cfg), Log: log,
 	})

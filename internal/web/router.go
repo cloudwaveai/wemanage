@@ -10,6 +10,7 @@ import (
 	"aiseat/internal/cpa"
 	"aiseat/internal/feishu"
 	"aiseat/internal/health"
+	"aiseat/internal/knowledge"
 	"aiseat/internal/risk"
 	"aiseat/internal/secure"
 	"aiseat/internal/settings"
@@ -51,8 +52,9 @@ type Deps struct {
 	// and notify on device/freeze changes.
 	Risk *risk.Engine
 	// Digest writes the work board's daily summaries (optional).
-	Digest *workdigest.Runner
-	Log    *slog.Logger
+	Digest    *workdigest.Runner
+	Knowledge *knowledge.Runner
+	Log       *slog.Logger
 }
 
 // Server holds web dependencies.
@@ -121,6 +123,11 @@ func (s *Server) Mount(r chi.Router) {
 				r.Use(s.requireSuperAdmin)
 				r.Get("/admin/overview", s.handleOverview)
 				r.Get("/admin/workboard", s.handleWorkboard)
+				r.Get("/admin/knowledge/runs", s.handleKnowledgeRuns)
+				r.Get("/admin/knowledge/schedule", s.handleKnowledgeSchedule)
+				r.Put("/admin/knowledge/schedule", s.handleSetKnowledgeSchedule)
+				r.Post("/admin/knowledge/run", s.handleKnowledgeRun)
+				r.Post("/admin/knowledge/items/{id}/review", s.handleKnowledgeReview)
 				r.Get("/admin/extraction/config", s.handleExtractionConfig)
 				r.Get("/admin/extraction/runs", s.handleExtractionRuns)
 				r.Post("/admin/extraction/run", s.handleExtractionRun)

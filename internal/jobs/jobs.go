@@ -8,6 +8,7 @@ import (
 
 	"aiseat/internal/feishu"
 	"aiseat/internal/health"
+	"aiseat/internal/knowledge"
 	"aiseat/internal/notify"
 	"aiseat/internal/report"
 	"aiseat/internal/risk"
@@ -28,6 +29,7 @@ type Deps struct {
 	Feishu        *feishu.Client
 	Report        report.Deps
 	Digest        *workdigest.Runner // optional
+	Knowledge     *knowledge.Runner  // optional
 	EgressEchoURL string
 	Loc           *time.Location
 	GitHub        health.GitHub
@@ -171,6 +173,17 @@ func Register(c *cron.Cron, d Deps) {
 		_, _ = c.AddFunc("0 10 * * 5", func() {
 			if err := d.Digest.RunWeekBriefings(ctx, time.Now()); err != nil {
 				log.Warn("admin briefings", "err", err)
+			}
+		})
+	}
+
+	// The flywheel works from completed daily summaries and catches up missed periods.
+	if d.Knowledge != nil {
+		_, _ = c.AddFunc("@every 30m", func() {
+			taskCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cancel()
+			if err := d.Knowledge.Tick(taskCtx, time.Now()); err != nil {
+				log.Warn("knowledge flywheel", "err", err)
 			}
 		})
 	}
