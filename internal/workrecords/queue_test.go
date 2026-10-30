@@ -224,3 +224,42 @@ func TestRepeatedHistoryUsesSingleSnapshotBlob(t *testing.T) {
 		t.Fatalf("small sources were not packed: %d %v", batchCount, err)
 	}
 }
+
+func TestSnapshotRejectsCrossEmployeePrefix(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(testutil.NewDB(t))
+	q := Queue{Store: st}
+	day := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	public, err := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_prefix_public", Name: "成员"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	private, err := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "ou_prefix_private", Name: "林伊默"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"content":"私密"}`)
+	h := sha256.Sum256(data)
+	if err = st.PutBlobs(ctx, []store.Blob{{Hash: h, Kind: "input", Data: data}}, day); err != nil {
+		t.Fatal(err)
+	}
+	parent := [16]byte{1}
+	session := int64(1)
+	if err = st.InsertRequest(ctx, store.RequestRow{ID: parent, EmployeeID: private.ID, SessionID: &session, StartedAt: day.Add(time.Minute), Endpoint: "responses", ReqHashes: h[:]}); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.InsertRequest(ctx, store.RequestRow{ID: [16]byte{2}, EmployeeID: public.ID, SessionID: &session, StartedAt: day.Add(2 * time.Minute), Endpoint: "responses", ReqPrefixOf: &parent, ReqPrefixLen: 1}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := q.Start(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = q.SnapshotNext(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	var gaps, blobs int
+	if err = st.Pool.QueryRow(ctx, `SELECT missing_count,(SELECT count(*) FROM wm_full_journal_blobs WHERE run_id=$1) FROM wm_full_journal_runs WHERE id=$1`, run).Scan(&gaps, &blobs); err != nil || gaps != 1 || blobs != 0 {
+		t.Fatalf("privacy gap=%d blobs=%d err=%v", gaps, blobs, err)
+	}
+}

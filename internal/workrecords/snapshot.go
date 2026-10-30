@@ -8,6 +8,27 @@ import (
 	"aiseat/internal/store"
 )
 
+type scopedReader struct {
+	queue   *Queue
+	owner   int64
+	session *int64
+}
+
+func (s scopedReader) GetRequestEnc(ctx context.Context, id [16]byte) (store.RequestEnc, error) {
+	e, err := s.queue.ownedEncoding(ctx, id)
+	if err != nil {
+		return store.RequestEnc{}, err
+	}
+	sameSession := (e.session == nil && s.session == nil) || (e.session != nil && s.session != nil && *e.session == *s.session)
+	if e.owner != s.owner || !sameSession {
+		return store.RequestEnc{}, fmt.Errorf("%w: prefix belongs to another identity or session", ErrInvalidRecord)
+	}
+	return e.enc, nil
+}
+func (s scopedReader) GetBlob(ctx context.Context, h [32]byte) (string, []byte, error) {
+	return s.queue.Store.GetBlob(ctx, h)
+}
+
 // snapshotRecord transfers each distinct blob at most once per journal run.
 // Reused entries retain their kind and hash without downloading the contents
 // again; snapshot planning verifies their stored bytes before model use.
@@ -15,7 +36,7 @@ func (q *Queue) snapshotRecord(ctx context.Context, run int64, row store.Request
 	if row.BodiesPurged {
 		return Record{}, fmt.Errorf("%w: purged", ErrInvalidRecord)
 	}
-	req, err := requestHashes(ctx, q, row.ID)
+	req, err := requestHashes(ctx, scopedReader{queue: q, owner: row.EmployeeID, session: row.SessionID}, row.ID)
 	if err != nil {
 		return Record{}, err
 	}

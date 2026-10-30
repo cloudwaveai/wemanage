@@ -16,36 +16,48 @@ import (
 type Queue struct {
 	Store    *store.Store
 	mu       sync.Mutex
-	encCache map[[16]byte]store.RequestEnc
+	encCache map[[16]byte]ownedEncoding
 }
 
-func (q *Queue) GetRequestEnc(ctx context.Context, id [16]byte) (store.RequestEnc, error) {
+type ownedEncoding struct {
+	enc     store.RequestEnc
+	owner   int64
+	session *int64
+}
+
+func (q *Queue) ownedEncoding(ctx context.Context, id [16]byte) (ownedEncoding, error) {
 	q.mu.Lock()
 	e, ok := q.encCache[id]
 	q.mu.Unlock()
 	if ok {
 		return e, nil
 	}
-	e, err := q.Store.GetRequestEnc(ctx, id)
+	var prefix []byte
+	err := q.Store.Pool.QueryRow(ctx, `SELECT employee_id,session_id,req_prefix_of,req_prefix_len,req_chain_depth,req_hashes FROM requests WHERE id=$1`, id[:]).Scan(&e.owner, &e.session, &prefix, &e.enc.PrefixLen, &e.enc.ChainDepth, &e.enc.Hashes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return e, store.ErrNotFound
+	}
 	if err != nil {
 		return e, err
+	}
+	if len(prefix) > 0 {
+		if len(prefix) != 16 {
+			return e, fmt.Errorf("%w: invalid prefix ID", ErrInvalidRecord)
+		}
+		var p [16]byte
+		copy(p[:], prefix)
+		e.enc.PrefixOf = &p
 	}
 	q.mu.Lock()
 	if len(q.encCache) >= 32768 {
 		q.encCache = nil
 	}
 	if q.encCache == nil {
-		q.encCache = make(map[[16]byte]store.RequestEnc)
+		q.encCache = make(map[[16]byte]ownedEncoding)
 	}
 	q.encCache[id] = e
 	q.mu.Unlock()
 	return e, nil
-}
-func (q *Queue) GetBlob(ctx context.Context, h [32]byte) (string, []byte, error) {
-	return q.Store.GetBlob(ctx, h)
-}
-func (q *Queue) GetBlobs(ctx context.Context, hs [][32]byte) (map[[32]byte]store.Blob, error) {
-	return q.Store.GetBlobs(ctx, hs)
 }
 
 func (q *Queue) Start(ctx context.Context, day time.Time) (int64, error) {
