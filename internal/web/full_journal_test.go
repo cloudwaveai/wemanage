@@ -65,6 +65,17 @@ func TestFullJournalAccessFollowsSourcePrivacy(t *testing.T) {
 	if err = st.Pool.QueryRow(ctx, `SELECT state FROM wm_full_journal_batches WHERE run_id=$1`, run).Scan(&batchState); err != nil || batchState != "queued" {
 		t.Fatalf("retry state=%s %v", batchState, err)
 	}
+	if _, err = st.Pool.Exec(ctx, `UPDATE wm_full_journal_runs SET state='failed',superseded=true WHERE id=$1`, run); err != nil {
+		t.Fatal(err)
+	}
+	resp, body = admin.do("GET", "/api/admin/full-journal", "")
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"state":"superseded"`) {
+		t.Fatalf("archive status %d %s", resp.StatusCode, body)
+	}
+	resp, _ = admin.do("POST", fmt.Sprintf("/api/admin/full-journal/%d/retry", run), `{"accept_unknown":true}`)
+	if resp.StatusCode != 404 {
+		t.Fatalf("archived retry %d", resp.StatusCode)
+	}
 	if _, err = st.Pool.Exec(ctx, `UPDATE employees SET private_work_since=now() WHERE id=$1`, person.ID); err != nil {
 		t.Fatal(err)
 	}
