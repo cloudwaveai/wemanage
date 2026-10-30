@@ -85,7 +85,11 @@ func (q *Queue) Tick(ctx context.Context, model ModelExtractor, now time.Time) e
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			_, _ = q.Store.Pool.Exec(ctx, `UPDATE wm_full_journal_runs SET state='failed',error='处理暂停，请检查任务状态',updated_at=now() WHERE id=$1 AND state IN ('preparing','queued','running')`, run)
+			message := "处理暂停，请检查任务状态"
+			if errors.Is(stepErr, ErrEmbeddedMedia) {
+				message = "处理暂停：记录含图片或音视频，需要先接入多模态处理；原始内容已保留"
+			}
+			_, _ = q.Store.Pool.Exec(ctx, `UPDATE wm_full_journal_runs SET state='failed',error=$2,updated_at=now() WHERE id=$1 AND state IN ('preparing','queued','running')`, run, message)
 			return stepErr
 		}
 		if !more {

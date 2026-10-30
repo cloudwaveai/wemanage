@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -98,11 +99,42 @@ func TestEvidenceModelReceivesVerifiedSnapshotText(t *testing.T) {
 	if _, e = q.ProcessOnePaused(ctx, run, model); e == nil || model.calls != 1 {
 		t.Fatal("sample could run twice")
 	}
+	media := []byte(`{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}]}`)
+	mediaHash := sha256.Sum256(media)
+	if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_blobs(run_id,hash,kind,data) VALUES($1,$2,'input',$3)`, run, mediaHash[:], media); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_segments(source_id,direction,ordinal,hash,kind) VALUES($1,'request',2,$2,'input')`, source, mediaHash[:]); e != nil {
+		t.Fatal(e)
+	}
+	var mediaBatch []EvidenceBatch
+	mp, _ := NewEvidencePlanner(100000, func(b EvidenceBatch) error { mediaBatch = append(mediaBatch, b); return nil })
+	if e = mp.Add(EvidenceGroup{EmployeeID: emp.ID, EmployeeName: "成员", SessionID: &sid, Direction: "request", Segment: Segment{Kind: "input", Hash: mediaHash, Data: media}, Occurrences: []EvidenceOccurrence{{SourceID: source, Ordinal: 2, Time: at}}}); e != nil {
+		t.Fatal(e)
+	}
+	if e = mp.Finish(); e != nil {
+		t.Fatal(e)
+	}
+	mediaManifest, _ := json.Marshal(mediaBatch[0])
+	mediaTx, e := st.Pool.Begin(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = materializeEvidence(ctx, mediaTx, run, mediaManifest); !errors.Is(e, ErrEmbeddedMedia) {
+		t.Fatalf("media did not stop before model: %v", e)
+	}
+	_ = mediaTx.Rollback(ctx)
+	if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_batches(run_id,phase,ordinal,input_manifest,state) VALUES($1,'extract',1,$2,'queued')`, run, mediaManifest); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = q.ProcessNext(ctx, run, model); !errors.Is(e, ErrEmbeddedMedia) || model.calls != 1 {
+		t.Fatalf("media reached model: %v calls=%d", e, model.calls)
+	}
 	// A mismatching snapshot must fail before claiming the batch or invoking a model.
 	if _, e = st.Pool.Exec(ctx, `UPDATE wm_full_journal_blobs SET data='changed' WHERE run_id=$1`, run); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_batches(run_id,phase,ordinal,input_manifest,state) VALUES($1,'extract',1,$2,'queued')`, run, manifest); e != nil {
+	if _, e = st.Pool.Exec(ctx, `UPDATE wm_full_journal_batches SET input_manifest=$2 WHERE run_id=$1 AND phase='extract' AND ordinal=1`, run, manifest); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = q.ProcessNext(ctx, run, model); e == nil || model.calls != 1 {

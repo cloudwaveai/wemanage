@@ -1,12 +1,25 @@
 package workrecords
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"regexp"
 )
+
+// ErrEmbeddedMedia stops text-only models before they receive encoded images
+// or audio/video as if those bytes were readable evidence. The snapshot remains
+// intact until a verified multimodal processing path is available.
+var ErrEmbeddedMedia = errors.New("evidence includes media that needs multimodal processing")
+var mediaTypePattern = regexp.MustCompile(`(?i)"type"\s*:\s*"(input_image|image_url|image|input_audio|audio|video|input_video)"`)
+
+func containsEmbeddedMedia(data []byte) bool {
+	lower := bytes.ToLower(data)
+	return bytes.Contains(lower, []byte("data:image/")) || bytes.Contains(lower, []byte("data:audio/")) || bytes.Contains(lower, []byte("data:video/")) || mediaTypePattern.Match(data)
+}
 
 // Materialize only after privacy rows are locked; the same run's snapshot is
 // the only allowed source for text, which is verified again before use.
@@ -70,6 +83,9 @@ func materializeEvidence(ctx context.Context, tx pgx.Tx, run int64, manifest []b
 		var hash, data []byte
 		if err = rows.Scan(&hash, &data); err != nil {
 			return nil, err
+		}
+		if containsEmbeddedMedia(data) {
+			return nil, ErrEmbeddedMedia
 		}
 		blobs[hex.EncodeToString(hash)] = data
 	}
