@@ -32,7 +32,7 @@ func TestEvidenceModelReceivesVerifiedSnapshotText(t *testing.T) {
 	}
 	var run, source int64
 	var at time.Time
-	if e = st.Pool.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,state) VALUES('2026-10-29','queued') RETURNING id`).Scan(&run); e != nil {
+	if e = st.Pool.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,state,plan_format) VALUES('2026-10-29','queued','session-evidence-v1') RETURNING id`).Scan(&run); e != nil {
 		t.Fatal(e)
 	}
 	if e = st.Pool.QueryRow(ctx, `INSERT INTO wm_full_journal_sources(run_id,request_id,employee_id,employee_name,session_id,started_at,endpoint,status) VALUES($1,'00000000-0000-0000-0000-000000000001',$2,'成员',7,now(),'responses','ready') RETURNING id,started_at`, run, emp.ID).Scan(&source, &at); e != nil {
@@ -75,12 +75,28 @@ func TestEvidenceModelReceivesVerifiedSnapshotText(t *testing.T) {
 	if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_batches(run_id,phase,ordinal,input_manifest,state) VALUES($1,'extract',0,$2,'queued')`, run, manifest); e != nil {
 		t.Fatal(e)
 	}
+	verified, e := q.VerifyEvidenceBatch(ctx, run, 0)
+	if e != nil || verified.Parts != 1 || verified.Occurrences != 2 || verified.PayloadBytes == 0 {
+		t.Fatalf("verify %+v %v", verified, e)
+	}
+	if _, e = st.Pool.Exec(ctx, `UPDATE employees SET private_work_since=now() WHERE id=$1`, emp.ID); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = q.VerifyEvidenceBatch(ctx, run, 0); e == nil {
+		t.Fatal("verified private evidence")
+	}
+	if _, e = st.Pool.Exec(ctx, `UPDATE employees SET private_work_since=NULL WHERE id=$1`, emp.ID); e != nil {
+		t.Fatal(e)
+	}
 	model := &evidenceCapture{}
-	if ok, e := q.ProcessNext(ctx, run, model); e != nil || !ok {
+	if ok, e := q.ProcessOnePaused(ctx, run, model); e != nil || !ok {
 		t.Fatalf("process %v %v", ok, e)
 	}
 	if model.calls != 1 || !strings.Contains(model.input, string(data)) || !strings.Contains(model.input, `"ordinal":1`) {
 		t.Fatalf("model did not receive full evidence: calls=%d", model.calls)
+	}
+	if _, e = q.ProcessOnePaused(ctx, run, model); e == nil || model.calls != 1 {
+		t.Fatal("sample could run twice")
 	}
 	// A mismatching snapshot must fail before claiming the batch or invoking a model.
 	if _, e = st.Pool.Exec(ctx, `UPDATE wm_full_journal_blobs SET data='changed' WHERE run_id=$1`, run); e != nil {
