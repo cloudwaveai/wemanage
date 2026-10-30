@@ -268,3 +268,14 @@ func (r *Runner) logger() *slog.Logger {
 	}
 	return slog.Default()
 }
+
+// Extract runs an explicitly requested analysis through the configured summary
+// account and model. It does not schedule calls or write results by itself.
+func (r *Runner) Extract(ctx context.Context, system, material string) (string, string, ModelUsage, error) {
+	client, model, err := r.client(ctx)
+	if err != nil {
+		return "", "", ModelUsage{}, err
+	}
+	text, usage, err := client.completeWithUsage(ctx, system, material)
+	return text, model, usage, err
+}

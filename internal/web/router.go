@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"aiseat/internal/cpa"
@@ -56,9 +57,10 @@ type Deps struct {
 
 // Server holds web dependencies.
 type Server struct {
-	deps     Deps
-	installs installCodes
-	codex    codexLogins // ChatGPT logins in progress (codexlogin.go)
+	deps         Deps
+	installs     installCodes
+	codex        codexLogins // ChatGPT logins in progress (codexlogin.go)
+	extractionMu sync.Mutex  // at most one explicit model analysis at a time
 }
 
 // NewServer builds the web server.
@@ -119,6 +121,10 @@ func (s *Server) Mount(r chi.Router) {
 				r.Use(s.requireSuperAdmin)
 				r.Get("/admin/overview", s.handleOverview)
 				r.Get("/admin/workboard", s.handleWorkboard)
+				r.Get("/admin/extraction/config", s.handleExtractionConfig)
+				r.Get("/admin/extraction/runs", s.handleExtractionRuns)
+				r.Post("/admin/extraction/run", s.handleExtractionRun)
+				r.Post("/admin/extraction/items/{id}/review", s.handleExtractionReview)
 				r.Get("/admin/workboard/employees/{id}", s.handleEmployeeWorkUsage)
 				r.Get("/admin/workboard/digests", s.handleWorkDigests)
 				r.Post("/admin/workboard/digests/run", s.handleRunWorkDigest)
