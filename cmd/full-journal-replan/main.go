@@ -44,7 +44,7 @@ func main() {
 		fmt.Printf("created run %d; original %d retained\n", run, id)
 		return
 	}
-	err = q.PlanPaused(ctx, id, func(n int) { fmt.Printf("planned %d sources\n", n) })
+	err = q.PlanPaused(ctx, id, func(n int) { fmt.Printf("planned %d units\n", n) })
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

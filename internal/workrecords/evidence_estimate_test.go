@@ -3,6 +3,7 @@ package workrecords
 import (
 	"aiseat/internal/store"
 	"aiseat/internal/testutil"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -101,5 +102,46 @@ func TestEstimateIsReadOnlyAndRespectsSessionBoundaries(t *testing.T) {
 	}
 	if _, e = q.EstimateEvidence(ctx, run, nil); e == nil {
 		t.Fatal("accepted private source")
+	}
+}
+
+func TestEvidenceOrderingFollowsFirstSourcePosition(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(testutil.NewDB(t))
+	q := Queue{Store: st}
+	emp, e := st.UpsertEmployeeByOpenID(ctx, store.Employee{FeishuOpenID: "chronological-owner", Name: "成员"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	var run, source int64
+	if e = st.Pool.QueryRow(ctx, `INSERT INTO wm_full_journal_runs(day,state) VALUES('2026-10-29','preparing') RETURNING id`).Scan(&run); e != nil {
+		t.Fatal(e)
+	}
+	if e = st.Pool.QueryRow(ctx, `INSERT INTO wm_full_journal_sources(run_id,request_id,employee_id,employee_name,session_id,started_at,endpoint,status) VALUES($1,'00000000-0000-0000-0000-000000000001',$2,'成员',7,now(),'responses','ready') RETURNING id`, run, emp.ID).Scan(&source); e != nil {
+		t.Fatal(e)
+	}
+	a, b := []byte("first"), []byte("second")
+	ha, hb := sha256.Sum256(a), sha256.Sum256(b)
+	if bytes.Compare(ha[:], hb[:]) < 0 {
+		a, b = b, a
+		ha, hb = hb, ha
+	}
+	for i, item := range []struct {
+		data []byte
+		hash [32]byte
+	}{{a, ha}, {b, hb}} {
+		if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_blobs(run_id,hash,kind,data) VALUES($1,$2,'input',$3)`, run, item.hash[:], item.data); e != nil {
+			t.Fatal(e)
+		}
+		if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_segments(source_id,direction,ordinal,hash,kind) VALUES($1,'request',$2,$3,'input')`, source, i, item.hash[:]); e != nil {
+			t.Fatal(e)
+		}
+	}
+	var order []string
+	if e = q.walkEvidence(ctx, run, func(g EvidenceGroup) error { order = append(order, string(g.Segment.Data)); return nil }, nil); e != nil {
+		t.Fatal(e)
+	}
+	if len(order) != 2 || order[0] != string(a) || order[1] != string(b) {
+		t.Fatalf("source order not preserved: %v", order)
 	}
 }
