@@ -2,6 +2,7 @@ package wemanage
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -61,6 +62,13 @@ type summarySource struct {
 // associated request is assigned to a hidden project; never try to redact by keyword.
 const hiddenDay = `exists(select 1 from requests r left join api_keys k on k.id=r.api_key_id left join request_projects rp on rp.request_id=r.id join wm_hidden_projects hp on hp.project_id=coalesce(rp.project_id,k.project_id) where r.employee_id=e.id and (r.started_at at time zone 'Asia/Shanghai')::date=wd.day)`
 
+func reportKind(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/api/project-report") && r.URL.Query().Get("kind") == "knowledge" {
+		return "knowledge"
+	}
+	return "summary"
+}
+
 func (s *Service) getCustomSummary(w http.ResponseWriter, r *http.Request) {
 	project, projectErr := s.reportProject(r)
 	if projectErr != nil {
@@ -78,7 +86,7 @@ func (s *Service) getCustomSummary(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "读取设置失败")
 		return
 	}
-	rows, err := s.Store.Pool.Query(r.Context(), `select id,start_day::text,end_day::text,prompt,result,model,input_tokens,output_tokens,created_at,state,error,coalesce((select json_agg(json_build_object('day',x.source_day,'name',e.name,'summary',x.summary) order by x.source_day,x.employee_id) from wm_custom_summary_sources x join employees e on e.id=x.employee_id where x.report_id=a.id),'[]'::json) from wm_custom_summaries a where owner_id=$1 and a.project_name=$3 and not exists(select 1 from wm_project_report_items pi join wm_knowledge_items i on i.id=pi.item_id where pi.report_id=a.id and (i.status='rejected' or not ( `+projectClueVisible+` ))) and a.subject_id is not distinct from nullif($2::bigint,0) and not exists(select 1 from wm_custom_summary_sources x join employees e on e.id=x.employee_id where x.report_id=a.id and (e.private_work_since is not null or e.name='林伊默' or exists(select 1 from requests r left join api_keys k on k.id=r.api_key_id left join request_projects rp on rp.request_id=r.id join wm_hidden_projects hp on hp.project_id=coalesce(rp.project_id,k.project_id) where r.employee_id=e.id and (r.started_at at time zone 'Asia/Shanghai')::date=x.source_day))) order by id desc limit 50`, who(r).employee.ID, subject, project)
+	rows, err := s.Store.Pool.Query(r.Context(), `select id,start_day::text,end_day::text,prompt,result,model,input_tokens,output_tokens,created_at,state,error,analysis_kind,phase,coalesce((select json_agg(json_build_object('day',x.source_day,'name',e.name,'summary',x.summary) order by x.source_day,x.employee_id) from wm_custom_summary_sources x join employees e on e.id=x.employee_id where x.report_id=a.id),'[]'::json) from wm_custom_summaries a where owner_id=$1 and a.analysis_kind=$4 and a.project_name=$3 and not exists(select 1 from wm_project_report_items pi join wm_knowledge_items i on i.id=pi.item_id where pi.report_id=a.id and (i.status='rejected' or not ( `+projectClueVisible+` ))) and a.subject_id is not distinct from nullif($2::bigint,0) and not exists(select 1 from wm_custom_summary_sources x join employees e on e.id=x.employee_id where x.report_id=a.id and (e.private_work_since is not null or e.name='林伊默' or exists(select 1 from requests r left join api_keys k on k.id=r.api_key_id left join request_projects rp on rp.request_id=r.id join wm_hidden_projects hp on hp.project_id=coalesce(rp.project_id,k.project_id) where r.employee_id=e.id and (r.started_at at time zone 'Asia/Shanghai')::date=x.source_day))) order by id desc limit 50`, who(r).employee.ID, subject, project, reportKind(r))
 	if err != nil {
 		fail(w, 500, "读取历史失败")
 		return
@@ -96,12 +104,14 @@ func (s *Service) getCustomSummary(w http.ResponseWriter, r *http.Request) {
 		Created time.Time       `json:"created_at"`
 		State   string          `json:"state"`
 		Error   string          `json:"error"`
+		Kind    string          `json:"kind"`
+		Phase   string          `json:"phase"`
 		Sources json.RawMessage `json:"sources"`
 	}
 	reports := []report{}
 	for rows.Next() {
 		var x report
-		if rows.Scan(&x.ID, &x.From, &x.To, &x.Prompt, &x.Result, &x.Model, &x.Input, &x.Output, &x.Created, &x.State, &x.Error, &x.Sources) != nil {
+		if rows.Scan(&x.ID, &x.From, &x.To, &x.Prompt, &x.Result, &x.Model, &x.Input, &x.Output, &x.Created, &x.State, &x.Error, &x.Kind, &x.Phase, &x.Sources) != nil {
 			fail(w, 500, "读取历史失败")
 			return
 		}
@@ -178,7 +188,11 @@ func (s *Service) generateCustomSummary(w http.ResponseWriter, r *http.Request) 
 	if project != "" {
 		projectItems, err = s.projectReportItems(ctx, tx, project, v.From, v.To)
 		if err == nil {
-			rows, err = tx.Query(ctx, `select distinct src.source_day::text,e.id,e.name,src.summary_md from wm_knowledge_items i join wm_knowledge_sources src on src.run_id=i.run_id join employees e on e.id=src.employee_id where i.id=any($1::bigint[]) and src.source_day >= $2::date and src.source_day <= $3::date and exists(select 1 from jsonb_array_elements(i.evidence) ev where ev->>'source'=src.ordinal::text) order by 1,2,4`, projectItems, v.From, v.To)
+			sourceSQL := `select distinct src.source_day::text,e.id,e.name,src.summary_md from wm_knowledge_items i join wm_knowledge_sources src on src.run_id=i.run_id join employees e on e.id=src.employee_id where i.id=any($1::bigint[]) and src.source_day >= $2::date and src.source_day <= $3::date and exists(select 1 from jsonb_array_elements(i.evidence) ev where ev->>'source'=src.ordinal::text)`
+			if reportKind(r) == "knowledge" {
+				sourceSQL += ` union select wd.day::text,e.id,e.name,wd.summary_md from work_digests wd join work_digest_days d on d.day=wd.day and d.status='done' join employees e on e.id=wd.employee_id where wd.day >= $2::date and wd.day <= $3::date and e.private_work_since is null and e.name<>'林伊默' and not ` + hiddenDay + ` and exists(select 1 from wm_knowledge_sources ps join wm_knowledge_items i on i.run_id=ps.run_id where i.id=any($1::bigint[]) and ps.employee_id=e.id and exists(select 1 from jsonb_array_elements(i.evidence) ev where ev->>'source'=ps.ordinal::text))`
+			}
+			rows, err = tx.Query(ctx, sourceSQL+` order by 1,2,4`, projectItems, v.From, v.To)
 		}
 	} else {
 		rows, err = tx.Query(ctx, `select wd.day::text,e.id,e.name,wd.summary_md from work_digests wd join work_digest_days d on d.day=wd.day and d.status='done' join employees e on e.id=wd.employee_id where wd.day >= $1::date and wd.day <= $2::date and e.private_work_since is null and e.name<>'林伊默' and not e.is_service and ($3::bigint=0 or e.id=$3) and not `+hiddenDay+` order by wd.day,e.id`, v.From, v.To, subject)
@@ -251,8 +265,12 @@ func (s *Service) generateCustomSummary(w http.ResponseWriter, r *http.Request) 
 	for i, x := range sources {
 		fmt.Fprintf(&material, "[来源 %d] %s · %s\n%s\n\n", i+1, x.Day, x.Name, x.Text)
 	}
-	if material.Len() > 350000 {
-		fail(w, 422, "所选日报超过单次模型容量，未截断；请缩小日期范围")
+	capacity := 350000
+	if reportKind(r) == "knowledge" {
+		capacity = 3500000
+	}
+	if material.Len() > capacity {
+		fail(w, 422, "所选来源超过本次处理容量，未截断；请缩小日期范围")
 		return
 	}
 	var model string
@@ -261,7 +279,18 @@ func (s *Service) generateCustomSummary(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var id int64
-	err = tx.QueryRow(ctx, `insert into wm_custom_summaries(owner_id,start_day,end_day,prompt,result,model,state,subject_id,project_name) values($1,$2::date,$3::date,$4,'',$5,'running',nullif($6::bigint,0),$7) returning id`, who(r).employee.ID, v.From, v.To, v.Prompt, model, subject, project).Scan(&id)
+	fingerprint := ""
+	if reportKind(r) == "knowledge" {
+		fingerprint = fmt.Sprintf("%x", sha256.Sum256([]byte("project-knowledge-v1\n"+model+"\n"+project+fmt.Sprint(projectItems)+"\n"+material.String())))
+		if e := tx.QueryRow(ctx, `select id from wm_custom_summaries where owner_id=$1 and project_name=$2 and analysis_kind='knowledge' and content_hash=$3 and state='done' order by id desc limit 1`, who(r).employee.ID, project, fingerprint).Scan(&id); e == nil {
+			reply(w, 200, map[string]any{"id": id, "state": "done", "reused": true})
+			return
+		} else if e != pgx.ErrNoRows {
+			fail(w, 500, "检查知识版本失败")
+			return
+		}
+	}
+	err = tx.QueryRow(ctx, `insert into wm_custom_summaries(owner_id,start_day,end_day,prompt,result,model,state,subject_id,project_name,analysis_kind,content_hash) values($1,$2::date,$3::date,$4,'',$5,'running',nullif($6::bigint,0),$7,$8,$9) returning id`, who(r).employee.ID, v.From, v.To, v.Prompt, model, subject, project, reportKind(r), fingerprint).Scan(&id)
 	if err != nil {
 		fail(w, 409, "已有总结正在生成，或任务无法创建")
 		return
@@ -292,17 +321,21 @@ func (s *Service) generateCustomSummary(w http.ResponseWriter, r *http.Request) 
 	if prompt == "" {
 		prompt = defaultSummaryPrompt
 	}
-	go s.runCustomSummary(id, model, prompt, material.String())
+	go s.runCustomSummary(id, model, prompt, material.String(), reportKind(r), project, sources)
 	reply(w, 202, map[string]any{"id": id, "state": "running", "sources": len(sources)})
 }
 
-func (s *Service) runCustomSummary(id int64, model, prompt, material string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+func (s *Service) runCustomSummary(id int64, model, prompt, material, kind, project string, sources []summarySource) {
+	duration := 5 * time.Minute
+	if kind == "knowledge" {
+		duration = 20 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 	finishError := func() {
 		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, _ = s.Store.Pool.Exec(c, `update wm_custom_summaries set state='failed',error='生成中断或来源权限发生变化，请检查后重新生成' where id=$1 and state='running'`, id)
+		_, _ = s.Store.Pool.Exec(c, `update wm_custom_summaries set state='failed',error='生成未完成：模型调用、来源权限或引文结构校验未通过。完整来源和模型过程已保留。' where id=$1 and state='running'`, id)
 	}
 	tx, err := s.Store.Pool.Begin(ctx)
 	if err != nil {
@@ -353,12 +386,18 @@ func (s *Service) runCustomSummary(id int64, model, prompt, material string) {
 		finishError()
 		return
 	}
-	output, used, usage, err := s.Summarizer.ExtractWithModel(ctx, model, summaryGuard+prompt, material)
+	var output, used string
+	var usage workdigest.ModelUsage
+	if kind == "knowledge" {
+		output, used, usage, err = s.synthesizeProjectKnowledge(ctx, id, model, project, material, sources)
+	} else {
+		output, used, usage, err = s.Summarizer.ExtractWithModel(ctx, model, summaryGuard+prompt, material)
+	}
 	if err != nil || strings.TrimSpace(output) == "" {
 		finishError()
 		return
 	}
-	_, err = tx.Exec(ctx, `update wm_custom_summaries set state='done',result=$2,model=$3,input_tokens=$4,output_tokens=$5 where id=$1 and state='running'`, id, output, used, usage.Input, usage.Output)
+	_, err = tx.Exec(ctx, `update wm_custom_summaries set state='done',phase='done',result=$2,model=$3,input_tokens=$4,output_tokens=$5 where id=$1 and state='running'`, id, output, used, usage.Input, usage.Output)
 	if err != nil || tx.Commit(ctx) != nil {
 		finishError()
 		return

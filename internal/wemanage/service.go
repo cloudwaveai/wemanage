@@ -48,6 +48,10 @@ func Install(ctx context.Context, st *store.Store) error {
  ('gpt-5.6-luna','USD',0.20,0.02,1.20,'https://developers.openai.com/api/docs/models/gpt-5.6-luna','2026-11-03') ON CONFLICT(model) DO NOTHING;
  CREATE TABLE IF NOT EXISTS wm_custom_summaries (id BIGSERIAL PRIMARY KEY, owner_id BIGINT NOT NULL REFERENCES employees(id), start_day DATE NOT NULL, end_day DATE NOT NULL, prompt TEXT NOT NULL, result TEXT NOT NULL, model TEXT NOT NULL, input_tokens BIGINT, output_tokens BIGINT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  CREATE TABLE IF NOT EXISTS wm_custom_summary_sources (report_id BIGINT NOT NULL REFERENCES wm_custom_summaries(id), employee_id BIGINT NOT NULL REFERENCES employees(id), source_day DATE NOT NULL, summary TEXT NOT NULL, PRIMARY KEY(report_id, employee_id, source_day));
+ ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS analysis_kind TEXT NOT NULL DEFAULT 'summary';
+ ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
+ ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT '';
+ CREATE TABLE IF NOT EXISTS wm_knowledge_analysis_steps(id BIGSERIAL PRIMARY KEY,report_id BIGINT NOT NULL REFERENCES wm_custom_summaries(id),phase TEXT NOT NULL,output TEXT NOT NULL,model TEXT NOT NULL,input_tokens BIGINT,output_tokens BIGINT,error TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT now());
  ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS project_name TEXT NOT NULL DEFAULT '';
  CREATE TABLE IF NOT EXISTS wm_project_report_items (report_id BIGINT NOT NULL REFERENCES wm_custom_summaries(id), item_id BIGINT NOT NULL REFERENCES wm_knowledge_items(id), PRIMARY KEY(report_id,item_id));
  ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS subject_id BIGINT REFERENCES employees(id);
@@ -196,6 +200,7 @@ func (s *Service) Handler() http.Handler {
 		r.Get("/api/project-candidates", s.projectCandidates)
 		r.Get("/api/project-report", s.getCustomSummary)
 		r.Post("/api/project-report/generate", s.generateCustomSummary)
+		r.Post("/api/project-report/{id}/archive", s.archiveProjectKnowledge)
 		r.Put("/api/project-candidates", s.updateProjectCandidate)
 		r.Get("/api/person-profile", s.getCustomSummary)
 		r.Post("/api/person-profile/generate", s.generateCustomSummary)

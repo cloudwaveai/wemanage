@@ -9,7 +9,8 @@ import (
 )
 
 // Publications expose only the reviewed asset, never the underlying daily reports.
-const assetVisible = `i.status<>'rejected' and ` + projectClueVisible + ` and not exists(select 1 from wm_project_candidate_states ps where ps.hidden and ps.name=coalesce((select canonical from wm_project_candidate_aliases where alias=trim(i.project_hint)),trim(i.project_hint))) and exists(select 1 from employees ae where ae.id=a.author_id and ae.private_work_since is null and ae.name<>'林伊默')`
+var assetVisible = `i.status<>'rejected' and ` + projectClueVisible + ` and not exists(select 1 from wm_project_candidate_states ps where ps.hidden and ps.name=coalesce((select canonical from wm_project_candidate_aliases where alias=trim(i.project_hint)),trim(i.project_hint))) and exists(select 1 from employees ae where ae.id=a.author_id and ae.private_work_since is null and ae.name<>'林伊默')` + ` and not exists(select 1 from wm_asset_report_sources rs join wm_custom_summaries kr on kr.id=rs.report_id where rs.asset_id=a.id and not (` + strings.ReplaceAll(projectKnowledgeVisible, "a.", "kr.") + `))`
+
 const assetSchema = `
 CREATE TABLE IF NOT EXISTS wm_assets (
  id BIGSERIAL PRIMARY KEY, source_item_id BIGINT NOT NULL REFERENCES wm_knowledge_items(id),
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS wm_asset_versions (
  id BIGSERIAL PRIMARY KEY, asset_id BIGINT NOT NULL REFERENCES wm_assets(id), version INT NOT NULL,
  title TEXT NOT NULL, content TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('draft','published','resolved','hidden')),
  editor_id BIGINT NOT NULL REFERENCES employees(id), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(asset_id,version)
-);`
+);
+CREATE TABLE IF NOT EXISTS wm_asset_report_sources(asset_id BIGINT NOT NULL REFERENCES wm_assets(id),report_id BIGINT NOT NULL REFERENCES wm_custom_summaries(id),PRIMARY KEY(asset_id,report_id));`
 
 func (s *Service) assetList(w http.ResponseWriter, r *http.Request) {
 	shared := r.URL.Path == "/api/shared/assets"
