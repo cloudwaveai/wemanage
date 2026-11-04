@@ -6,8 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"regexp"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrEmbeddedMedia stops text-only models before they receive encoded images
@@ -18,7 +19,14 @@ var mediaTypePattern = regexp.MustCompile(`(?i)"type"\s*:\s*"(input_image|image_
 
 func containsEmbeddedMedia(data []byte) bool {
 	lower := bytes.ToLower(data)
-	return bytes.Contains(lower, []byte("data:image/")) || bytes.Contains(lower, []byte("data:audio/")) || bytes.Contains(lower, []byte("data:video/")) || mediaTypePattern.Match(data)
+	for _, kind := range []string{"image", "audio", "video"} {
+		for _, slash := range []string{"/", `\/`, `\u002f`} {
+			if bytes.Contains(lower, []byte("data:"+kind+slash)) {
+				return true
+			}
+		}
+	}
+	return mediaTypePattern.Match(data)
 }
 
 // Materialize only after privacy rows are locked; the same run's snapshot is
@@ -86,6 +94,9 @@ func materializeEvidence(ctx context.Context, tx pgx.Tx, run int64, manifest []b
 		}
 		if containsEmbeddedMedia(data) {
 			return nil, ErrEmbeddedMedia
+		}
+		if _, _, opaque, e := reasoningCipherRange(data); e != nil || opaque {
+			return nil, ErrOpaqueReasoning
 		}
 		blobs[hex.EncodeToString(hash)] = data
 	}

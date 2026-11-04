@@ -1,0 +1,55 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>We-Manage · 设计评审</title><style>*{box-sizing:border-box}body{margin:0;background:#f7f6f1;color:#242c28;font:17px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}header,main{max-width:1160px;margin:auto;padding:48px 38px}header{border-bottom:1px solid #ccc}h1{font-size:42px;letter-spacing:-1px;margin:0 0 16px}h2{font-size:30px;margin:42px 0 20px}h3{font-size:23px;margin:36px 0 16px}h4{font-size:19px}p{max-width:940px}nav{display:flex;gap:24px;flex-wrap:wrap}a{color:#245d43}section{padding-bottom:48px;border-bottom:1px solid #ccc}.table-wrap{overflow:auto}table{border-collapse:collapse;min-width:700px;width:100%;background:#fff}th,td{padding:14px 18px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd}th{background:#e8eee6}.flows{display:grid;grid-template-columns:1fr 1fr;gap:12px}.flow{display:grid;grid-template-columns:1fr 28px 1fr;align-items:center;gap:8px}.flow div{background:#e8eee6;border:1px solid #c6d1c4;padding:16px 12px;text-align:center;min-height:80px;display:grid;place-items:center}.flow span{text-align:center;font-size:24px}.status{color:#56645b}@media(max-width:760px){header,main{padding:24px}.flows{grid-template-columns:1fr}h1{font-size:32px}}</style><header><h1>从工作记录到组织经验</h1><p class="status">2026-11-04 · 人员画像与知识共享设计评审</p><nav><a href="#people">人员画像</a><a href="#knowledge">组织知识</a><a href="https://ai.cloudwaveai.cn/wemanager/#projects">项目工作台 ↗</a></nav></header><main><section id="people"><h2>人员画像：维度、数据流与实现设计</h2>
+<p>日期：2026-11-04。范围：独立 We-Manage。本文是设计交付；标注“后续”的能力尚未上线。</p>
+<h3>目标</h3>
+<p>让管理者理解一个人正在承担什么工作、解决什么问题、形成什么方法，以及有哪些能跨时间比较的成长线索。每项判断应能回到来源，不依据 Token、调用量或在线时间推断绩效。</p>
+<h3>维度与数据</h3>
+<div class="table-wrap"><table><tr><th>维度</th><th>展示内容</th><th>来源与状态</th><th>判断边界</th></tr><tr><td>组织身份</td><td>姓名、部门、在职状态</td><td>飞书通讯录镜像，已接入</td><td>历史工作按当前部门归属，不代表历史任职</td></tr><tr><td>岗位与职责</td><td>岗位、职责范围、任职日期</td><td>后续接入经确认的飞书表格或岗位资料</td><td>不从聊天内容猜测正式岗位</td></tr><tr><td>工作内容</td><td>目标、关键动作、具体产出</td><td>日报与日志，已有画像生成</td><td>模型建议与实际执行分开</td></tr><tr><td>项目参与</td><td>参与项目、阶段、承担事项</td><td>项目线索已有；结构化职责归属后续建设</td><td>请求归属不能自动证明项目负责人身份</td></tr><tr><td>方法与经验</td><td>方法、场景、结果、限制</td><td>日报与知识候选，已有</td><td>与原始证据不符时保留待核对状态</td></tr><tr><td>成长线索</td><td>同类问题在不同时点的处理变化</td><td>画像可从跨日日报归纳</td><td>无可比样本则显示证据不足；不做性格或能力评分</td></tr><tr><td>Exam</td><td>测评名称、版本、日期、成绩、评分规则</td><td>后续接入；需要明确来源系统和员工映射</td><td>不同版本分数不直接比较；与日志推断分开</td></tr><tr><td>工作偏好</td><td>常用方法、工具及表达习惯</td><td>后续做可纠正的描述</td><td>不把行为偏好作为稳定人格判断</td></tr><tr><td>资源投入</td><td>Token、模型、参考费用、分时调用</td><td>已接入</td><td>不是工时或贡献度</td></tr></table></div>
+<h3>数据流图</h3>
+<div class="flows" aria-label="数据流与关系图"><div class="flow"><div>飞书通讯录</div><span>→</span><div>人员身份映射</div></div><div class="flow"><div>可见日志</div><span>→</span><div>完整来源日报</div></div><div class="flow"><div>完整来源日报</div><span>→</span><div>按人和时间选取材料</div></div><div class="flow"><div>人员身份映射</div><span>→</span><div>按人和时间选取材料</div></div><div class="flow"><div>按人和时间选取材料</div><span>→</span><div>LLM 工作画像草稿</div></div><div class="flow"><div>LLM 工作画像草稿</div><span>→</span><div>来源快照与版本</div></div><div class="flow"><div>来源快照与版本</div><span>→</span><div>人员画像页面</div></div><div class="flow"><div>岗位与 Exam：待接入</div><span>⇢</span><div>人员画像页面</div></div><div class="flow"><div>人员画像页面</div><span>→</span><div>核对日报与原始日志</div></div></div>
+<p>所有读取和生成入口先校验权限；私密人员以及含隐藏项目的人员日报排除。来源后来变私密时，已有分析也不再展示。</p>
+<h3>结构图</h3>
+<div class="flows" aria-label="数据流与关系图"><div class="flow"><div>人员画像</div><span>→</span><div>工作概览</div></div><div class="flow"><div>人员画像</div><span>→</span><div>项目与时间线</div></div><div class="flow"><div>人员画像</div><span>→</span><div>方法与成长线索</div></div><div class="flow"><div>人员画像</div><span>→</span><div>用量与分时</div></div><div class="flow"><div>人员画像</div><span>→</span><div>岗位与测评：待接入</div></div><div class="flow"><div>工作概览</div><span>→</span><div>来源日报与原始日志</div></div><div class="flow"><div>项目与时间线</div><span>→</span><div>来源日报与原始日志</div></div><div class="flow"><div>方法与成长线索</div><span>→</span><div>来源日报与原始日志</div></div></div>
+<h3>页面实现形式</h3>
+<p>顶部仅保留姓名、部门、日期选择；第一屏展示工作概览、项目和待核对问题。方法与成长放在第二层，用量独立分组。每条线索可展开依据。未接入的岗位、Exam 不填假值，也不画零分雷达图。必要说明集中放入“数据范围”，避免每块重复。</p>
+<p>当前模型结果为文字草稿。下一步可将事实项拆为稳定编号，增加人工纠正和历史版本：内容、来源编号、来源日期、判断状态、核对人、核对时间。事实纠正不覆盖原始日志。</p>
+<h3>实施顺序与验收</h3>
+<p>1. 先用现有日报形成一人的跨日工作画像，逐项核对来源，确认无其他人员私密内容混入。</p>
+<p>2. 接入岗位表时使用稳定员工 ID；无法映射的行保留待处理，不按姓名直接覆盖。</p>
+<p>3. Exam 数据单独建表，记录试卷及评分版本；只有同口径结果允许趋势比较。</p>
+<p>4. 最后增加人工修正与共享范围；当前入口仍限有效超级管理员，不能将此文档视为已上线全员共享。</p>
+<p>通过标准：核心事实均有来源；未完成与建议不混写成成果；日期范围可解释；缺失数据不推断为未工作；私密人员在读取、生成和历史展示三个环节均排除。业务验收由负责人填写。</p></section><section id="knowledge"><h2>组织知识与共享方案</h2>
+<p>日期：2026-11-04。范围：独立 We-Manage，复用已有日报和日志，正式原始记录保持不变。</p>
+<h3>产品目标</h3>
+<p>将分散工作记录整理成连续项目脉络，再将有证据、有适用条件的做法沉淀为组织知识与 Skill。先从已有日报快速定位高价值材料，需要核实时再读取对应人员和日期的日志。</p>
+<h3>四层组织方式</h3>
+<div class="table-wrap"><table><tr><th>层级</th><th>内容</th><th>当前与后续</th></tr><tr><td>来源层</td><td>请求日志、完整日报、来源日期、人员、模型及引用</td><td>已有；需要持续展示覆盖和缺失情况</td></tr><tr><td>工作层</td><td>项目目标、关键动作、产出、问题、决定、待办</td><td>已有项目候选；本次增加时间线与按需项目进展草稿</td></tr><tr><td>知识层</td><td>项目知识、常见问题、解决方法、适用条件、验证结果</td><td>已有候选和人工审核；跨项目同义归并需后续完善</td></tr><tr><td>资产层</td><td>可复用 Skill、SOP、模板、检查表</td><td>已有 Skill 草稿及流程预览；统一版本和发布管理属后续</td></tr></table></div>
+<div class="flows" aria-label="数据流与关系图"><div class="flow"><div>日报与周报</div><span>→</span><div>项目与问题候选</div></div><div class="flow"><div>项目与问题候选</div><span>→</span><div>按需核对原始日志</div></div><div class="flow"><div>按需核对原始日志</div><span>→</span><div>经验与 Skill 草稿</div></div><div class="flow"><div>经验与 Skill 草稿</div><span>→</span><div>人工审核</div></div><div class="flow"><div>人工审核</div><span>→</span><div>组织可复用资产</div></div><div class="flow"><div>组织可复用资产</div><span>→</span><div>新工作中引用</div></div><div class="flow"><div>新工作中引用</div><span>→</span><div>日报与周报</div></div></div>
+<p>这里的回路依靠新工作记录中可追溯的引用积累证据，不建设使用者反馈问卷，也不要求员工填反馈表。</p>
+<h3>知识卡片应包含什么</h3>
+<p>标题、所属项目、问题场景、方法、实际结果、适用条件、不适用情况、验证步骤、来源及日期、状态、版本、负责人。模型原文与人工修改版本分别保留。隐藏和撤回只改变展示状态，不清除正式来源。</p>
+<p>Skill 的可审核预览按“何时使用 → 准备什么 → 怎么做 → 分支条件 → 如何验证 → 何时停止”展示。现有流程预览已支持场景、步骤、验证和限制；后续增加明确分支与版本差异，缺失步骤保持待补充。</p>
+<h3>自动整理与快速路径</h3>
+<p>继续复用现有日报、周报提取任务。项目进展第一版按需生成：使用项目候选引用的日报快照，最多 31 天；来源过大或存在冲突版本时停止并提示，不截断。没有被提取到的项目线索不会自动进入此项目分析，所以不能称为全量项目覆盖。</p>
+<p>后续增量任务以“来源版本 + 项目 + 分析规则版本”为去重键，只处理新增或变化的材料；不要为每次打开页面重复跑模型。日汇总解决当日发生什么，周汇总串联阶段变化，月度检查知识是否仍适用。</p>
+<h3>共享与权限</h3>
+<p>当前服务仅管理员可用。未来共享至少区分私密、项目内、组织内三个范围；先过滤来源权限再检索，生成结果继承最严格的来源范围。来源权限收紧时，搜索结果、历史分析、资产版本及导出入口都要同步隐藏。老板的私密内容维持排除，不因整理成为知识而公开。</p>
+<p>当前尚无全员知识发布能力。新增成员访问前，必须单独实现角色与来源权限校验，不能只开放现有管理员接口。</p>
+<h3>组织资产整合</h3>
+<p>先按人员、项目和来源日期关联现有资产；再接入经指定的飞书知识库目录。先保存文档引用及权限，不全量复制无关文档。项目知识与通用知识分开，跨项目复用需核对是否含客户专属信息。</p>
+<h3>Manus-mono 对照与落地</h3>
+<p>参考：hidecloud / 潜云思绪，2026-10-26，《用 Manus 改造 Manus，AI Native 组织改造的实践和思考》，用户提供的 12 页 PDF。文中名称为 Manus-mono，简称 Mono，替代此前未定位的 muse-momo。以下是对作者团队实践的转述，不代表我方已经实现，也不是通用效果保证。</p>
+<div class="table-wrap"><table><tr><th>文章中的机制</th><th>我方适用方式</th><th>交付状态</th></tr><tr><td>统一入口描述仓库职责、协作关系与规范；没有合并所有仓库（第2–3页）</td><td>为项目建立上下文手册，关联目标、负责人、文档、仓库、流程和权限</td><td>本次完成设计；当前已有项目候选和时间线</td></tr><tr><td>将反复使用的发布流程写入 Mono，供团队和 AI 复用（第3页）</td><td>从日报发现重复问题，再查日志，产出可验证的 Skill</td><td>已有候选、Skill 草稿和流程预览；版本发布管理待实现</td></tr><tr><td>内置确认要求、代码检查、真实流程验证，人工保留关键判断（第5–6页）</td><td>Skill 明确准备条件、操作分支、验证方法及人工确认点</td><td>流程预览已有基础；完整分支及执行权限待实现</td></tr><tr><td>数字同事从新策略和系统事件更新上下文（第7–8页）</td><td>为项目手册保留来源、更新时间、变更依据和失效状态</td><td>后续设计；本轮不接入自主执行或主动通知</td></tr><tr><td>同项目成员共享 Session，加入发言需本人批准（第9页）</td><td>先共享审核过的成果，原始日志仍按来源权限隔离</td><td>全员共享待实现，不能直接开放管理员接口</td></tr><tr><td>汇总需要负责人决定的事情及推荐方案（第9–10页）</td><td>从项目进展提取待决策草稿，附卡点、选项、依据和负责人待确认项</td><td>后续设计，不自动审批或替负责人决策</td></tr></table></div>
+<p>PDF 第9页的协作图显示加载占位，图注明确内容为虚拟示意；本方案仅依据正文描述，不把示意当作真实工作数据。PDF 中的视频无法由静态文件播放，未声称核验其演示效果。</p>
+<h4>项目上下文手册</h4>
+<p>每个项目应汇集目标与范围、当前阶段、关键决定、相关人员、文档与仓库入口、约束、常见问题、可复用 Skill。每条事实关联来源和日期。模型推导的项目归属、负责人及阶段先作为候选，允许人工修改、归并或隐藏。缺少证据就显示待确认，不凭请求量推定岗位或责任。</p>
+<p>手册保存事实版本与引用；更新时区分新增事实、已改变事实、冲突和已失效做法。不同日期的决定应串联演变过程，不能只用最新摘要覆盖历史。来源收紧权限后，手册和派生资产同步收紧展示范围。</p>
+<h4>从经验到可执行 Skill</h4>
+<p>审核对象应是完整方法：触发场景、输入材料、权限前提、步骤、分支、验证、停止条件及人工确认点。流程图与文字共用一份结构化内容，避免图与实际步骤不一致。缺少验证证据的经验可保存为候选，但不能标记为已验证 Skill。</p>
+<p>后续选择一个重复出现且证据完整的问题，贯通“日报发现 → 日志核实 → Skill 草稿 → 流程预览 → 人工审核 → 新工作引用”。验收看是否能沿来源复查、按步骤完成并验证结果；不以知识卡数量作为效果证明。</p>
+<h4>本阶段取舍</h4>
+<p>优先完善项目上下文、可审核 Skill 和待决策草稿。跨仓库自动执行、自动开发、机器人发消息以及自动部署不属于本轮实现。继续不做使用者反馈问卷。老板私密来源持续排除，文章中的 Session 共享做法不构成开放权限的授权。</p>
+<p>人员画像侧重做过什么、承担哪些有证据的工作、使用什么方法、成果是否验证，以及方法如何变化。文章中的费用和团队效率属于作者自述，不作为我方预算目标或个人绩效标准。</p>
+<h3>可演示版本</h3>
+<p>用一个已获准展示的真实项目演示：组织成员 → 项目跨日记录 → 整理进展 → 展开来源 → 核对原始日志 → 查看知识与 Skill 流程。对外演示须用事先确认的脱敏案例；本次不向外发送正式日志或客户资料。</p>
+<p>一句产品介绍：We-Manage 将团队的 AI 工作记录整理为可追溯的项目进展和可复用的组织经验。</p>
+<p>当前能力边界：只反映已采集且有权查看的记录；模型总结需要核对；不自动评判员工表现，不代表覆盖所有线下工作。</p></section></main></html>

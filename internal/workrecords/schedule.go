@@ -88,8 +88,16 @@ func (q *Queue) Tick(ctx context.Context, model ModelExtractor, now time.Time) e
 			message := "处理暂停，请检查任务状态"
 			if errors.Is(stepErr, ErrEmbeddedMedia) {
 				message = "处理暂停：记录含图片或音视频，需要先接入多模态处理；原始内容已保留"
+			} else if errors.Is(stepErr, ErrOpaqueReasoning) {
+				message = "处理暂停：记录含不可直接读取的加密字段，需要先使用原始引用处理；原始内容已保留"
 			}
-			_, _ = q.Store.Pool.Exec(ctx, `UPDATE wm_full_journal_runs SET state='failed',error=$2,updated_at=now() WHERE id=$1 AND state IN ('preparing','queued','running')`, run, message)
+			if errors.Is(stepErr, ErrEmbeddedMedia) || errors.Is(stepErr, ErrOpaqueReasoning) {
+				// Stop the entire schedule atomically: another day must not
+				// start spending tokens on the same unsupported material.
+				_, _ = q.Store.Pool.Exec(ctx, `WITH disabled AS (UPDATE wm_full_journal_settings SET enabled=false,updated_at=now() WHERE id=1 RETURNING id) UPDATE wm_full_journal_runs SET state='failed',error=$2,updated_at=now() WHERE id=$1 AND state IN ('preparing','queued','running') AND EXISTS(SELECT 1 FROM disabled)`, run, message)
+			} else {
+				_, _ = q.Store.Pool.Exec(ctx, `UPDATE wm_full_journal_runs SET state='failed',error=$2,updated_at=now() WHERE id=$1 AND state IN ('preparing','queued','running')`, run, message)
+			}
 			return stepErr
 		}
 		if !more {

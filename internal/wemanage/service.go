@@ -21,7 +21,10 @@ import (
 //go:embed static/*
 var assets embed.FS
 
-type Service struct{ Store *store.Store }
+type Service struct {
+	Store      *store.Store
+	Summarizer SummaryModel
+}
 type identityKey struct{}
 type identity struct {
 	employee store.Employee
@@ -30,7 +33,30 @@ type identity struct {
 
 // Install adds separate tables; it never modifies or deletes gateway records.
 func Install(ctx context.Context, st *store.Store) error {
-	_, err := st.Pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS wm_cases (
+	_, err := st.Pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS wm_custom_summary_settings (employee_id BIGINT PRIMARY KEY REFERENCES employees(id), prompt TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE TABLE IF NOT EXISTS wm_model_price_catalog (model TEXT PRIMARY KEY, currency TEXT NOT NULL, input_per_million NUMERIC NOT NULL, cached_per_million NUMERIC NOT NULL, output_per_million NUMERIC NOT NULL, source TEXT NOT NULL, checked_on DATE NOT NULL);
+ CREATE TABLE IF NOT EXISTS wm_model_price_overrides (id BIGSERIAL PRIMARY KEY, model TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('manual','standard')), currency TEXT NOT NULL, input_per_million NUMERIC NOT NULL, cached_per_million NUMERIC NOT NULL, output_per_million NUMERIC NOT NULL, effective_at TIMESTAMPTZ NOT NULL, created_by BIGINT NOT NULL REFERENCES employees(id), created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE INDEX IF NOT EXISTS wm_price_override_lookup ON wm_model_price_overrides(model,effective_at DESC,id DESC);
+ INSERT INTO wm_model_price_catalog VALUES
+ ('gpt-6-astra','USD',10,1,50,'https://developers.openai.com/api/docs/models/gpt-6-astra','2026-11-03'),
+ ('gpt-6.1-sol','USD',2,0.10,10,'https://developers.openai.com/api/docs/models/gpt-6.1-sol','2026-11-03'),
+ ('gpt-6.1-terra','USD',1,0.05,5,'https://developers.openai.com/api/docs/models/gpt-6.1-terra','2026-11-03'),
+ ('gpt-6-luna','USD',0.10,0.01,0.50,'https://developers.openai.com/api/docs/models/gpt-6-luna','2026-11-03'),
+ ('gpt-6-sol','USD',2,0.20,10,'https://developers.openai.com/api/docs/models/gpt-6-sol','2026-11-03'),
+ ('gpt-5.6-sol','USD',4,0.40,20,'https://developers.openai.com/api/docs/models/gpt-5.6-sol','2026-11-03'),
+ ('gpt-5.6-terra','USD',2,0.20,12,'https://developers.openai.com/api/docs/models/gpt-5.6-terra','2026-11-03'),
+ ('gpt-5.6-luna','USD',0.20,0.02,1.20,'https://developers.openai.com/api/docs/models/gpt-5.6-luna','2026-11-03') ON CONFLICT(model) DO NOTHING;
+ CREATE TABLE IF NOT EXISTS wm_custom_summaries (id BIGSERIAL PRIMARY KEY, owner_id BIGINT NOT NULL REFERENCES employees(id), start_day DATE NOT NULL, end_day DATE NOT NULL, prompt TEXT NOT NULL, result TEXT NOT NULL, model TEXT NOT NULL, input_tokens BIGINT, output_tokens BIGINT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE TABLE IF NOT EXISTS wm_custom_summary_sources (report_id BIGINT NOT NULL REFERENCES wm_custom_summaries(id), employee_id BIGINT NOT NULL REFERENCES employees(id), source_day DATE NOT NULL, summary TEXT NOT NULL, PRIMARY KEY(report_id, employee_id, source_day));
+ ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS project_name TEXT NOT NULL DEFAULT '';
+ CREATE TABLE IF NOT EXISTS wm_project_report_items (report_id BIGINT NOT NULL REFERENCES wm_custom_summaries(id), item_id BIGINT NOT NULL REFERENCES wm_knowledge_items(id), PRIMARY KEY(report_id,item_id));
+ ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS subject_id BIGINT REFERENCES employees(id);
+ ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT 'done';
+ ALTER TABLE wm_custom_summaries ADD COLUMN IF NOT EXISTS error TEXT NOT NULL DEFAULT '';
+ CREATE UNIQUE INDEX IF NOT EXISTS wm_custom_summary_one_running ON wm_custom_summaries(owner_id) WHERE state='running';
+ CREATE TABLE IF NOT EXISTS wm_project_candidate_aliases (alias TEXT PRIMARY KEY, canonical TEXT NOT NULL, updated_by BIGINT NOT NULL REFERENCES employees(id), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE TABLE IF NOT EXISTS wm_project_candidate_states (name TEXT PRIMARY KEY, hidden BOOLEAN NOT NULL DEFAULT false, updated_by BIGINT NOT NULL REFERENCES employees(id), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+ CREATE TABLE IF NOT EXISTS wm_cases (
   id BIGSERIAL PRIMARY KEY, project_id BIGINT NOT NULL REFERENCES projects(id),
   event_id BIGINT NOT NULL REFERENCES project_events(id), created_by BIGINT NOT NULL REFERENCES employees(id),
   title TEXT NOT NULL, situation TEXT NOT NULL, approach TEXT NOT NULL, outcome TEXT NOT NULL,
@@ -52,7 +78,98 @@ func Install(ctx context.Context, st *store.Store) error {
   id BIGSERIAL PRIMARY KEY, case_id BIGINT NOT NULL REFERENCES wm_cases(id),
   created_by BIGINT NOT NULL REFERENCES employees(id), content TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
- );`)
+ );
+ CREATE TABLE IF NOT EXISTS wm_hidden_projects (
+  project_id BIGINT PRIMARY KEY REFERENCES projects(id),
+  reason TEXT NOT NULL,
+  hidden_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_worker_control (
+  id INTEGER PRIMARY KEY CHECK (id=1), enabled BOOLEAN NOT NULL DEFAULT false,
+  activated_at TIMESTAMPTZ NOT NULL DEFAULT now(), from_day DATE NOT NULL DEFAULT ((now() AT TIME ZONE 'Asia/Shanghai')::date - 1), last_error TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ INSERT INTO wm_log_worker_control (id) VALUES(1) ON CONFLICT(id) DO NOTHING;
+ CREATE TABLE IF NOT EXISTS wm_log_knowledge_runs (
+  id BIGSERIAL PRIMARY KEY, journal_run_id BIGINT NOT NULL UNIQUE REFERENCES wm_full_journal_runs(id),
+  state TEXT NOT NULL CHECK(state IN ('queued','running','done','failed')), model TEXT NOT NULL DEFAULT '',
+  raw_output TEXT NOT NULL DEFAULT '', input_tokens BIGINT, output_tokens BIGINT,
+  error TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), started_at TIMESTAMPTZ NOT NULL DEFAULT now(), finished_at TIMESTAMPTZ
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_knowledge_attempts (
+  id BIGSERIAL PRIMARY KEY, knowledge_run_id BIGINT NOT NULL REFERENCES wm_log_knowledge_runs(id),
+  raw_output TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,
+  error TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_knowledge_cards (
+  id BIGSERIAL PRIMARY KEY, knowledge_run_id BIGINT NOT NULL REFERENCES wm_log_knowledge_runs(id),
+  category TEXT NOT NULL CHECK(category IN ('project','problem','practice','skill')),
+  title TEXT NOT NULL, content TEXT NOT NULL, evidence JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','confirmed','rejected')),
+  reviewed_by BIGINT REFERENCES employees(id), reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_period_runs (
+  id BIGSERIAL PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('monthly','quarterly')),
+  period_start DATE NOT NULL, period_end DATE NOT NULL, coverage_start DATE NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('planning','running','done','partial','failed')), coverage_partial BOOLEAN NOT NULL DEFAULT false,
+  report TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(kind,period_start)
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_period_sources (
+  period_run_id BIGINT NOT NULL REFERENCES wm_log_period_runs(id), journal_run_id BIGINT NOT NULL REFERENCES wm_full_journal_runs(id),
+  PRIMARY KEY(period_run_id,journal_run_id)
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_period_people (
+  period_run_id BIGINT NOT NULL REFERENCES wm_log_period_runs(id), employee_id BIGINT NOT NULL REFERENCES employees(id),
+  PRIMARY KEY(period_run_id,employee_id)
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_period_batches (
+  id BIGSERIAL PRIMARY KEY, period_run_id BIGINT NOT NULL REFERENCES wm_log_period_runs(id),
+  level INTEGER NOT NULL, ordinal INTEGER NOT NULL, is_final BOOLEAN NOT NULL,
+  input_manifest JSONB NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','running','done','failed')),
+  raw_output TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', input_tokens BIGINT, output_tokens BIGINT,
+  error TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(period_run_id,level,ordinal)
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_period_attempts (
+  id BIGSERIAL PRIMARY KEY, batch_id BIGINT NOT NULL REFERENCES wm_log_period_batches(id),
+  raw_output TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,
+  error TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ CREATE TABLE IF NOT EXISTS wm_focus_jobs (
+  id BIGSERIAL PRIMARY KEY,item_id BIGINT NOT NULL REFERENCES wm_knowledge_items(id),request_id UUID NOT NULL,keyword TEXT NOT NULL,
+  created_by BIGINT NOT NULL REFERENCES employees(id),state TEXT NOT NULL DEFAULT 'queued',result TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',input_snapshot TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ );
+ CREATE TABLE IF NOT EXISTS wm_skill_drafts (
+ id BIGSERIAL PRIMARY KEY,source_item_id BIGINT NOT NULL REFERENCES wm_knowledge_items(id),variant TEXT NOT NULL,
+ source_focus_id BIGINT REFERENCES wm_focus_jobs(id),title TEXT NOT NULL,trigger_text TEXT NOT NULL,steps JSONB NOT NULL,
+ verification TEXT NOT NULL,limits_text TEXT NOT NULL,skill_md TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','confirmed','rejected')),
+ reviewed_by BIGINT REFERENCES employees(id),reviewed_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE(source_item_id,variant)
+ );
+ CREATE TABLE IF NOT EXISTS wm_focus_chunks (
+  id BIGSERIAL PRIMARY KEY,job_id BIGINT NOT NULL REFERENCES wm_focus_jobs(id),ordinal INT NOT NULL,phase TEXT NOT NULL,
+  state TEXT NOT NULL,input TEXT NOT NULL,output TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),UNIQUE(job_id,phase,ordinal)
+ );
+ CREATE UNIQUE INDEX IF NOT EXISTS wm_focus_active ON wm_focus_jobs(item_id,request_id,keyword) WHERE state IN ('queued','running','done');
+ CREATE TABLE IF NOT EXISTS wm_compact_jobs (
+  id BIGSERIAL PRIMARY KEY,run_id BIGINT NOT NULL,employee_id BIGINT NOT NULL DEFAULT 0,session_id BIGINT NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL,level INT NOT NULL DEFAULT 0,ordinal INT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',input TEXT NOT NULL,
+  output TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',error TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(run_id,employee_id,session_id,phase,level,ordinal)
+ );
+ CREATE TABLE IF NOT EXISTS wm_log_report_previews (
+  id BIGSERIAL PRIMARY KEY,journal_run_id BIGINT NOT NULL REFERENCES wm_full_journal_runs(id),
+  session_id BIGINT NOT NULL,state TEXT NOT NULL CHECK(state IN ('running','done','failed')),
+  source_batch_ids BIGINT[] NOT NULL,input_snapshot JSONB NOT NULL,raw_output TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,error TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),finished_at TIMESTAMPTZ
+ );`+assetSchema)
 	return err
 }
 
@@ -62,10 +179,44 @@ func (s *Service) Handler() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth)
 		r.Get("/api/session", s.session)
+		r.Get("/api/shared/assets", s.assetList)
+		r.Get("/api/assets", s.assetList)
+		r.Post("/api/assets", s.assetSave)
+		r.Post("/api/assets/seed", s.assetSeed)
+		r.Get("/api/assets/{id}/history", s.assetHistory)
 		r.Get("/api/projects", s.projects)
 		r.Get("/api/projects/{id}/events", s.events)
 		r.Get("/api/projects/{id}/activity", s.activity)
 		r.Get("/api/coverage", s.coverage)
+		r.Get("/api/reporting/usage", s.usageReport)
+		r.Get("/api/model-prices", s.modelPrices)
+		r.Post("/api/model-prices", s.saveModelPrice)
+		r.Get("/api/workspace", s.workspaceStats)
+		r.Get("/api/organization", s.organizationDirectory)
+		r.Get("/api/project-candidates", s.projectCandidates)
+		r.Get("/api/project-report", s.getCustomSummary)
+		r.Post("/api/project-report/generate", s.generateCustomSummary)
+		r.Put("/api/project-candidates", s.updateProjectCandidate)
+		r.Get("/api/person-profile", s.getCustomSummary)
+		r.Post("/api/person-profile/generate", s.generateCustomSummary)
+		r.Get("/api/custom-summary", s.getCustomSummary)
+		r.Put("/api/custom-summary", s.saveCustomSummary)
+		r.Post("/api/custom-summary/generate", s.generateCustomSummary)
+		r.Get("/api/log-worker", s.logWorkerStatus)
+		r.Put("/api/log-worker", s.setLogWorkerStatus)
+		r.Get("/api/log-knowledge", s.logKnowledge)
+		r.Get("/api/log-knowledge/runs", s.logKnowledgeRuns)
+		r.Post("/api/log-knowledge/runs/{id}/retry", s.retryLogKnowledge)
+		r.Put("/api/log-knowledge/{id}", s.reviewLogKnowledge)
+		r.Get("/api/log-reviews", s.logReviews)
+		r.Get("/api/log-previews", s.logPreviews)
+		r.Get("/api/compact-reports", s.compactReports)
+		r.Get("/api/skill-drafts", s.listSkillDrafts)
+		r.Put("/api/skill-drafts/{id}", s.reviewSkillDraft)
+		r.Get("/api/focus", s.listFocus)
+		r.Get("/api/focus/{id}/search", s.searchFocus)
+		r.Post("/api/focus/{id}", s.createFocus)
+		r.Post("/api/log-reviews/{id}/retry", s.retryLogReview)
 		r.Get("/api/cases", s.cases)
 		r.Post("/api/cases", s.createCase)
 		r.Post("/api/cases/{id}/confirm", s.confirmCase)
@@ -102,7 +253,8 @@ func (s *Service) auth(next http.Handler) http.Handler {
 			return
 		}
 		emp, err := s.Store.GetEmployee(r.Context(), sess.EmployeeID)
-		if err != nil || !emp.IsSuperAdmin || emp.Status != "active" {
+		memberRead := r.Method == http.MethodGet && (r.URL.Path == "/api/session" || r.URL.Path == "/api/shared/assets")
+		if err != nil || (!emp.IsSuperAdmin && !memberRead) || emp.Status != "active" {
 			fail(w, 403, "仅限有效的超级管理员访问")
 			return
 		}
@@ -116,7 +268,7 @@ func (s *Service) auth(next http.Handler) http.Handler {
 func who(r *http.Request) identity { return r.Context().Value(identityKey{}).(identity) }
 func (s *Service) session(w http.ResponseWriter, r *http.Request) {
 	i := who(r)
-	reply(w, 200, map[string]any{"name": i.employee.Name, "csrf_token": i.csrf})
+	reply(w, 200, map[string]any{"name": i.employee.Name, "csrf_token": i.csrf, "admin": i.employee.IsSuperAdmin})
 }
 func (s *Service) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Store.Projects(r.Context())
@@ -124,7 +276,32 @@ func (s *Service) projects(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "读取项目失败")
 		return
 	}
-	reply(w, 200, map[string]any{"projects": rows})
+	hidden, err := s.Store.Pool.Query(r.Context(), `SELECT project_id FROM wm_hidden_projects`)
+	if err != nil {
+		fail(w, 500, "读取项目失败")
+		return
+	}
+	defer hidden.Close()
+	excluded := map[int64]bool{}
+	for hidden.Next() {
+		var id int64
+		if err := hidden.Scan(&id); err != nil {
+			fail(w, 500, "读取项目失败")
+			return
+		}
+		excluded[id] = true
+	}
+	if hidden.Err() != nil {
+		fail(w, 500, "读取项目失败")
+		return
+	}
+	visible := rows[:0]
+	for _, project := range rows {
+		if !excluded[project.ID] {
+			visible = append(visible, project)
+		}
+	}
+	reply(w, 200, map[string]any{"projects": visible})
 }
 func idParam(r *http.Request) (int64, error) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -133,10 +310,25 @@ func idParam(r *http.Request) (int64, error) {
 	}
 	return id, nil
 }
+func (s *Service) visibleProject(w http.ResponseWriter, r *http.Request, id int64) bool {
+	var hidden bool
+	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM wm_hidden_projects WHERE project_id=$1)`, id).Scan(&hidden); err != nil {
+		fail(w, 500, "读取项目失败")
+		return false
+	}
+	if hidden {
+		fail(w, 404, "项目不存在")
+		return false
+	}
+	return true
+}
 func (s *Service) events(w http.ResponseWriter, r *http.Request) {
 	id, err := idParam(r)
 	if err != nil {
 		fail(w, 400, "项目编号无效")
+		return
+	}
+	if !s.visibleProject(w, r, id) {
 		return
 	}
 	rows, err := s.Store.ProjectEvents(r.Context(), id, who(r).employee.ID)
@@ -152,6 +344,9 @@ func (s *Service) activity(w http.ResponseWriter, r *http.Request) {
 	id, err := idParam(r)
 	if err != nil {
 		fail(w, 400, "项目编号无效")
+		return
+	}
+	if !s.visibleProject(w, r, id) {
 		return
 	}
 	rows, err := s.Store.Pool.Query(r.Context(), `SELECT (r.started_at AT TIME ZONE 'Asia/Shanghai')::date::text,COALESCE(NULLIF(r.model_requested,''),'未记录'),count(*),COALESCE(sum(r.tokens_input),0),COALESCE(sum(r.tokens_output),0),count(*) FILTER (WHERE r.status_code >= 400) FROM requests r JOIN employees e ON e.id=r.employee_id LEFT JOIN api_keys k ON k.id=r.api_key_id LEFT JOIN request_projects rp ON rp.request_id=r.id WHERE r.started_at >= now()-interval '30 days' AND COALESCE(rp.project_id,k.project_id)=$2 AND (r.employee_id=$1 OR (e.private_work_since IS NULL AND e.name <> '林伊默')) GROUP BY 1,2 ORDER BY 1 DESC,2`, who(r).employee.ID, id)

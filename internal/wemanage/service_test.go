@@ -111,6 +111,27 @@ func TestCaseLifecycleAndPrivacy(t *testing.T) {
 	if status, body := call(admin, "GET", fmt.Sprintf("/api/projects/%d/activity", project.ID), "", false); status != 200 || !strings.Contains(body, "公开模型") || strings.Contains(body, "私密模型") {
 		t.Fatalf("activity privacy: %d %s", status, body)
 	}
+	if status, body := call(admin, "GET", "/api/reporting/usage", "", false); status != 200 || !strings.Contains(body, "公开模型") || strings.Contains(body, "私密模型") {
+		t.Fatalf("usage privacy: %d %s", status, body)
+	}
+	if status, _ := call(user{}, "GET", "/api/reporting/usage", "", false); status != 401 {
+		t.Fatalf("usage anonymous: %d", status)
+	}
+	if status, _ := call(admin, "GET", "/api/reporting/usage?month=invalid", "", false); status != 400 {
+		t.Fatalf("usage invalid month: %d", status)
+	}
+	if status, _ := call(user{}, "GET", "/api/log-worker", "", false); status != 401 {
+		t.Fatalf("worker anonymous: %d", status)
+	}
+	if status, _ := call(admin, "PUT", "/api/log-worker", `{"enabled":true}`, false); status != 403 {
+		t.Fatalf("worker csrf: %d", status)
+	}
+	if status, body := call(admin, "PUT", "/api/log-worker", `{"enabled":true}`, true); status != 200 || !strings.Contains(body, `"enabled":true`) {
+		t.Fatalf("worker enable: %d %s", status, body)
+	}
+	if status, body := call(admin, "PUT", "/api/log-worker", `{"enabled":false}`, true); status != 200 || !strings.Contains(body, `"enabled":false`) {
+		t.Fatalf("worker pause: %d %s", status, body)
+	}
 	input := func(e int64) string {
 		return fmt.Sprintf(`{"project_id":%d,"event_id":%d,"title":"可复用案例","situation":"背景","approach":"方法","outcome":"结果"}`, project.ID, e)
 	}

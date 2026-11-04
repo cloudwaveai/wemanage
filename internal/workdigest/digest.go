@@ -303,3 +303,14 @@ func (r *Runner) ExtractWithModel(ctx context.Context, model, system, material s
 	text, usage, err := client.completeWithUsage(ctx, system, material)
 	return text, selected, usage, err
 }
+
+// ExtractWithImages invokes the configured summary account with original image data URLs.
+// The caller is responsible for source authorization, validation and audit.
+func (r *Runner) ExtractWithImages(ctx context.Context, system, material string, images []string) (string, string, ModelUsage, error) {
+	client, model, err := r.client(ctx)
+	if err != nil {
+		return "", "", ModelUsage{}, err
+	}
+	text, usage, err := client.completeWithImages(ctx, system, material, images)
+	return text, model, usage, err
+}

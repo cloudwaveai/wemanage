@@ -13,11 +13,11 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: full-journal-estimate RUN_ID")
+	if len(os.Args) != 2 && !(len(os.Args) == 3 && os.Args[1] == "compact") {
+		fmt.Fprintln(os.Stderr, "usage: full-journal-estimate [compact] RUN_ID")
 		os.Exit(2)
 	}
-	id, err := strconv.ParseInt(os.Args[1], 10, 64)
+	id, err := strconv.ParseInt(os.Args[len(os.Args)-1], 10, 64)
 	if err != nil || id <= 0 {
 		fmt.Fprintln(os.Stderr, "invalid run id")
 		os.Exit(2)
@@ -30,7 +30,13 @@ func main() {
 	}
 	defer pool.Close()
 	q := workrecords.Queue{Store: store.New(pool)}
-	result, err := q.EstimateEvidence(ctx, id, func(n int64) { fmt.Fprintf(os.Stderr, "estimated %d groups\n", n) })
+	var result workrecords.EvidenceEstimate
+	progress := func(n int64) { fmt.Fprintf(os.Stderr, "estimated %d groups\n", n) }
+	if len(os.Args) == 3 {
+		result, err = q.EstimateCompactEvidence(ctx, id, progress)
+	} else {
+		result, err = q.EstimateEvidence(ctx, id, progress)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

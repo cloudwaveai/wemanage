@@ -8,3 +8,13 @@ deploy/cpa/auths/
 deploy/cpa/config.yaml
 spool/
 .DS_Store
+
+/wemanage
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+.env
+.env.*
+!*.env.example

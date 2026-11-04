@@ -129,3 +129,51 @@ func (q *Queue) walkEvidence(ctx context.Context, run int64, consume func(Eviden
 
 	return nil
 }
+
+// EstimateCompactEvidence compares a compact, fully traceable representation
+// without writing batches or invoking a model. Production does not use it.
+func (q *Queue) EstimateCompactEvidence(ctx context.Context, run int64, progress func(int64)) (EvidenceEstimate, error) {
+	var out EvidenceEstimate
+	var private bool
+	err := q.Store.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wm_full_journal_sources s JOIN employees e ON e.id=s.employee_id WHERE s.run_id=$1 AND (e.private_work_since IS NOT NULL OR e.name='林伊默')),(SELECT count(*) FROM wm_full_journal_sources WHERE run_id=$1 AND status<>'ready')`, run).Scan(&private, &out.MissingSources)
+	if err != nil {
+		return out, err
+	}
+	if private {
+		return out, errors.New("source privacy changed")
+	}
+	compact := &compactPlanner{maxBytes: 100000}
+	planner, err := NewEvidencePlanner(100000, func(EvidenceBatch) error { return nil })
+	if err != nil {
+		return out, err
+	}
+	if err = planner.enableOpaquePrototype(); err != nil {
+		return out, err
+	}
+	planner.emitHydrated = func(b EvidenceBatch) error {
+		for _, part := range b.Parts {
+			if e := compact.add(part); e != nil {
+				return e
+			}
+		}
+		return nil
+	}
+	err = q.walkEvidence(ctx, run, func(group EvidenceGroup) error {
+		out.Groups++
+		out.Occurrences += int64(len(group.Occurrences))
+		return planner.Add(group)
+	}, progress)
+	if err != nil {
+		return out, err
+	}
+	if err = planner.Finish(); err != nil {
+		return out, err
+	}
+	if err = compact.flush(); err != nil {
+		return out, err
+	}
+	out.Batches = compact.batches
+	out.ManifestBytes = compact.manifestBytes
+	out.ModelPayloadBytes = compact.payloadBytes
+	return out, nil
+}

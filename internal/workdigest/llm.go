@@ -39,10 +39,30 @@ func (l llm) complete(ctx context.Context, system, user string) (string, error) 
 }
 
 func (l llm) completeWithUsage(ctx context.Context, system, user string) (string, ModelUsage, error) {
+	return l.completeWithContent(ctx, system, user)
+}
+
+// completeWithImages forwards original data URLs unchanged. It does not
+// resize, recompress or silently drop an image when the upstream rejects it.
+func (l llm) completeWithImages(ctx context.Context, system, user string, images []string) (string, ModelUsage, error) {
+	if len(images) == 0 {
+		return "", ModelUsage{}, fmt.Errorf("llm: no images")
+	}
+	content := []map[string]any{{"type": "text", "text": user}}
+	for _, image := range images {
+		if !strings.HasPrefix(image, "data:image/") {
+			return "", ModelUsage{}, fmt.Errorf("llm: invalid image reference")
+		}
+		content = append(content, map[string]any{"type": "image_url", "image_url": map[string]string{"url": image}})
+	}
+	return l.completeWithContent(ctx, system, content)
+}
+
+func (l llm) completeWithContent(ctx context.Context, system string, user any) (string, ModelUsage, error) {
 	body, err := json.Marshal(map[string]any{
 		"model":  l.model,
 		"stream": false,
-		"messages": []map[string]string{
+		"messages": []map[string]any{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},

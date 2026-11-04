@@ -130,6 +130,31 @@ func TestEvidenceModelReceivesVerifiedSnapshotText(t *testing.T) {
 	if _, e = q.ProcessNext(ctx, run, model); !errors.Is(e, ErrEmbeddedMedia) || model.calls != 1 {
 		t.Fatalf("media reached model: %v calls=%d", e, model.calls)
 	}
+	reasoning := []byte(`{"type":"reasoning","summary":[],"encrypted_content":"opaque-ciphertext"}`)
+	reasoningHash := sha256.Sum256(reasoning)
+	if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_blobs(run_id,hash,kind,data) VALUES($1,$2,'input',$3)`, run, reasoningHash[:], reasoning); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = st.Pool.Exec(ctx, `INSERT INTO wm_full_journal_segments(source_id,direction,ordinal,hash,kind) VALUES($1,'request',3,$2,'input')`, source, reasoningHash[:]); e != nil {
+		t.Fatal(e)
+	}
+	var reasoningBatches []EvidenceBatch
+	rp, _ := NewEvidencePlanner(100000, func(b EvidenceBatch) error { reasoningBatches = append(reasoningBatches, b); return nil })
+	if e = rp.Add(EvidenceGroup{EmployeeID: emp.ID, EmployeeName: "成员", SessionID: &sid, Direction: "request", Segment: Segment{Kind: "input", Hash: reasoningHash, Data: reasoning}, Occurrences: []EvidenceOccurrence{{SourceID: source, Ordinal: 3, Time: at}}}); e != nil {
+		t.Fatal(e)
+	}
+	if e = rp.Finish(); e != nil {
+		t.Fatal(e)
+	}
+	reasoningManifest, _ := json.Marshal(reasoningBatches[0])
+	reasoningTx, e := st.Pool.Begin(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = materializeEvidence(ctx, reasoningTx, run, reasoningManifest); !errors.Is(e, ErrOpaqueReasoning) {
+		t.Fatalf("ciphertext did not stop before model: %v", e)
+	}
+	_ = reasoningTx.Rollback(ctx)
 	// A mismatching snapshot must fail before claiming the batch or invoking a model.
 	if _, e = st.Pool.Exec(ctx, `UPDATE wm_full_journal_blobs SET data='changed' WHERE run_id=$1`, run); e != nil {
 		t.Fatal(e)

@@ -56,6 +56,10 @@ func TestEstimateIsReadOnlyAndRespectsSessionBoundaries(t *testing.T) {
 	if estimate.Groups != 3 || estimate.Occurrences != 8 || estimate.Batches != 1 || estimate.ManifestBytes == 0 || estimate.ModelPayloadBytes <= estimate.ManifestBytes {
 		t.Fatalf("estimate %+v", estimate)
 	}
+	compact, err := q.EstimateCompactEvidence(ctx, run, nil)
+	if err != nil || compact.Groups != estimate.Groups || compact.Occurrences != estimate.Occurrences || compact.Batches != 1 {
+		t.Fatalf("compact estimate %+v %v", compact, err)
+	}
 	var writes int
 	if e = st.Pool.QueryRow(ctx, `SELECT count(*) FROM wm_full_journal_batches WHERE run_id=$1`, run).Scan(&writes); e != nil || writes != 0 {
 		t.Fatalf("wrote %d: %v", writes, e)
