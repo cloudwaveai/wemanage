@@ -28,7 +28,7 @@ func (s *Service) assetList(w http.ResponseWriter, r *http.Request) {
 	if shared {
 		filter = " and v.state='published' and a.kind<>'decision'"
 	}
-	rows, err := s.Store.Pool.Query(r.Context(), `select a.id,a.source_item_id,a.kind,v.version,v.title,v.content,v.state,v.created_at::text,i.project_hint from wm_assets a join wm_knowledge_items i on i.id=a.source_item_id join lateral(select * from wm_asset_versions where asset_id=a.id order by version desc limit 1) v on true where `+assetVisible+` and exists(select 1 from employees ed where ed.id=v.editor_id and ed.private_work_since is null and ed.name<>'林伊默')`+filter+` order by v.created_at desc`)
+	rows, err := s.Store.Pool.Query(r.Context(), `select a.id,a.source_item_id,a.kind,v.version,v.title,v.content,v.state,v.created_at::text,coalesce((select canonical from wm_project_candidate_aliases where alias=trim(i.project_hint)),trim(i.project_hint)) from wm_assets a join wm_knowledge_items i on i.id=a.source_item_id join lateral(select * from wm_asset_versions where asset_id=a.id order by version desc limit 1) v on true where `+assetVisible+` and exists(select 1 from employees ed where ed.id=v.editor_id and ed.private_work_since is null and ed.name<>'林伊默')`+filter+` order by v.created_at desc,a.id desc`)
 	if err != nil {
 		fail(w, 500, "读取组织资产失败")
 		return

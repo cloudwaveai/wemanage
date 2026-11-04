@@ -1,9 +1,9 @@
-import { mountAssets } from "./assets.js?v=20261104-assets1";
-import { mountProjectWork } from "./project-work.js?v=20261104-assets1";
-import { mountOrganization } from "./organization.js?v=20261104-assets1";
-import { mountCustomSummary } from "./custom-summary.js?v=20261104-assets1";
-import { mountKnowledge } from "./knowledge.js?v=20261104-assets1";
-import { mountWorkspace } from "./workspace.js?v=20261104-assets1";
+import { mountAssets } from "./assets.js?v=20261104-assets2";
+import { mountProjectWork } from "./project-work.js?v=20261104-assets2";
+import { mountOrganization } from "./organization.js?v=20261104-assets2";
+import { mountCustomSummary } from "./custom-summary.js?v=20261104-assets2";
+import { mountKnowledge } from "./knowledge.js?v=20261104-assets2";
+import { mountWorkspace } from "./workspace.js?v=20261104-assets2";
 import { mountAnalysis } from "./analysis.js?v=20261102-org1";
 const root = document.querySelector('#app');
 const state = { session:null, projects:[], cases:[], coverage:[], selected:null, events:[], activity:[], error:'', authStatus:null, modal:null, busy:false };
