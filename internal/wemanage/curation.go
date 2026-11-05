@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -273,6 +274,10 @@ func (s *Service) queueCuration(ctx context.Context, owner int64) (curationStart
 		return out, fmt.Errorf("暂无可见项目线索")
 	}
 	data, _ := json.Marshal(sources)
+	var model string
+	if s.Store.Pool.QueryRow(ctx, `select sol_model from wm_full_journal_settings where id=1`).Scan(&model) != nil || strings.TrimSpace(model) == "" {
+		return out, fmt.Errorf("总结模型尚未配置")
+	}
 	hash := curationHash(sources)
 	if len(data) > 1500000 {
 		return out, fmt.Errorf("完整材料超过单次整理范围，请按项目深入整理；未截断任何材料")
@@ -290,7 +295,7 @@ func (s *Service) queueCuration(ctx context.Context, owner int64) (curationStart
 	if err != nil {
 		return out, err
 	}
-	err = tx.QueryRow(ctx, `select id,state from wm_curation_runs where owner_id=$1 and (state='running' or (fingerprint=$2 and state='done')) and id=(select max(id) from wm_curation_runs where owner_id=$1) order by id desc limit 1`, owner, hash).Scan(&out.ID, &out.State)
+	err = tx.QueryRow(ctx, `select id,state from wm_curation_runs where owner_id=$1 and (state='running' or (fingerprint=$2 and model=$3 and state='done')) and id=(select max(id) from wm_curation_runs where owner_id=$1) order by id desc limit 1`, owner, hash, model).Scan(&out.ID, &out.State)
 	if err == nil {
 		out.Reused = true
 		return out, tx.Commit(ctx)
@@ -298,7 +303,7 @@ func (s *Service) queueCuration(ctx context.Context, owner int64) (curationStart
 	if err != pgx.ErrNoRows {
 		return out, err
 	}
-	err = tx.QueryRow(ctx, `insert into wm_curation_runs(owner_id,fingerprint,sources)values($1,$2,$3) returning id`, owner, hash, data).Scan(&out.ID)
+	err = tx.QueryRow(ctx, `insert into wm_curation_runs(owner_id,fingerprint,sources,model)values($1,$2,$3,$4) returning id`, owner, hash, data, model).Scan(&out.ID)
 	if err != nil {
 		return out, fmt.Errorf("无法启动整理，可能已有任务运行，请刷新")
 	}
@@ -306,7 +311,7 @@ func (s *Service) queueCuration(ctx context.Context, owner int64) (curationStart
 		return out, err
 	}
 	out.State = "running"
-	go s.runCuration(out.ID, sources)
+	go s.runCuration(out.ID, model, sources)
 	return out, nil
 }
 func (s *Service) startCuration(w http.ResponseWriter, r *http.Request) {
@@ -350,7 +355,7 @@ func (s *Service) CurateOnce(ctx context.Context, owner int64) (int64, error) {
 	}
 }
 
-func (s *Service) runCuration(id int64, sources []*projectCandidate) {
+func (s *Service) runCuration(id int64, requestedModel string, sources []*projectCandidate) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	failRun := func(msg string) {
@@ -392,12 +397,16 @@ func (s *Service) runCuration(id int64, sources []*projectCandidate) {
 		return
 	}
 	data, _ := json.Marshal(sources)
-	output, model, usage, err := s.Summarizer.ExtractWithModel(ctx, "gpt-6.1-sol", curationPrompt, string(data))
+	output, model, usage, err := s.Summarizer.ExtractWithModel(ctx, requestedModel, curationPrompt, string(data))
 	c, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	_, saveErr := s.Store.Pool.Exec(c, `update wm_curation_runs set raw_output=$2,model=$3,input_tokens=$4,output_tokens=$5 where id=$1`, id, output, model, usage.Input, usage.Output)
 	stop()
-	if err != nil || saveErr != nil {
-		failRun("模型调用或保存失败，可重试；已返回内容保留在整理记录中")
+	if err != nil {
+		failRun(curationModelError(err))
+		return
+	}
+	if saveErr != nil {
+		failRun("模型已返回，但保存失败，请检查数据库")
 		return
 	}
 	var result curationResult
@@ -513,4 +522,22 @@ func (s *Service) actCuration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, 200, map[string]any{"saved": true, "asset_id": asset})
+}
+
+func curationModelError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "模型调用超时，请重试"
+	}
+	message := err.Error()
+	var status int
+	if _, e := fmt.Sscanf(message, "llm: status %d:", &status); e == nil && status > 0 {
+		return fmt.Sprintf("上游模型返回 HTTP %d，请检查总结模型与账号状态后重试", status)
+	}
+	if strings.Contains(message, "账号不允许") {
+		return "总结账号不允许使用配置的模型，请检查模型设置"
+	}
+	if strings.Contains(message, "现在不可用") {
+		return "总结账号当前不可用，请检查登录状态"
+	}
+	return "模型调用失败，请检查既有总结服务的连接和配置后重试"
 }

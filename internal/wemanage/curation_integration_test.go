@@ -22,6 +22,9 @@ type curationMock struct{ calls *atomic.Int32 }
 
 func (m curationMock) ExtractWithModel(_ context.Context, model, prompt, material string) (string, string, workdigest.ModelUsage, error) {
 	m.calls.Add(1)
+	if model != "gpt-6-sol" {
+		return "", "", workdigest.ModelUsage{}, fmt.Errorf("wrong configured model: %s", model)
+	}
 	var projects []struct {
 		Name  string `json:"name"`
 		Clues []struct {
@@ -44,6 +47,9 @@ func TestCurationPipelineDraftReuseAndPrivacy(t *testing.T) {
 	ctx := context.Background()
 	st := store.New(testutil.NewDB(t))
 	if err := wemanage.Install(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Pool.Exec(ctx, `update wm_full_journal_settings set sol_model='gpt-6-sol' where id=1`); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.EnsureSuperAdmin(ctx, "cur-admin", "管理员"); err != nil {
