@@ -155,6 +155,74 @@ func TestCurationPipelineDraftReuseAndPrivacy(t *testing.T) {
 	if strings.Contains(body, "日志核查方法") {
 		t.Fatal("draft published")
 	}
+	// Daily scheduler reuses the completed batch and survives repeated ticks.
+	if code, b := call("PUT", "/api/curation/schedule", `{"enabled":true,"hour":9,"minute":0}`, cookie); code != 200 {
+		t.Fatal(code, b)
+	}
+	if code, b := call("PUT", "/api/curation/schedule", `{"enabled":true,"hour":25,"minute":0}`, cookie); code != 400 {
+		t.Fatal(code, b)
+	}
+	if code, _ := call("GET", "/api/curation/schedule", "", memberCookie); code != 403 {
+		t.Fatal("member accessed schedule", code)
+	}
+	scheduled := &wemanage.Service{Store: st, Summarizer: curationMock{calls}}
+	now := time.Date(2026, 11, 7, 0, 59, 0, 0, time.UTC) // 08:59 Asia/Shanghai
+	if err = scheduled.CurationScheduleTick(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.Pool.QueryRow(ctx, `select count(*) from wm_curation_schedule_attempts`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("ran before configured time", count, err)
+	}
+	now = now.Add(time.Minute)
+	if _, err = st.Pool.Exec(ctx, `update wm_knowledge_runs set status='running'`); err != nil {
+		t.Fatal(err)
+	}
+	if err = scheduled.CurationScheduleTick(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	var waiting string
+	if err = st.Pool.QueryRow(ctx, `select state from wm_curation_schedules where owner_id=$1`, admin.ID).Scan(&waiting); err != nil || waiting != "waiting" {
+		t.Fatal("did not wait for sources", waiting, err)
+	}
+	if _, err = st.Pool.Exec(ctx, `update wm_knowledge_runs set status='done'`); err != nil {
+		t.Fatal(err)
+	}
+	for n := 0; n < 2; n++ {
+		if err = scheduled.CurationScheduleTick(ctx, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var scheduleState string
+	for n := 0; n < 100; n++ {
+		if err = st.Pool.QueryRow(ctx, `select state from wm_curation_schedules where owner_id=$1`, admin.ID).Scan(&scheduleState); err != nil {
+			t.Fatal(err)
+		}
+		if scheduleState != "running" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if scheduleState != "reused" || calls.Load() != 1 {
+		t.Fatal("schedule did not reuse", scheduleState, calls.Load())
+	}
+	if err = st.Pool.QueryRow(ctx, `select count(*) from wm_curation_schedule_attempts`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("duplicate daily attempt", count, err)
+	}
+	if code, b := call("GET", fmt.Sprintf("/api/curation?id=%d", result.ID), "", cookie); code != 200 || !strings.Contains(b, "日志核查方法") {
+		t.Fatal("historical result lost", code, b)
+	}
+	if code, b := call("GET", "/api/curation/history", "", cookie); code != 200 || !strings.Contains(b, `"runs":[`) {
+		t.Fatal(code, b)
+	}
+	if code, b := call("PUT", "/api/curation/schedule", `{"enabled":false,"hour":9,"minute":0}`, cookie); code != 200 {
+		t.Fatal(code, b)
+	}
+	if err = scheduled.CurationScheduleTick(ctx, now.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err = st.Pool.QueryRow(ctx, `select count(*) from wm_curation_schedule_attempts`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("disabled schedule ran", count, err)
+	}
 	// Changes to any model input must hide both the output and its derived asset.
 	_, err = st.Pool.Exec(ctx, `update employees set private_work_since=now() where id=$1`, member.ID)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -201,6 +202,15 @@ func validateCuration(result curationResult, projects []*projectCandidate) error
 }
 
 func (s *Service) getCuration(w http.ResponseWriter, r *http.Request) {
+	var selected int64
+	if r.URL.Query().Get("id") != "" {
+		var err error
+		selected, err = strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+		if err != nil || selected < 1 {
+			fail(w, 400, "整理编号无效")
+			return
+		}
+	}
 	current, err := s.loadProjectCandidates(r.Context())
 	if err != nil {
 		fail(w, 500, err.Error())
@@ -211,7 +221,7 @@ func (s *Service) getCuration(w http.ResponseWriter, r *http.Request) {
 	var sources []byte
 	var result json.RawMessage
 	var created time.Time
-	err = s.Store.Pool.QueryRow(r.Context(), `select id,state,fingerprint,sources,result,error,model,created_at from wm_curation_runs where owner_id=$1 and exists(select 1 from employees where id=$1 and private_work_since is null and name<>'林伊默') order by id desc limit 1`, who(r).employee.ID).Scan(&id, &state, &hash, &sources, &result, &msg, &model, &created)
+	err = s.Store.Pool.QueryRow(r.Context(), `select id,state,fingerprint,sources,result,error,model,created_at from wm_curation_runs where owner_id=$1 and ($2::bigint=0 or id=$2) and exists(select 1 from employees where id=$1 and private_work_since is null and name<>'林伊默') order by id desc limit 1`, who(r).employee.ID, selected).Scan(&id, &state, &hash, &sources, &result, &msg, &model, &created)
 	if err == pgx.ErrNoRows {
 		reply(w, 200, map[string]any{"state": "empty"})
 		return

@@ -173,7 +173,7 @@ func Install(ctx context.Context, st *store.Store) error {
   source_batch_ids BIGINT[] NOT NULL,input_snapshot JSONB NOT NULL,raw_output TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,error TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),finished_at TIMESTAMPTZ
- );`+assetSchema+managementSchema+curationSchema)
+ );`+assetSchema+managementSchema+curationSchema+curationScheduleSchema)
 	return err
 }
 
@@ -209,6 +209,9 @@ func (s *Service) Handler() http.Handler {
 		r.Get("/api/organization", s.organizationDirectory)
 		r.Get("/api/project-candidates", s.projectCandidates)
 		r.Get("/api/curation", s.getCuration)
+		r.Get("/api/curation/history", s.curationHistory)
+		r.Get("/api/curation/schedule", s.curationSchedule)
+		r.Put("/api/curation/schedule", s.curationSchedule)
 		r.Post("/api/curation", s.startCuration)
 		r.Post("/api/curation/{id}/actions", s.actCuration)
 		r.Get("/api/project-report", s.getCustomSummary)

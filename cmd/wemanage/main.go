@@ -77,7 +77,9 @@ func main() {
 		addr = "127.0.0.1:19081"
 	}
 
-	srv := &http.Server{Addr: addr, Handler: (&wemanage.Service{Store: st, Summarizer: runner}).Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+	service := &wemanage.Service{Store: st, Summarizer: runner}
+	go service.RunCurationScheduler(context.Background())
+	srv := &http.Server{Addr: addr, Handler: service.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Printf("We-Manage listening on %s", addr)
 	log.Fatal(srv.ListenAndServe())
 }
