@@ -8,7 +8,7 @@ import (
 
 // costSources reads subscription metadata only. It never returns upstream credentials.
 func (s *Service) costSources(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Store.Pool.Query(r.Context(), `select a.id,a.provider,a.plan_type,a.status,coalesce(sub.plan,''),sub.active,sub.renews_at,sub.expires_at,sub.checked_at,coalesce(sub.error<>'',false),coalesce((select json_agg(json_build_object('id',e.id,'name',e.name) order by e.id) from account_members m join employees e on e.id=m.employee_id where m.account_id=a.id and `+humanVisible+`),'[]') from upstream_accounts a left join account_subscriptions sub on sub.account_id=a.id where not exists(select 1 from account_members m join employees e on e.id=m.employee_id where m.account_id=a.id and (e.private_work_since is not null or e.name='林伊默')) order by a.id`)
+	rows, err := s.Store.Pool.Query(r.Context(), `select a.id,a.provider,a.plan_type,a.status,coalesce(sub.plan,''),sub.active,sub.renews_at,sub.expires_at,sub.checked_at,coalesce(sub.error<>'',false),coalesce((select json_agg(json_build_object('id',e.id,'name',e.name) order by e.id) from account_members m join employees e on e.id=m.employee_id where m.account_id=a.id and `+humanVisible+`),'[]') from upstream_accounts a left join account_subscriptions sub on sub.account_id=a.id order by a.id`)
 	if err != nil {
 		fail(w, 500, "读取订阅来源失败")
 		return

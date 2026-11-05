@@ -1,4 +1,4 @@
-import {replayHTML,bindReplay} from "./work-replay.js?v=20261105-management2";
+import {replayHTML,bindReplay} from "./work-replay.js?v=20261105-management3";
 const W={root:null,session:null,range:'7d',day:'',data:null,profile:null,projectID:null,loading:false,error:'',serial:0,listeners:false,key:'',candidates:[],showHidden:false,personReports:[],profileTimer:null,profileBusy:false,orgMembers:[]};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num=v=>Number(v||0).toLocaleString('zh-CN');

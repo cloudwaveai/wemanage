@@ -91,8 +91,8 @@ func TestManagementLedgerOwnershipAndDelegatedReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	source = call(admin, "GET", "/api/cost-sources", nil, 200)
-	if strings.Contains(source, `"observed_plan":"pro"`) {
-		t.Fatal("private subscription leaked")
+	if !strings.Contains(source, `"observed_plan":"pro"`) || strings.Contains(source, "其他人员") {
+		t.Fatal("subscription missing or private member leaked", source)
 	}
 	if _, err = st.Pool.Exec(ctx, `update employees set private_work_since=null where id=$1`, other.ID); err != nil {
 		t.Fatal(err)

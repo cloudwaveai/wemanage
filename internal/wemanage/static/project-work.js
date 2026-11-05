@@ -1,5 +1,5 @@
-import {projectTimeline} from "./management.js?v=20261105-management2";
-import {knowledgeHTML,bindKnowledge} from "./project-knowledge.js?v=20261105-management2";
+import {projectTimeline} from "./management.js?v=20261105-management3";
+import {knowledgeHTML,bindKnowledge} from "./project-knowledge.js?v=20261105-management3";
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const P={root:null,session:null,name:'',project:null,reports:[],error:'',loading:false,busy:false,from:'',to:'',timer:null,serial:0,kind:'knowledge',managed:null};
 const active=()=>location.hash==='#project-work/'+encodeURIComponent(P.name);
