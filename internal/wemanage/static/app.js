@@ -1,7 +1,7 @@
 import {mountCuration} from './curation.js?v=20261105-curation1';
 import {mountProjects} from "./projects.js?v=20261105-curation1";
 import {sidebar} from "./navigation.js?v=20261105-curation1";
-import {mountManagement} from "./management.js?v=20261105-curation1";
+import {mountManagement} from "./management.js?v=20261105-curation3";
 import { mountAssets } from "./assets.js?v=20261105-curation1";
 import { mountProjectWork } from "./project-work.js?v=20261105-curation1";
 import { mountOrganization } from "./organization.js?v=20261105-curation1";
