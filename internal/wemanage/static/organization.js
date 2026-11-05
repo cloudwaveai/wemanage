@@ -1,4 +1,4 @@
-import {sidebar} from "./navigation.js?v=20261105-ui2";
+import {sidebar} from "./navigation.js?v=20261105-curation1";
 const O={root:null,session:null,directory:null,data:null,selected:0,range:'7d',day:'',month:'',metric:'tokens',busy:false,error:'',serial:0,listeners:false,detail:''};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const number=n=>Number(n||0).toLocaleString('zh-CN');

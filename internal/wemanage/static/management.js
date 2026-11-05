@@ -1,4 +1,4 @@
-import {sidebar} from "./navigation.js?v=20261105-ui2";
+import {sidebar} from "./navigation.js?v=20261105-curation1";
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const M={root:null,session:null,entries:[],sources:{subscriptions:[]},projects:[],members:[],tasks:[],assets:[],names:[],month:'',edit:null,error:'',busy:false,route:'',hidden:false,hash:'',settingsName:null};
 const currentMonth=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'}).slice(0,7);

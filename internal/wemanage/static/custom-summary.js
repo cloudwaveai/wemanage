@@ -1,4 +1,4 @@
-import {sidebar} from "./navigation.js?v=20261105-ui2";
+import {sidebar} from "./navigation.js?v=20261105-curation1";
 const C={root:null,session:null,ready:false,loading:false,busy:false,prompt:'',defaultPrompt:'',reports:[],error:'',notice:'',listeners:false,timer:null,from:'',to:''};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const active=()=>location.hash==='#custom-summary';

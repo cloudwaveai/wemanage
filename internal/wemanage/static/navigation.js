@@ -5,7 +5,7 @@ export function sidebar(session={admin:true}) {
  ['organization','组织','#organization',['#organization','#overview'],[['#organization','组织与成员'],['#overview','工作概览']]],
  ['people','人员','#people',['#people'],[]],
  ['projects','项目','#projects',['#projects','#managed-projects','#project-work','#project-settings'],[['#projects','项目工作台'],['#managed-projects','负责人维护']]],
- ['knowledge','知识库','#assets',['#assets','#knowledge','#review-tasks'],[['#assets','可复用资产'],['#knowledge','提取与整理'],['#review-tasks','专家审核']]],
+ ['knowledge','知识库','#assets',['#assets','#knowledge','#curation','#review-tasks'],[['#assets','可复用资产'],['#curation','知识审核'],['#knowledge','提取与整理'],['#review-tasks','专家审核']]],
  ['expenses','费用与用量','#expenses',['#expenses','#usage'],[['#expenses','订阅与实付'],['#usage','模型用量']]],
  ['summary','总结','#custom-summary',['#custom-summary','#analysis'],[['#custom-summary','自定义总结'],['#analysis','日志分析']]]
  ]:[['projects','我的项目','#managed-projects',['#managed-projects','#project-settings'],[]],['knowledge','知识库','#assets',['#assets','#review-tasks'],[['#assets','可复用资产'],['#review-tasks','我的审核']]]];

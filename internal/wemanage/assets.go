@@ -11,6 +11,10 @@ import (
 // Publications expose only the reviewed asset, never the underlying daily reports.
 var assetVisible = `i.status<>'rejected' and ` + projectClueVisible + ` and not exists(select 1 from wm_project_candidate_states ps where ps.hidden and ps.name=coalesce((select canonical from wm_project_candidate_aliases where alias=trim(i.project_hint)),trim(i.project_hint))) and exists(select 1 from employees ae where ae.id=a.author_id and ae.private_work_since is null and ae.name<>'林伊默')` + ` and not exists(select 1 from wm_asset_report_sources rs join wm_custom_summaries kr on kr.id=rs.report_id where rs.asset_id=a.id and not (` + strings.ReplaceAll(projectKnowledgeVisible, "a.", "kr.") + `))`
 
+func init() {
+	assetVisible += ` and not exists(select 1 from wm_asset_clue_sources cs join wm_knowledge_items ci on ci.id=cs.item_id where cs.asset_id=a.id and (ci.status='rejected' or not (` + strings.ReplaceAll(projectClueVisible, "i.", "ci.") + `) or exists(select 1 from wm_project_candidate_states ps where ps.hidden and ps.name=coalesce((select canonical from wm_project_candidate_aliases where alias=trim(ci.project_hint)),trim(ci.project_hint)))))`
+}
+
 const assetSchema = `
 CREATE TABLE IF NOT EXISTS wm_assets (
  id BIGSERIAL PRIMARY KEY, source_item_id BIGINT NOT NULL REFERENCES wm_knowledge_items(id),

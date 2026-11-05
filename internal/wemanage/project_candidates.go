@@ -1,7 +1,9 @@
 package wemanage
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,54 +31,47 @@ type projectCandidate struct {
 // gateway project IDs. Exclude whole runs whose sources or reviewers are private.
 const projectClueVisible = `not exists(select 1 from wm_knowledge_sources src join employees e on e.id=src.employee_id where src.run_id=i.run_id and (e.private_work_since is not null or e.name='林伊默' or exists(select 1 from requests r left join api_keys k on k.id=r.api_key_id left join request_projects rp on rp.request_id=r.id join wm_hidden_projects hp on hp.project_id=coalesce(rp.project_id,k.project_id) where r.employee_id=e.id and (r.started_at at time zone 'Asia/Shanghai')::date=src.source_day))) and (i.reviewed_by is null or exists(select 1 from employees reviewer where reviewer.id=i.reviewed_by and reviewer.private_work_since is null and reviewer.name<>'林伊默')) and not exists(select 1 from projects hp join wm_hidden_projects h on h.project_id=hp.id where hp.name=i.project_hint)`
 
-func (s *Service) projectCandidates(w http.ResponseWriter, r *http.Request) {
+func (s *Service) loadProjectCandidates(ctx context.Context) ([]*projectCandidate, error) {
 	aliases := map[string]string{}
-	rows, err := s.Store.Pool.Query(r.Context(), `select alias,canonical from wm_project_candidate_aliases`)
+	rows, err := s.Store.Pool.Query(ctx, `select alias,canonical from wm_project_candidate_aliases`)
 	if err != nil {
-		fail(w, 500, "读取项目归并失败")
-		return
+		return nil, fmt.Errorf("读取项目归并失败")
 	}
 	for rows.Next() {
 		var a, c string
 		if rows.Scan(&a, &c) != nil {
 			rows.Close()
-			fail(w, 500, "读取项目归并失败")
-			return
+			return nil, fmt.Errorf("读取项目归并失败")
 		}
 		aliases[a] = c
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		fail(w, 500, "读取项目归并失败")
-		return
+		return nil, fmt.Errorf("读取项目归并失败")
 	}
 	hidden := map[string]bool{}
-	rows, err = s.Store.Pool.Query(r.Context(), `select name,hidden from wm_project_candidate_states`)
+	rows, err = s.Store.Pool.Query(ctx, `select name,hidden from wm_project_candidate_states`)
 	if err != nil {
-		fail(w, 500, "读取项目状态失败")
-		return
+		return nil, fmt.Errorf("读取项目状态失败")
 	}
 	for rows.Next() {
 		var n string
 		var h bool
 		if rows.Scan(&n, &h) != nil {
 			rows.Close()
-			fail(w, 500, "读取项目状态失败")
-			return
+			return nil, fmt.Errorf("读取项目状态失败")
 		}
 		hidden[n] = h
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		fail(w, 500, "读取项目状态失败")
-		return
+		return nil, fmt.Errorf("读取项目状态失败")
 	}
-	rows, err = s.Store.Pool.Query(r.Context(), `select i.id,trim(i.project_hint),coalesce(i.reviewed_title,i.title),coalesce(i.reviewed_content,i.content),i.category,i.status,run.period_start::text,run.period_end::text,coalesce((select jsonb_agg(jsonb_build_object('day',src.source_day,'employee_id',src.employee_id,'name',src.employee_name,'quote',ev->>'quote','verified',position(coalesce(ev->>'quote','') in src.summary_md)>0 and length(coalesce(ev->>'quote',''))>0) order by src.ordinal) from jsonb_array_elements(i.evidence) ev join wm_knowledge_sources src on src.run_id=i.run_id and src.ordinal=case when (ev->>'source') ~ '^[0-9]+$' then (ev->>'source')::int else -1 end),'[]'::jsonb) from wm_knowledge_items i join wm_knowledge_runs run on run.id=i.run_id where run.status='done' and i.status<>'rejected' and length(trim(i.project_hint))>0 and exists(select 1 from jsonb_array_elements(i.evidence) ev join wm_knowledge_sources src on src.run_id=i.run_id and src.ordinal=case when (ev->>'source') ~ '^[0-9]+$' then (ev->>'source')::int else -1 end) and `+projectClueVisible+` order by run.period_start desc,i.id desc`)
+	rows, err = s.Store.Pool.Query(ctx, `select i.id,trim(i.project_hint),coalesce(i.reviewed_title,i.title),coalesce(i.reviewed_content,i.content),i.category,i.status,run.period_start::text,run.period_end::text,coalesce((select jsonb_agg(jsonb_build_object('day',src.source_day,'employee_id',src.employee_id,'name',src.employee_name,'quote',ev->>'quote','verified',position(coalesce(ev->>'quote','') in src.summary_md)>0 and length(coalesce(ev->>'quote',''))>0) order by src.ordinal) from jsonb_array_elements(i.evidence) ev join wm_knowledge_sources src on src.run_id=i.run_id and src.ordinal=case when (ev->>'source') ~ '^[0-9]+$' then (ev->>'source')::int else -1 end),'[]'::jsonb) from wm_knowledge_items i join wm_knowledge_runs run on run.id=i.run_id where run.status='done' and i.status<>'rejected' and length(trim(i.project_hint))>0 and exists(select 1 from jsonb_array_elements(i.evidence) ev join wm_knowledge_sources src on src.run_id=i.run_id and src.ordinal=case when (ev->>'source') ~ '^[0-9]+$' then (ev->>'source')::int else -1 end) and `+projectClueVisible+` order by run.period_start desc,i.id desc`)
 	if err != nil {
-		fail(w, 500, "读取项目线索失败")
-		return
+		return nil, fmt.Errorf("读取项目线索失败")
 	}
 	defer rows.Close()
 	by := map[string]*projectCandidate{}
@@ -84,8 +79,7 @@ func (s *Service) projectCandidates(w http.ResponseWriter, r *http.Request) {
 		var name string
 		var c projectClue
 		if rows.Scan(&c.ID, &name, &c.Title, &c.Content, &c.Category, &c.Status, &c.From, &c.To, &c.Sources) != nil {
-			fail(w, 500, "读取项目线索失败")
-			return
+			return nil, fmt.Errorf("读取项目线索失败")
 		}
 		canon := name
 		if v := aliases[name]; v != "" {
@@ -110,8 +104,7 @@ func (s *Service) projectCandidates(w http.ResponseWriter, r *http.Request) {
 		g.Clues = append(g.Clues, c)
 	}
 	if rows.Err() != nil {
-		fail(w, 500, "读取项目线索失败")
-		return
+		return nil, fmt.Errorf("读取项目线索失败")
 	}
 	out := make([]*projectCandidate, 0, len(by))
 	for _, g := range by {
@@ -119,7 +112,15 @@ func (s *Service) projectCandidates(w http.ResponseWriter, r *http.Request) {
 		out = append(out, g)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	reply(w, 200, map[string]any{"projects": out})
+	return out, nil
+}
+func (s *Service) projectCandidates(w http.ResponseWriter, r *http.Request) {
+	projects, err := s.loadProjectCandidates(r.Context())
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	reply(w, 200, map[string]any{"projects": projects})
 }
 func (s *Service) updateProjectCandidate(w http.ResponseWriter, r *http.Request) {
 	var v struct {

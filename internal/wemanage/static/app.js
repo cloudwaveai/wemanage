@@ -1,13 +1,14 @@
-import {mountProjects} from "./projects.js?v=20261105-ui2";
-import {sidebar} from "./navigation.js?v=20261105-ui2";
-import {mountManagement} from "./management.js?v=20261105-ui2";
-import { mountAssets } from "./assets.js?v=20261105-ui2";
-import { mountProjectWork } from "./project-work.js?v=20261105-ui2";
-import { mountOrganization } from "./organization.js?v=20261105-ui2";
-import { mountCustomSummary } from "./custom-summary.js?v=20261105-ui2";
-import { mountKnowledge } from "./knowledge.js?v=20261105-ui2";
-import { mountWorkspace } from "./workspace.js?v=20261105-ui2";
-import { mountAnalysis } from "./analysis.js?v=20261105-ui2";
+import {mountCuration} from './curation.js?v=20261105-curation1';
+import {mountProjects} from "./projects.js?v=20261105-curation1";
+import {sidebar} from "./navigation.js?v=20261105-curation1";
+import {mountManagement} from "./management.js?v=20261105-curation1";
+import { mountAssets } from "./assets.js?v=20261105-curation1";
+import { mountProjectWork } from "./project-work.js?v=20261105-curation1";
+import { mountOrganization } from "./organization.js?v=20261105-curation1";
+import { mountCustomSummary } from "./custom-summary.js?v=20261105-curation1";
+import { mountKnowledge } from "./knowledge.js?v=20261105-curation1";
+import { mountWorkspace } from "./workspace.js?v=20261105-curation1";
+import { mountAnalysis } from "./analysis.js?v=20261105-curation1";
 const root = document.querySelector('#app');
 const state = { session:null, projects:[], cases:[], coverage:[], selected:null, events:[], activity:[], error:'', authStatus:null, modal:null, busy:false };
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -44,6 +45,7 @@ function render(){
  if(location.hash===''){location.hash='#organization';return}
  if(location.hash==='#organization'){mountOrganization(root,state.session);return}
  if(location.hash==='#custom-summary'){mountCustomSummary(root,state.session);return}
+ if(location.hash==='#curation'){mountCuration(root,state.session);return}
  if(location.hash==='#knowledge'){mountKnowledge(root,state.session);return}
  if(location.hash==='#analysis'){mountAnalysis(root,state.session);return}
  if(location.hash===''||/^#(overview|people(?:\/\d+)?|projects|usage)$/.test(location.hash)){mountWorkspace(root,state.session);return}

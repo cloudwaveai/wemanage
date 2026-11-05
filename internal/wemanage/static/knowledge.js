@@ -1,4 +1,4 @@
-import {sidebar} from "./navigation.js?v=20261105-ui2";
+import {sidebar} from "./navigation.js?v=20261105-curation1";
 const K={root:null,session:null,ready:false,loading:false,busy:false,runs:[],cards:[],cardRuns:[],reviews:[],previews:[],compact:[],focus:[],skillDrafts:[],skillID:null,schedule:null,full:null,source:null,legacyOpen:false,filter:'all',dialog:null,error:''};
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=v=>v?new Date(v).toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'—';
