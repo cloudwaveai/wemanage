@@ -1,4 +1,4 @@
-import {mountCuration} from './curation.js?v=20261105-curation1';
+import {mountCuration} from './curation.js?v=20261105-curation4';
 import {mountProjects} from "./projects.js?v=20261105-curation1";
 import {sidebar} from "./navigation.js?v=20261105-curation1";
 import {mountManagement} from "./management.js?v=20261105-curation3";

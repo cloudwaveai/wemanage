@@ -37,6 +37,20 @@ func main() {
 		return
 	}
 	runner := &workdigest.Runner{HC: &http.Client{Timeout: 8 * time.Minute}, Store: st, Settings: settings.NewService(st), CPABaseURL: os.Getenv("WM_MODEL_URL"), CPAAPIKey: os.Getenv("WM_MODEL_KEY")}
+	if len(os.Args) > 1 && os.Args[1] == "curate-revalidate" {
+		if len(os.Args) != 3 {
+			log.Fatal("usage: wemanage curate-revalidate <run id>")
+		}
+		id, e := strconv.ParseInt(os.Args[2], 10, 64)
+		if e != nil || id < 1 {
+			log.Fatal("invalid run id")
+		}
+		if e = (&wemanage.Service{Store: st}).RevalidateCuration(ctx, id); e != nil {
+			log.Fatal(e)
+		}
+		fmt.Printf("Curation %d revalidated without a model call\n", id)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "curate" {
 		if len(os.Args) != 3 {
 			log.Fatal("usage: wemanage curate <administrator employee id>")

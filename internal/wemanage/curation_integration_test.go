@@ -126,6 +126,15 @@ func TestCurationPipelineDraftReuseAndPrivacy(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("duplicate model call", calls.Load())
 	}
+	if _, err = st.Pool.Exec(ctx, `update wm_curation_runs set state='failed',error='validator retry' where id=$1`, result.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = (&wemanage.Service{Store: st}).RevalidateCuration(ctx, result.ID); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("revalidation called model")
+	}
 	if code, _ := call("GET", "/api/curation", "", memberCookie); code != 403 {
 		t.Fatal("member can access curation", code)
 	}

@@ -6,10 +6,14 @@ import (
 )
 
 func TestCurationRejectsInventedEvidenceAndMissingCoverage(t *testing.T) {
-	sources := []*projectCandidate{{Name: "项目甲", Clues: []projectClue{{ID: 1, Content: "先保存日志再检查结果"}}}, {Name: "甲项目", Clues: []projectClue{{ID: 2, Content: "先保存日志再检查结果"}}}}
+	sources := []*projectCandidate{{Name: "项目甲", Clues: []projectClue{{ID: 1, Title: "发布检查流程", Content: "先保存日志再检查结果"}}}, {Name: "甲项目", Clues: []projectClue{{ID: 2, Content: "先保存日志再检查结果"}}}}
 	good := curationResult{Merges: []curationMerge{{Name: "甲项目", Target: "项目甲", Reason: "明确相同项目", Evidence: []curationEvidence{{1, "先保存日志"}, {2, "先保存日志"}}}}, Items: []curationItem{{Source: 1, Title: "检查日志", Kind: "handbook", Disposition: "new", Reason: "保留做法", Related: []int64{2}, Content: "先保存日志再检查结果", Evidence: []curationEvidence{{1, "先保存日志"}, {2, "先保存日志"}}}}}
 	if err := validateCuration(good, sources); err != nil {
 		t.Fatal(err)
+	}
+	good.Merges[0].Evidence[0].Quote = "发布检查流程"
+	if err := validateCuration(good, sources); err != nil {
+		t.Fatal("valid title evidence rejected", err)
 	}
 	clone := func() curationResult {
 		b, _ := json.Marshal(good)
