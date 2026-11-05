@@ -36,7 +36,7 @@ func main() {
 		fmt.Println("We-Manage schema ready")
 		return
 	}
-	runner := &workdigest.Runner{Store: st, Settings: settings.NewService(st), CPABaseURL: os.Getenv("WM_MODEL_URL"), CPAAPIKey: os.Getenv("WM_MODEL_KEY")}
+	runner := &workdigest.Runner{HC: &http.Client{Timeout: 8 * time.Minute}, Store: st, Settings: settings.NewService(st), CPABaseURL: os.Getenv("WM_MODEL_URL"), CPAAPIKey: os.Getenv("WM_MODEL_KEY")}
 	if len(os.Args) > 1 && os.Args[1] == "curate" {
 		if len(os.Args) != 3 {
 			log.Fatal("usage: wemanage curate <administrator employee id>")
