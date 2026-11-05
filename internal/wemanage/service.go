@@ -173,7 +173,7 @@ func Install(ctx context.Context, st *store.Store) error {
   source_batch_ids BIGINT[] NOT NULL,input_snapshot JSONB NOT NULL,raw_output TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,error TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),finished_at TIMESTAMPTZ
- );`+assetSchema)
+ );`+assetSchema+managementSchema)
 	return err
 }
 
@@ -183,6 +183,16 @@ func (s *Service) Handler() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth)
 		r.Get("/api/session", s.session)
+		r.Get("/api/review-tasks/{id}/history", s.reviewTaskHistory)
+		r.Get("/api/review-tasks", s.reviewTasks)
+		r.Post("/api/review-tasks", s.saveReviewTask)
+		r.Get("/api/expenses/{id}/history", s.expenseHistory)
+		r.Get("/api/managed-projects/{id}/history", s.managedProjectHistory)
+		r.Get("/api/expenses", s.expenses)
+		r.Get("/api/cost-sources", s.costSources)
+		r.Post("/api/expenses", s.saveExpense)
+		r.Get("/api/managed-projects", s.managedProjects)
+		r.Post("/api/managed-projects", s.saveManagedProject)
 		r.Get("/api/shared/assets", s.assetList)
 		r.Get("/api/assets", s.assetList)
 		r.Post("/api/assets", s.assetSave)
@@ -259,7 +269,7 @@ func (s *Service) auth(next http.Handler) http.Handler {
 		}
 		emp, err := s.Store.GetEmployee(r.Context(), sess.EmployeeID)
 		memberRead := r.Method == http.MethodGet && (r.URL.Path == "/api/session" || r.URL.Path == "/api/shared/assets")
-		if err != nil || (!emp.IsSuperAdmin && !memberRead) || emp.Status != "active" {
+		if err != nil || (!emp.IsSuperAdmin && !memberRead && r.URL.Path != "/api/managed-projects" && r.URL.Path != "/api/review-tasks" && !(r.Method == http.MethodGet && (strings.HasPrefix(r.URL.Path, "/api/managed-projects/") || strings.HasPrefix(r.URL.Path, "/api/review-tasks/")) && strings.HasSuffix(r.URL.Path, "/history"))) || emp.Status != "active" {
 			fail(w, 403, "仅限有效的超级管理员访问")
 			return
 		}
@@ -273,7 +283,7 @@ func (s *Service) auth(next http.Handler) http.Handler {
 func who(r *http.Request) identity { return r.Context().Value(identityKey{}).(identity) }
 func (s *Service) session(w http.ResponseWriter, r *http.Request) {
 	i := who(r)
-	reply(w, 200, map[string]any{"name": i.employee.Name, "csrf_token": i.csrf, "admin": i.employee.IsSuperAdmin})
+	reply(w, 200, map[string]any{"id": i.employee.ID, "name": i.employee.Name, "csrf_token": i.csrf, "admin": i.employee.IsSuperAdmin})
 }
 func (s *Service) projects(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Store.Projects(r.Context())

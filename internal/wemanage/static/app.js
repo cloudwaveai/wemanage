@@ -1,9 +1,10 @@
-import { mountAssets } from "./assets.js?v=20261105-depth3";
-import { mountProjectWork } from "./project-work.js?v=20261105-depth3";
-import { mountOrganization } from "./organization.js?v=20261105-depth3";
-import { mountCustomSummary } from "./custom-summary.js?v=20261105-depth3";
-import { mountKnowledge } from "./knowledge.js?v=20261105-depth3";
-import { mountWorkspace } from "./workspace.js?v=20261105-depth3";
+import {mountManagement} from "./management.js?v=20261105-management2";
+import { mountAssets } from "./assets.js?v=20261105-management2";
+import { mountProjectWork } from "./project-work.js?v=20261105-management2";
+import { mountOrganization } from "./organization.js?v=20261105-management2";
+import { mountCustomSummary } from "./custom-summary.js?v=20261105-management2";
+import { mountKnowledge } from "./knowledge.js?v=20261105-management2";
+import { mountWorkspace } from "./workspace.js?v=20261105-management2";
 import { mountAnalysis } from "./analysis.js?v=20261102-org1";
 const root = document.querySelector('#app');
 const state = { session:null, projects:[], cases:[], coverage:[], selected:null, events:[], activity:[], error:'', authStatus:null, modal:null, busy:false };
@@ -34,6 +35,7 @@ function render(){
   const detail=needsLogin?'使用与你在网关相同的飞书账号登录，完成后将回到 We-Manage。':state.authStatus===403?'你已登录飞书，目前仅超级管理员可以使用此工作空间。':(state.error || '请稍后重试。');
   root.innerHTML=`<main class="login-screen"><section class="login-card"><div class="login-brand"><span>W</span><div><strong>We-Manage</strong><small>组织知识工作台</small></div></div><h1>${escape(title)}</h1><p>${escape(detail)}</p>${needsLogin?`<a class="login-primary" href="${loginUrl}">飞书登录</a>`:`<a class="login-primary" href="${state.authStatus===403?'/':'./'}">${state.authStatus===403?'返回网关':'重新尝试'}</a>`}<div class="login-note">登录和权限由现有飞书账号统一管理。</div></section></main>`;return
  }
+ if(['#expenses','#managed-projects','#review-tasks'].includes(location.hash)){mountManagement(root,state.session);return}
  if(!state.session.admin || location.hash==='#assets'){mountAssets(root,state.session);return}
  if(location.hash.startsWith('#project-work/')){mountProjectWork(root,state.session);return}
  if(location.hash==='#organization'){mountOrganization(root,state.session);return}

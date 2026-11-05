@@ -118,7 +118,7 @@ func (s *Service) workspaceStats(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var ok bool
-		err = s.Store.Pool.QueryRow(r.Context(), `select exists(select 1 from employees where id=$1 and private_work_since is null and name<>'林伊默')`, id).Scan(&ok)
+		err = s.Store.Pool.QueryRow(r.Context(), `select exists(select 1 from employees e where e.id=$1 and `+humanVisible+`)`, id).Scan(&ok)
 		if err != nil || !ok {
 			fail(w, 404, "人员不存在或无权查看")
 			return
@@ -150,7 +150,7 @@ func (s *Service) workspaceStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows.Close()
-	rows, err = s.Store.Pool.Query(r.Context(), `select e.id,e.name,e.is_service,count(*),count(distinct r.session_id),count(distinct (r.started_at at time zone 'Asia/Shanghai')::date),count(*) filter(where r.endpoint='/local/codex-import'),max(r.started_at)`+joins+filter+` group by e.id,e.name,e.is_service order by e.name,e.id`, from, to, id)
+	rows, err = s.Store.Pool.Query(r.Context(), `select e.id,e.name,e.is_service,count(*),count(distinct r.session_id),count(distinct (r.started_at at time zone 'Asia/Shanghai')::date),count(*) filter(where r.endpoint='/local/codex-import'),max(r.started_at)`+joins+filter+` and `+humanVisible+` group by e.id,e.name,e.is_service order by e.name,e.id`, from, to, id)
 	if err != nil {
 		fail(w, 500, "读取人员统计失败")
 		return
