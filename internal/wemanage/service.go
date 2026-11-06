@@ -173,7 +173,7 @@ func Install(ctx context.Context, st *store.Store) error {
   source_batch_ids BIGINT[] NOT NULL,input_snapshot JSONB NOT NULL,raw_output TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',input_tokens BIGINT,output_tokens BIGINT,error TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),finished_at TIMESTAMPTZ
- );`+assetSchema+managementSchema+curationSchema+curationScheduleSchema)
+ );`+assetSchema+managementSchema+curationSchema+curationScheduleSchema+costSettingsSchema)
 	return err
 }
 
@@ -190,6 +190,7 @@ func (s *Service) Handler() http.Handler {
 		r.Get("/api/managed-projects/{id}/history", s.managedProjectHistory)
 		r.Get("/api/expenses", s.expenses)
 		r.Get("/api/cost-sources", s.costSources)
+		r.Post("/api/cost-settings", s.saveCostSettings)
 		r.Post("/api/expenses", s.saveExpense)
 		r.Get("/api/managed-projects", s.managedProjects)
 		r.Post("/api/managed-projects", s.saveManagedProject)

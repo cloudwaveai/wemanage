@@ -37,5 +37,10 @@ func (s *Service) costSources(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "读取渠道状态失败")
 		return
 	}
-	reply(w, 200, map[string]any{"subscriptions": out, "registered_api_channels": channels})
+	settings, err := s.readCostSettings(r.Context())
+	if err != nil {
+		fail(w, 500, "读取人民币成本设置失败")
+		return
+	}
+	reply(w, 200, map[string]any{"subscriptions": out, "registered_api_channels": channels, "cost_settings": settings})
 }

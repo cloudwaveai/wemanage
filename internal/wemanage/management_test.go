@@ -97,6 +97,17 @@ func TestManagementLedgerOwnershipAndDelegatedReview(t *testing.T) {
 	if _, err = st.Pool.Exec(ctx, `update employees set private_work_since=null where id=$1`, other.ID); err != nil {
 		t.Fatal(err)
 	}
+	settings := map[string]any{"month": "2026-11", "version": 0, "settings": map[string]any{"pro_usd": 200, "plus_usd": 20, "rates": map[string]float64{"CNY": 1, "USD": 7, "EUR": 7.5, "HKD": 0.9}, "account_usd": map[string]float64{}}}
+	call(member, "POST", "/api/cost-settings", settings, 403)
+	call(admin, "POST", "/api/cost-settings", settings, 200)
+	call(admin, "POST", "/api/cost-settings", settings, 409)
+	gotSettings := call(admin, "GET", "/api/cost-sources", nil, 200)
+	if !strings.Contains(gotSettings, `"cost_settings"`) || !strings.Contains(gotSettings, `"USD": 7`) && !strings.Contains(gotSettings, `"USD":7`) {
+		t.Fatal("saved FX not returned", gotSettings)
+	}
+	settings["month"] = "2026-12"
+	settings["settings"].(map[string]any)["rates"].(map[string]float64)["USD"] = 0
+	call(admin, "POST", "/api/cost-settings", settings, 400)
 	cost := map[string]any{"month": "2026-11", "kind": "subscription", "currency": "CNY", "amount": "128.90", "label": "月订阅", "account_label": "账号 A", "seat_count": 1, "employee_ids": []int64{m.ID}}
 	call(member, "POST", "/api/expenses", cost, 403)
 	call(user{admin.cookie, "wrong"}, "POST", "/api/expenses", cost, 403)
