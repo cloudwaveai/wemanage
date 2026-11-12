@@ -1,5 +1,5 @@
 import {skillContentHTML} from './skill-flow.js?v=20261105-curation1';
-import {sidebar} from "./navigation.js?v=20261105-curation1";
+import {sidebar} from "./navigation.js?v=20261112-diagnostics1";
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const names={handbook:'项目手册',decision:'待决策事项',skill:'Skill'};
 const states={draft:'草稿',published:'已发布',resolved:'已处理',hidden:'已撤回'};

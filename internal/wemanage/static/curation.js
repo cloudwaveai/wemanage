@@ -1,4 +1,4 @@
-import {sidebar} from './navigation.js?v=20261105-curation1';
+import {sidebar} from './navigation.js?v=20261112-diagnostics1';
 import {skillFlowHTML} from './skill-flow.js?v=20261105-curation1';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={new:'新增知识',duplicate:'重复线索',update:'需要更新',conflict:'存在冲突',insufficient:'证据不足'};

@@ -1,4 +1,4 @@
-import {sidebar} from "./navigation.js?v=20261105-curation1";
+import {sidebar} from "./navigation.js?v=20261112-diagnostics1";
 const A = {ready:false,loading:false,busy:false,query:'',offset:0,total:0,logs:[],runs:[],config:null,error:'',dialog:null,filter:'all',session:null,root:null};
 const esc = v => String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date = v => v ? new Date(v).toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}) : '—';

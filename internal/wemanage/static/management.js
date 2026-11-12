@@ -1,6 +1,6 @@
 import {costSettings,subscriptionUSD,subscriptionEstimate,convertCNY,sumCNY,yuan,costSettingsForm} from './costs.js?v=20261106-cny1';
 import {skillContentHTML} from './skill-flow.js?v=20261105-curation1';
-import {sidebar} from "./navigation.js?v=20261105-curation1";
+import {sidebar} from "./navigation.js?v=20261112-diagnostics1";
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const M={root:null,session:null,entries:[],sources:{subscriptions:[]},projects:[],members:[],tasks:[],assets:[],names:[],month:'',edit:null,error:'',busy:false,route:'',hidden:false,hash:'',settingsName:null};
 const currentMonth=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'}).slice(0,7);

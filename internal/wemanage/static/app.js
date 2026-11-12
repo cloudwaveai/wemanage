@@ -1,14 +1,15 @@
-import {mountCuration} from './curation.js?v=20261106-schedule1';
-import {mountProjects} from "./projects.js?v=20261105-curation1";
-import {sidebar} from "./navigation.js?v=20261105-curation1";
-import {mountManagement} from "./management.js?v=20261106-cny1";
-import { mountAssets } from "./assets.js?v=20261105-curation1";
-import { mountProjectWork } from "./project-work.js?v=20261105-curation1";
-import { mountOrganization } from "./organization.js?v=20261105-curation1";
-import { mountCustomSummary } from "./custom-summary.js?v=20261105-curation1";
-import { mountKnowledge } from "./knowledge.js?v=20261105-curation1";
-import { mountWorkspace } from "./workspace.js?v=20261105-curation1";
-import { mountAnalysis } from "./analysis.js?v=20261105-curation1";
+import {mountUsageAnalysis} from './usage-analysis.js?v=20261112-diagnostics1';
+import {mountCuration} from './curation.js?v=20261112-diagnostics1';
+import {mountProjects} from "./projects.js?v=20261112-diagnostics1";
+import {sidebar} from "./navigation.js?v=20261112-diagnostics1";
+import {mountManagement} from "./management.js?v=20261112-diagnostics1";
+import { mountAssets } from "./assets.js?v=20261112-diagnostics1";
+import { mountProjectWork } from "./project-work.js?v=20261112-diagnostics1";
+import { mountOrganization } from "./organization.js?v=20261112-diagnostics1";
+import { mountCustomSummary } from "./custom-summary.js?v=20261112-diagnostics1";
+import { mountKnowledge } from "./knowledge.js?v=20261112-diagnostics1";
+import { mountWorkspace } from "./workspace.js?v=20261112-diagnostics1";
+import { mountAnalysis } from "./analysis.js?v=20261112-diagnostics1";
 const root = document.querySelector('#app');
 const state = { session:null, projects:[], cases:[], coverage:[], selected:null, events:[], activity:[], error:'', authStatus:null, modal:null, busy:false };
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -40,6 +41,7 @@ function render(){
  }
  if(['#expenses','#managed-projects','#review-tasks'].includes(location.hash)||location.hash.startsWith('#project-settings/')){mountManagement(root,state.session);return}
  if(!state.session.admin || location.hash==='#assets'){mountAssets(root,state.session);return}
+ if(/^#(token-analysis|risk-analysis)(\?|$)/.test(location.hash)){mountUsageAnalysis(root,state.session);return}
  if(location.hash==='#projects'){mountProjects(root,state.session);return}
  if(location.hash.startsWith('#project-work/')){mountProjectWork(root,state.session);return}
  if(location.hash===''){location.hash='#organization';return}

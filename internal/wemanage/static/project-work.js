@@ -1,4 +1,4 @@
-import {sidebar} from "./navigation.js?v=20261105-curation1";
+import {sidebar} from "./navigation.js?v=20261112-diagnostics1";
 import {projectTimeline} from "./management.js?v=20261105-curation1";
 import {knowledgeHTML,bindKnowledge} from "./project-knowledge.js?v=20261105-curation1";
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
